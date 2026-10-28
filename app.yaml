@@ -1,0 +1,14 @@
+id: helpdesk
+name: Helpdesk
+version: 0.1.0
+publisher: cbferrum
+summary: Tickets with business-hours SLAs, assignment rules, knowledge base, warranty claims and maintenance visits
+description: README.md
+categories: [support]
+license: AGPL-3.0-only
+homepage: https://github.com/CBFerrum/ferrum-app-helpdesk
+support: https://github.com/CBFerrum/ferrum-app-helpdesk/issues
+runtime: native
+platform: ">=0.3, <0.4"
+packages: [helpdesk]
+uninstall: ask
