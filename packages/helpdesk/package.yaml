@@ -19,6 +19,10 @@ modules:
             TicketType, SupportSettings, report:support_ticket_summary, report:support_sla_compliance, report:support_response_times,
             report:support_agent_workload, report:support_customer_satisfaction]
 
+# What a personal-data request exports and erases for the person who raised tickets (their email):
+# their name and address on the ticket; the conversation stays with the ticket.
+personal_data:
+  - {entity: Ticket, match: contact_email, erase: [contact_name, contact_email]}
 roles:
   - name: Support Agent
     description: Works tickets, writes knowledge base articles, logs warranty claims and maintenance visits. Give the user Support Team scopes to limit them to their teams' tickets.
