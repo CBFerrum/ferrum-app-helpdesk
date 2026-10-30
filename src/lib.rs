@@ -92,6 +92,10 @@ include!(concat!(env!("OUT_DIR"), "/packages.rs"));
 /// This app's manifest (`app.yaml`).
 pub const MANIFEST: &str = include_str!("../app.yaml");
 
+/// The manifest of the connector app with ERP (`connectors/erp/app.yaml`, package `helpdesk_erp`).
+/// It ships with Helpdesk.
+pub const CONNECTOR_MANIFEST: &str = include_str!("../connectors/erp/app.yaml");
+
 /// This app's metadata packages, embedded at build time.
 pub fn packages() -> std::result::Result<Vec<ferrum_meta::Package>, ferrum_meta::MetaError> {
     ferrum_meta::catalog::load_embedded(EMBEDDED)

@@ -1,14 +1,16 @@
 package: helpdesk
-version: 0.1.0
+version: 0.2.0
 label: Support
 description: Helpdesk tickets with business-hours SLAs, teams with automatic assignment, a knowledge base, warranty claims and maintenance contracts with planned visits.
-depends: [core, selling]
+# Customers and items are shared with other apps; the links to ERP's invoices and orders come with
+# the helpdesk_erp connector (Ferrum docs/plan/apps-ui.md §13).
+depends: [core, parties, products]
 field_prefix: sup_
 
 overlays:
   - entity: Item
     ops:
-      - {op: add_field, after: has_batch_no, field: {name: sup_warranty_days, type: int, label: Warranty Period (Days), min: 0, max: 36500, description: "Warranty from the delivery date; warranty claims check against it"}}
+      - {op: add_field, field: {name: sup_warranty_days, type: int, label: Warranty Period (Days), min: 0, max: 36500, description: "Warranty from the delivery date; warranty claims check against it"}}
 
 modules:
   - name: support

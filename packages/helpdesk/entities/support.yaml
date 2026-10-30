@@ -137,7 +137,6 @@
     - {name: feedback, type: text, no_copy: true}
     - {name: item, type: link, to: Item}
     - {name: serial_no, type: data, label: Serial No}
-    - {name: sales_invoice, type: link, to: SalesInvoice}
     - {name: conversation, type: table, of: TicketMessage, no_copy: true, description: "Append-only: sent messages cannot be edited or removed"}
     - {name: service_level_agreement, type: link, to: ServiceLevelAgreement, label: SLA, read_only: true, no_copy: true, in_filter: true}
     - {name: sla_status, type: select, label: SLA Status, options: [On Track, At Risk, Breached, Fulfilled], read_only: true, no_copy: true, in_list: true, in_filter: true}
@@ -260,7 +259,6 @@
     - {name: customer, type: link, to: Customer, required: true, in_filter: true}
     - {name: customer_name, type: data, fetch_from: customer.customer_name, read_only: true, in_list: true}
     - {name: transaction_date, type: date, required: true, default_expr: today, in_list: true}
-    - {name: sales_order, type: link, to: SalesOrder, description: "The sales order of the maintenance contract"}
     - {name: assigned_to, type: email, in_list: true, description: "Engineer for the planned visits"}
     - {name: items, type: table, of: MaintenanceScheduleItem, required: true}
     - {name: schedules, type: table, of: MaintenanceScheduleDetail, label: Visit Plan, read_only: true, no_copy: true}
