@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0
+
+- An interface of its own at /helpdesk/ (Ferrum docs/plan/apps-ui.md U5), in `ui/` (built with
+  Ferrum-Frontend's packages, `dist` committed and embedded as `UI`): the agent inbox (your tickets,
+  the unassigned, SLA alerts and every open one, the most pressing first, live) and the ticket view
+  (the conversation with replies and internal notes; status, priority, assignment and SLA beside
+  it). Helpdesk's other records are lists and forms in the records frame with its modules.
+- Launcher entry for Support Agents and Managers, New Ticket in the Create menu, and /open of
+  tickets (the ticket view) and Helpdesk's other records. Requires the platform 0.3.2 with
+  Ferrum-Frontend's `@ferrum/records/frame`.
+
 ## 0.2.0
 
 - Helpdesk works on its own: it depends on the platform's core, parties and products instead of
