@@ -1,0 +1,14 @@
+package: helpdesk_erp
+version: 0.1.0
+label: Helpdesk and ERP
+description: A ticket's sales invoice and a maintenance contract's sales order.
+depends: [helpdesk, selling]
+field_prefix: sup_
+
+overlays:
+  - entity: Ticket
+    ops:
+      - {op: add_field, column: true, after: serial_no, field: {name: sales_invoice, type: link, to: SalesInvoice}}
+  - entity: MaintenanceSchedule
+    ops:
+      - {op: add_field, column: true, after: transaction_date, field: {name: sales_order, type: link, to: SalesOrder, description: "The sales order of the maintenance contract"}}

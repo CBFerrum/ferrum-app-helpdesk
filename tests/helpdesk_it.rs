@@ -177,7 +177,8 @@ async fn scenario() {
             admin_email: "admin@sd.test".into(),
             admin_password: PASSWORD.into(),
             admin_name: None,
-            packages: vec!["helpdesk".into()],
+            // With ERP: warranty claims read the deliveries, tickets link invoices.
+            packages: vec!["helpdesk".into(), "helpdesk_erp".into()],
             settings: Some(json!({"fiscal_year_start_month": 4})),
         })
         .await
@@ -686,6 +687,35 @@ async fn scenario() {
         (row(&csat, "group", "a4@sd.test").unwrap()["average_rating"].clone(), row(&csat, "group", "a2@sd.test").unwrap()["star_2"].clone()),
         (json!("5"), json!(1))
     );
+
+    helpdesk_alone(&k).await;
+}
+
+/// Helpdesk in a workspace without ERP (Ferrum docs/plan/apps-ui.md §13): customers and items are
+/// the platform's, nothing of ERP is there, and tickets work.
+async fn helpdesk_alone(k: &Arc<Kernel>) {
+    let tenant = k
+        .create_tenant(NewTenant {
+            slug: "desk".into(),
+            name: "Desk Only".into(),
+            admin_email: "admin@desk.test".into(),
+            admin_password: PASSWORD.into(),
+            admin_name: None,
+            packages: vec!["helpdesk".into()],
+            settings: None,
+        })
+        .await
+        .expect("tenant");
+    let session = k.login("desk", "admin@desk.test", PASSWORD).await.expect("login");
+    let t = T { k: k.clone(), ctx: k.load_ctx(tenant, session.user, Some(session.token_version), "it".into()).await.expect("ctx") };
+    assert_eq!(t.ctx.schema.packages, ["core", "contacts", "parties", "products", "helpdesk"]);
+    for erp in ["SalesInvoice", "SalesOrder", "Warehouse", "Account"] {
+        assert!(t.ctx.schema.entity(erp).is_none(), "{erp} without ERP");
+    }
+    assert!(t.ctx.schema.entity("Ticket").unwrap().field("sales_invoice").is_none());
+    let customer = t.insert("Customer", json!({"customer_name": "Walk-in Co"})).await;
+    let ticket = t.insert("Ticket", json!({"subject": "Printer jammed", "customer": customer["id"], "priority": "Medium"})).await;
+    assert_eq!(ticket["status"], json!("Open"));
 }
 
 fn n(s: &str) -> Decimal {
