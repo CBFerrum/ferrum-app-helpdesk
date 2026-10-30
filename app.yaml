@@ -1,6 +1,6 @@
 id: helpdesk
 name: Helpdesk
-version: 0.2.0
+version: 0.3.0
 publisher: cbferrum
 summary: Tickets with business-hours SLAs, assignment rules, knowledge base, warranty claims and maintenance visits
 description: README.md
@@ -12,3 +12,20 @@ runtime: native
 platform: ">=0.3.2, <0.4"
 packages: [helpdesk]
 uninstall: ask
+ui:
+  dist: ui/dist
+contributes:
+  shell.app:
+    - id: helpdesk
+      route: helpdesk
+      title: Helpdesk
+      description: The agent inbox, tickets and their conversations, the knowledge base
+      icon: headset
+      color: "#7c3aed"
+      roles: [Support Agent, Support Manager]
+  shell.open:
+    # A ticket opens in the ticket view; Helpdesk's other records in its forms and lists.
+    - {id: ticket, entity: Ticket, path: "helpdesk/t/{id}", list: helpdesk/, priority: 1}
+    - {id: helpdesk, package: helpdesk, path: "helpdesk/e/{entity}/{id}", list: "helpdesk/e/{entity}"}
+  shell.create:
+    - {id: ticket, label: Ticket, path: helpdesk/e/Ticket/new, entity: Ticket}

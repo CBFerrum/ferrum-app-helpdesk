@@ -45,3 +45,16 @@ at build time; `app.yaml` is its manifest (see Ferrum's `docs/plan/apps.md`).
 ## License
 
 AGPL-3.0-only, like the platform.
+
+## Interface
+
+Helpdesk has its own interface at `/helpdesk/` (Ferrum docs/plan/apps-ui.md), in `ui/`: the agent
+inbox (your tickets, the unassigned, SLA alerts and every open one, the most pressing first, kept
+current as tickets change) and the ticket view (the conversation with replies and internal notes;
+status, priority, assignment and SLA beside it). The other records are lists and forms in the
+records frame. It builds with Ferrum-Frontend's packages from the sibling checkout
+(`../../ferrum/web`), and `ui/dist` is committed and embedded in the crate:
+
+```
+cd ui && npm run build    # then commit ui/dist; CI checks it was built from ui/src as it is
+```
