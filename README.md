@@ -283,7 +283,7 @@ CHANGELOG.md  what changed in each version
 | Version | Highlights |
 |---|---|
 | **0.4.1** | The interface starts faster: its first download holds the frame and the app's own pages, and lists, forms, reports and other apps' screens load … |
-| **0.4.0** | A page of the workspace's portal , "Your tickets" at /portal/tickets/: the tickets raised from the address a customer signed in with, each with … |
+| **0.4.0** | A page of the workspace's portal, "Your tickets" at /portal/tickets/: the tickets raised from the address a customer signed in with, each with its … |
 | **0.3.2** | Rebuilt with Ferrum-Frontend a8d4dda: under the platform's bar the records frame no longer shows a second bell (the bar has notifications). |
 | **0.3.1** | Its notifications have kinds each person chooses for (Ferrum's bell, apps-ui.md U5): tickets assigned to you, customer replies on your tickets and … |
 
