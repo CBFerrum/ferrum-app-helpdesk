@@ -1,6 +1,6 @@
 id: helpdesk
 name: Helpdesk
-version: 0.3.0
+version: 0.3.1
 publisher: cbferrum
 summary: Tickets with business-hours SLAs, assignment rules, knowledge base, warranty claims and maintenance visits
 description: README.md
@@ -29,3 +29,7 @@ contributes:
     - {id: helpdesk, package: helpdesk, path: "helpdesk/e/{entity}/{id}", list: "helpdesk/e/{entity}"}
   shell.create:
     - {id: ticket, label: Ticket, path: helpdesk/e/Ticket/new, entity: Ticket}
+  shell.notification:
+    - {id: assigned, label: Tickets assigned to you, default: [inapp, email]}
+    - {id: reply, label: Customer replies on your tickets, default: [inapp, email]}
+    - {id: sla, label: SLA breaches on your tickets, default: [inapp, email]}

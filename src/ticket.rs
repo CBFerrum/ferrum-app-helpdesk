@@ -387,15 +387,21 @@ async fn assign(hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
 
 pub struct TicketHook;
 
-/// An in-app notification for the user signed in with `email`, if there is one.
-async fn notify_agent(tx: &mut Tx, tenant: Uuid, email: &str, title: &str, ticket: Uuid) -> Result<()> {
+/// The notification kinds app.yaml declares (`shell.notification`), each in the bar and by email
+/// unless the person chose otherwise.
+pub const ASSIGNED: &str = "helpdesk.assigned";
+pub const REPLY: &str = "helpdesk.reply";
+pub const SLA: &str = "helpdesk.sla";
+
+/// A notification of `kind` for the user signed in with `email`, if there is one.
+async fn notify_agent(tx: &mut Tx, tenant: Uuid, email: &str, kind: &str, title: &str, ticket: Uuid) -> Result<()> {
     let user: Option<Uuid> = sqlx::query_scalar("select id from app_user where tenant_id = $1 and email = $2 and is_active")
         .bind(tenant)
         .bind(email)
         .fetch_optional(&mut **tx)
         .await?;
     if let Some(user) = user {
-        notify::send(tx, tenant, user, title, None, Some("Ticket"), Some(ticket)).await?;
+        notify::send_kind(tx, tenant, user, kind, notify::declared_default(&["inapp", "email"]), title, None, Some("Ticket"), Some(ticket)).await?;
     }
     Ok(())
 }
@@ -515,12 +521,12 @@ impl DocHook for TicketHook {
         let (Some(agent), Some(ticket)) = (s(doc, "assigned_to"), id(doc, "id")) else { return Ok(()) };
         let label = format!("{} {}", s(doc, "number").unwrap_or("Ticket"), s(doc, "subject").unwrap_or_default());
         if old.is_none_or(|o| s(o, "assigned_to") != Some(agent)) && agent != hc.ctx.email {
-            notify_agent(hc.tx, hc.ctx.tenant, agent, &format!("{label} was assigned to you"), ticket).await?;
+            notify_agent(hc.tx, hc.ctx.tenant, agent, ASSIGNED, &format!("{label} was assigned to you"), ticket).await?;
         }
         let known: HashSet<String> = old.map(|o| rows(o, "conversation").iter().filter_map(|r| s(r, "id").map(str::to_string)).collect()).unwrap_or_default();
         let replied = rows(doc, "conversation").iter().any(|m| s(m, "author_kind") == Some("Customer") && !s(m, "id").is_some_and(|i| known.contains(i)));
         if old.is_some() && replied {
-            notify_agent(hc.tx, hc.ctx.tenant, agent, &format!("The customer replied on {label}"), ticket).await?;
+            notify_agent(hc.tx, hc.ctx.tenant, agent, REPLY, &format!("The customer replied on {label}"), ticket).await?;
         }
         Ok(())
     }
@@ -642,7 +648,7 @@ pub async fn refresh_slas(k: &Kernel, ctx: &Ctx) -> Result<usize> {
             k.set_values_tx(ctx, &mut tx, "Ticket", ticket, values).await?;
             if breached && let Some(agent) = s(&doc, "assigned_to") {
                 let label = format!("{} {}", s(&doc, "number").unwrap_or("Ticket"), s(&doc, "subject").unwrap_or_default());
-                notify_agent(&mut tx, ctx.tenant, agent, &format!("SLA breached on {label}"), ticket).await?;
+                notify_agent(&mut tx, ctx.tenant, agent, SLA, &format!("SLA breached on {label}"), ticket).await?;
             }
             if publish {
                 let fresh = store::load(&mut tx, &ctx.schema, &ent, ctx.tenant, ticket, false).await?;
