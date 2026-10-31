@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+- The interface starts faster: its first download holds the frame and the app's own pages, and
+  lists, forms, reports and other apps' screens load when first opened (Ferrum
+  docs/plan/apps-ui.md §12.9). The build keeps it within the size budget.
+
 ## 0.4.0
 
 - A page of the workspace's portal (Ferrum docs/plan/apps-ui.md §9.1, U7), "Your tickets" at
