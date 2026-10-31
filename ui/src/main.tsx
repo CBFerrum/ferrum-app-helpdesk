@@ -10,12 +10,15 @@ import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Link, Outlet, RouterProvider, useRouteError } from "react-router";
 import { bootstrap, routeBase, shell } from "@ferrum/client";
 import { ConfirmHost, EmptyState, ErrorState, Toaster } from "@ferrum/kit";
-import { FormView, ListView, ReportView } from "@ferrum/records";
-import { AppSettingsPage, RequireAuth, ScreenPage, setFrameMode } from "@ferrum/records/frame";
+import { RequireAuth, setFrameMode } from "@ferrum/records/frame";
 import { HelpdeskHome } from "./Home";
 import { PortalNewTicket, PortalTicket, PortalTickets } from "./Portal";
 import { TicketPage } from "./Ticket";
 import "./styles.css";
+
+/** A page of the records frame, loaded when first opened. */
+const page = (name: "FormView" | "ListView" | "ReportView" | "AppSettingsPage" | "ScreenPage") => () =>
+  import("./records").then((m) => ({ Component: m[name] }));
 
 /** Helpdesk's packages: the sidebar shows their modules. */
 const HELPDESK_PACKAGES = ["helpdesk", "helpdesk_erp"];
@@ -80,11 +83,11 @@ const agentRoutes = [
     children: [
       { index: true, element: <HelpdeskHome /> },
       { path: "t/:id", element: <TicketPage /> },
-      { path: "e/:entity", element: <ListView /> },
-      { path: "e/:entity/:id", element: <FormView /> },
-      { path: "r/:name", element: <ReportView /> },
-      { path: "apps/:app/settings", element: <AppSettingsPage /> },
-      { path: "x/:app/:page", element: <ScreenPage /> },
+      { path: "e/:entity", lazy: page("ListView") },
+      { path: "e/:entity/:id", lazy: page("FormView") },
+      { path: "r/:name", lazy: page("ReportView") },
+      { path: "apps/:app/settings", lazy: page("AppSettingsPage") },
+      { path: "x/:app/:page", lazy: page("ScreenPage") },
       { path: "*", element: <NotFound /> },
     ],
   },

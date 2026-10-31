@@ -1,6 +1,6 @@
 id: helpdesk
 name: Helpdesk
-version: 0.4.0
+version: 0.4.1
 publisher: cbferrum
 summary: Tickets with business-hours SLAs, assignment rules, knowledge base, warranty claims and maintenance visits
 description: README.md
