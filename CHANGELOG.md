@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0
+
+- A page of the workspace's portal (Ferrum docs/plan/apps-ui.md §9.1, U7), "Your tickets" at
+  /portal/tickets/: the tickets raised from the address a customer signed in with, each with its
+  conversation (agents' internal notes never show), replies (which reopen a ticket waiting on them
+  or resolved), new tickets (channel Portal, linked to the customer the address belongs to) and a
+  satisfaction rating once resolved. /open of a ticket takes portal people there. The endpoints are
+  `/api/app/helpdesk/portal/tickets…`; portal people hold no roles, so they answer by the address
+  and act as the system after their checks, rate limited.
+- Home's My work lists the open tickets assigned to you (`/api/app/helpdesk/work`), due on their
+  SLA's resolution date, High and Urgent ones marked.
+- The inbox shows no record cards over its rows (they repeat what the row says).
+- Requires the platform with portals and `shell.portal` (Ferrum, apps-ui.md U7).
+
 ## 0.3.2
 
 - Rebuilt with Ferrum-Frontend a8d4dda: under the platform's bar the records frame no longer shows

@@ -1,6 +1,6 @@
 id: helpdesk
 name: Helpdesk
-version: 0.3.2
+version: 0.4.0
 publisher: cbferrum
 summary: Tickets with business-hours SLAs, assignment rules, knowledge base, warranty claims and maintenance visits
 description: README.md
@@ -29,6 +29,13 @@ contributes:
     - {id: helpdesk, package: helpdesk, path: "helpdesk/e/{entity}/{id}", list: "helpdesk/e/{entity}"}
   shell.create:
     - {id: ticket, label: Ticket, path: helpdesk/e/Ticket/new, entity: Ticket}
+  # Home's My work: the open tickets assigned to you, due when their SLA wants them resolved.
+  shell.work:
+    - {id: tickets, title: Your tickets, endpoint: /api/app/helpdesk/work}
+  # The workspace's portal: customers' own tickets at /portal/tickets/, where /open of a ticket
+  # takes them.
+  shell.portal:
+    - {id: tickets, title: Your tickets, description: Ask for help and follow the team's answers, entity: Ticket, open: "t/{id}"}
   shell.notification:
     - {id: assigned, label: Tickets assigned to you, default: [inapp, email]}
     - {id: reply, label: Customer replies on your tickets, default: [inapp, email]}

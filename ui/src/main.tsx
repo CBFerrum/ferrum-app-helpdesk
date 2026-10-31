@@ -1,17 +1,19 @@
 // Helpdesk's own interface (Ferrum docs/plan/apps-ui.md §13, U5) at /helpdesk/: the agent inbox on
 // its home, each ticket's conversation in the ticket view, and the rest of Helpdesk's records
 // (knowledge base, warranty claims, maintenance, SLAs, teams) as lists and forms in the records
-// frame, with Helpdesk's modules in the sidebar under the platform's bar.
+// frame, with Helpdesk's modules in the sidebar under the platform's bar. The same release draws
+// its page of the workspace's portal, "Your tickets" at /portal/tickets/ (§9.1, U7).
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { createBrowserRouter, Link, RouterProvider, useRouteError } from "react-router";
-import { routeBase, shell } from "@ferrum/client";
+import { createBrowserRouter, Link, Outlet, RouterProvider, useRouteError } from "react-router";
+import { bootstrap, routeBase, shell } from "@ferrum/client";
 import { ConfirmHost, EmptyState, ErrorState, Toaster } from "@ferrum/kit";
 import { FormView, ListView, ReportView } from "@ferrum/records";
 import { AppSettingsPage, RequireAuth, ScreenPage, setFrameMode } from "@ferrum/records/frame";
 import { HelpdeskHome } from "./Home";
+import { PortalNewTicket, PortalTicket, PortalTickets } from "./Portal";
 import { TicketPage } from "./Ticket";
 import "./styles.css";
 
@@ -26,10 +28,10 @@ function RouteError() {
   return <ErrorState error={useRouteError()} onRetry={() => window.location.reload()} />;
 }
 
-function NotFound() {
+function NotFound({ back = "Go to the inbox" }: { back?: string }) {
   return (
     <EmptyState title="Page not found">
-      <Link to="/">Go to the inbox</Link>
+      <Link to="/">{back}</Link>
     </EmptyState>
   );
 }
@@ -40,33 +42,57 @@ function Started() {
   return null;
 }
 
-setFrameMode("app", HELPDESK_PACKAGES);
+/** The portal's page, when the platform serves this release there. */
+const PORTAL = "portal/tickets";
+const onPortal = bootstrap()?.app?.entry === PORTAL;
 
-const router = createBrowserRouter(
-  [
-    {
-      path: "/",
-      element: (
-        <>
-          <Started />
-          <RequireAuth />
-        </>
-      ),
-      errorElement: <RouteError />,
-      children: [
-        { index: true, element: <HelpdeskHome /> },
-        { path: "t/:id", element: <TicketPage /> },
-        { path: "e/:entity", element: <ListView /> },
-        { path: "e/:entity/:id", element: <FormView /> },
-        { path: "r/:name", element: <ReportView /> },
-        { path: "apps/:app/settings", element: <AppSettingsPage /> },
-        { path: "x/:app/:page", element: <ScreenPage /> },
-        { path: "*", element: <NotFound /> },
-      ],
-    },
-  ],
-  { basename: routeBase("helpdesk") },
-);
+if (!onPortal) setFrameMode("app", HELPDESK_PACKAGES);
+
+const portalRoutes = [
+  {
+    path: "/",
+    element: (
+      <main className="hd-portal-page">
+        <Started />
+        <Outlet />
+      </main>
+    ),
+    errorElement: <RouteError />,
+    children: [
+      { index: true, element: <PortalTickets /> },
+      { path: "new", element: <PortalNewTicket /> },
+      { path: "t/:id", element: <PortalTicket /> },
+      { path: "*", element: <NotFound back="Go to your tickets" /> },
+    ],
+  },
+];
+
+const agentRoutes = [
+  {
+    path: "/",
+    element: (
+      <>
+        <Started />
+        <RequireAuth />
+      </>
+    ),
+    errorElement: <RouteError />,
+    children: [
+      { index: true, element: <HelpdeskHome /> },
+      { path: "t/:id", element: <TicketPage /> },
+      { path: "e/:entity", element: <ListView /> },
+      { path: "e/:entity/:id", element: <FormView /> },
+      { path: "r/:name", element: <ReportView /> },
+      { path: "apps/:app/settings", element: <AppSettingsPage /> },
+      { path: "x/:app/:page", element: <ScreenPage /> },
+      { path: "*", element: <NotFound /> },
+    ],
+  },
+];
+
+const router = onPortal
+  ? createBrowserRouter(portalRoutes, { basename: routeBase(PORTAL) })
+  : createBrowserRouter(agentRoutes, { basename: routeBase("helpdesk") });
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
