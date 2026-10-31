@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+- Its notifications have kinds each person chooses for (Ferrum's bell, apps-ui.md U5): tickets
+  assigned to you, customer replies on your tickets and SLA breaches on them, in the bar and by
+  email unless chosen otherwise. Requires the platform with notification kinds (Ferrum 2fccf10).
+
 ## 0.3.0
 
 - An interface of its own at /helpdesk/ (Ferrum docs/plan/apps-ui.md U5), in `ui/` (built with

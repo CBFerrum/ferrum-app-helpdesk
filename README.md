@@ -42,10 +42,6 @@ cargo test
 `FERRUM_HELPDESK_TEST_DATABASE_URL` overrides the database URL. The app's metadata lives in `packages/` and is embedded
 at build time; `app.yaml` is its manifest (see Ferrum's `docs/plan/apps.md`).
 
-## License
-
-AGPL-3.0-only, like the platform.
-
 ## Interface
 
 Helpdesk has its own interface at `/helpdesk/` (Ferrum docs/plan/apps-ui.md), in `ui/`: the agent
@@ -58,3 +54,7 @@ records frame. It builds with Ferrum-Frontend's packages from the sibling checko
 ```
 cd ui && npm run build    # then commit ui/dist; CI checks it was built from ui/src as it is
 ```
+
+## License
+
+AGPL-3.0-only, like the platform.
