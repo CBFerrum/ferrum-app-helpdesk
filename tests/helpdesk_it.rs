@@ -689,6 +689,7 @@ async fn scenario() {
     );
 
     helpdesk_alone(&k).await;
+    portal(&k).await;
 }
 
 /// Helpdesk in a workspace without ERP (Ferrum docs/plan/apps-ui.md §13): customers and items are
@@ -716,6 +717,101 @@ async fn helpdesk_alone(k: &Arc<Kernel>) {
     let customer = t.insert("Customer", json!({"customer_name": "Walk-in Co"})).await;
     let ticket = t.insert("Ticket", json!({"subject": "Printer jammed", "customer": customer["id"], "priority": "Medium"})).await;
     assert_eq!(ticket["status"], json!("Open"));
+}
+
+/// A call to Helpdesk's endpoints as `who` (`/api/app/helpdesk/{path}`).
+async fn call(k: &Kernel, who: Option<&Ctx>, method: &str, path: &str, body: Value) -> Result<Value> {
+    let site = k.hooks.site("helpdesk").expect("helpdesk's endpoints").clone();
+    let req = ferrum_kernel::SiteRequest {
+        tenant: who.map(|c| c.tenant).unwrap_or_default(),
+        user: who.cloned(),
+        method: method.into(),
+        path: format!("/{path}"),
+        query: Default::default(),
+        headers: Default::default(),
+        body: if body.is_null() { vec![] } else { body.to_string().into_bytes() },
+        client_ip: "203.0.113.9".into(),
+    };
+    let r = site.handle(k, req).await?;
+    Ok(serde_json::from_slice(&r.body).unwrap())
+}
+
+/// The portal's "Your tickets" (Ferrum docs/plan/apps-ui.md §9.1) and agents' My work: a customer
+/// with no roles raises, reads and answers only their own tickets, never sees internal notes, and
+/// rates the help once it is resolved.
+async fn portal(k: &Arc<Kernel>) {
+    let session = k.login("desk", "admin@desk.test", PASSWORD).await.expect("login");
+    let tenant = session.tenant;
+    let t = T { k: k.clone(), ctx: k.load_ctx(tenant, session.user, Some(session.token_version), "it".into()).await.expect("ctx") };
+    let customer = t.insert("Customer", json!({"customer_name": "Pia's Garage", "email": "pia@garage.test"})).await;
+    let agent = t.user("agent@desk.test", &["Support Agent"], &[]).await;
+    let pia_id = k.create_user(&t.ctx, "Pia@Garage.test", "Pia", None, &[], false).await.unwrap();
+    k.set_user_kind(&t.ctx, pia_id, "portal").await.unwrap();
+    let pia = k.load_ctx(tenant, pia_id, None, "it".into()).await.unwrap();
+    assert!(pia.roles.is_empty() && !pia.is_admin);
+    assert!(k.list(&pia, "Ticket", &ListQuery::default()).await.is_err(), "no rights of her own");
+
+    // Raised from the portal: hers, from the portal, for the customer her address belongs to.
+    let raised = call(k, Some(&pia), "POST", "portal/tickets", json!({"subject": "Brakes squeak", "description": "Since **Monday**.", "priority": "High"}))
+        .await
+        .unwrap();
+    let id = vid(&raised);
+    assert_eq!((raised["status"].as_str(), raised["label"].as_str(), raised["can_reply"].as_bool()), (Some("Open"), Some("With the team"), Some(true)));
+    let doc = t.get("Ticket", id).await;
+    assert_eq!((doc["channel"].as_str(), doc["contact_email"].as_str(), doc["contact_name"].as_str()), (Some("Portal"), Some("pia@garage.test"), Some("Pia")));
+    assert_eq!(doc["customer"], customer["id"]);
+    assert!(
+        call(k, Some(&pia), "POST", "portal/tickets", json!({"subject": "x", "description": "y", "priority": "Urgent"})).await.is_err(),
+        "customers do not choose Urgent"
+    );
+    assert!(call(k, Some(&pia), "POST", "portal/tickets", json!({"subject": "  ", "description": "y"})).await.is_err());
+    assert!(matches!(call(k, None, "GET", "portal/tickets", Value::Null).await, Err(Error::Unauthorized(_))));
+
+    // The team answers, and notes something for itself.
+    t.update("Ticket", id, json!({"assigned_to": "agent@desk.test"})).await;
+    agent.say(id, json!({"author_kind": "Agent", "body": "Which wheel?", "is_internal": false})).await.unwrap();
+    agent.say(id, json!({"author_kind": "Agent", "body": "Probably the pads, again", "is_internal": true})).await.unwrap();
+    let seen = call(k, Some(&pia), "GET", &format!("portal/tickets/{id}"), Value::Null).await.unwrap();
+    let bodies: Vec<&str> = seen["messages"].as_array().unwrap().iter().map(|m| m["body"].as_str().unwrap()).collect();
+    assert_eq!(bodies, ["Which wheel?"], "internal notes never reach the customer");
+    assert_eq!(seen["messages"][0]["mine"], json!(false));
+    assert_eq!(seen["label"].as_str(), Some("Waiting for your reply"));
+    assert_eq!(seen["description"].as_str(), Some("Since **Monday**."));
+
+    // Her reply goes back to the team.
+    let replied = call(k, Some(&pia), "POST", &format!("portal/tickets/{id}/replies"), json!({"body": "Front left."})).await.unwrap();
+    assert_eq!(replied["status"].as_str(), Some("Open"));
+    let last = replied["messages"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!((last["mine"].as_bool(), last["author"].as_str(), last["body"].as_str()), (Some(true), Some("You"), Some("Front left.")));
+    let stored = t.get("Ticket", id).await;
+    let row = stored["conversation"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!((row["author_kind"].as_str(), row["author"].as_str()), (Some("Customer"), Some("pia@garage.test")));
+
+    // Someone else's ticket is not there for her.
+    let other = t.insert("Ticket", json!({"subject": "Olaf's", "contact_email": "olaf@other.test", "priority": "Low"})).await;
+    assert!(matches!(call(k, Some(&pia), "GET", &format!("portal/tickets/{}", uid(&other)), Value::Null).await, Err(Error::NotFound(_))));
+    assert!(matches!(call(k, Some(&pia), "POST", &format!("portal/tickets/{}/replies", uid(&other)), json!({"body": "hi"})).await, Err(Error::NotFound(_))));
+    let mine = call(k, Some(&pia), "GET", "portal/tickets", Value::Null).await.unwrap();
+    assert_eq!(mine["tickets"].as_array().unwrap().iter().map(|x| x["subject"].as_str().unwrap()).collect::<Vec<_>>(), ["Brakes squeak"]);
+
+    // My work: the agent's open tickets, High marked; nothing for her.
+    let work = call(k, Some(&agent.ctx), "GET", "work", Value::Null).await.unwrap();
+    let items = work["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{work}");
+    assert_eq!((items[0]["title"].as_str(), items[0]["priority"].as_str()), (Some("Brakes squeak"), Some("High")));
+    assert_eq!(items[0]["url"].as_str(), Some(format!("/helpdesk/t/{id}").as_str()));
+    assert_eq!(call(k, Some(&pia), "GET", "work", Value::Null).await.unwrap()["items"], json!([]));
+
+    // Rated once resolved, and only then.
+    assert!(call(k, Some(&pia), "POST", &format!("portal/tickets/{id}/rating"), json!({"rating": 5})).await.is_err());
+    t.update("Ticket", id, json!({"status": "Resolved", "resolution_details": "Pads replaced."})).await;
+    let resolved = call(k, Some(&pia), "GET", &format!("portal/tickets/{id}"), Value::Null).await.unwrap();
+    assert_eq!((resolved["resolution"].as_str(), resolved["can_rate"].as_bool()), (Some("Pads replaced."), Some(true)));
+    assert!(call(k, Some(&pia), "POST", &format!("portal/tickets/{id}/rating"), json!({"rating": 6})).await.is_err());
+    let rated = call(k, Some(&pia), "POST", &format!("portal/tickets/{id}/rating"), json!({"rating": 5, "feedback": "Quick, thanks"})).await.unwrap();
+    assert_eq!((rated["rating"].as_i64(), rated["can_rate"].as_bool()), (Some(5), Some(false)));
+    assert_eq!(t.get("Ticket", id).await["satisfaction_rating"], json!(5));
+    assert_eq!(call(k, Some(&agent.ctx), "GET", "work", Value::Null).await.unwrap()["items"], json!([]), "resolved is no longer work");
 }
 
 fn n(s: &str) -> Decimal {

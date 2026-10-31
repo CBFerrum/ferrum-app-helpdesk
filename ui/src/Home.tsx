@@ -83,7 +83,7 @@ function QueueList({ queue, q }: { queue: Queue; q: ReturnType<typeof useQueue> 
   if (!q.data.rows.length) return <EmptyState title={EMPTY[queue]} icon="check" />;
   return (
     <>
-      <ul className="hd-tickets">
+      <ul className="hd-tickets" data-ferrum-nocard>
         {q.data.rows.map((t) => (
           <TicketRow key={t.id} t={t} />
         ))}

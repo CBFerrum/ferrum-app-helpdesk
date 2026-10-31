@@ -4,6 +4,7 @@
 
 mod kb;
 mod reports;
+mod site;
 mod sla;
 mod ticket;
 mod visits;
@@ -26,6 +27,7 @@ pub fn register(hooks: &mut HookRegistry) {
         .register("WarrantyClaim", Arc::new(warranty::ClaimHook))
         .register("MaintenanceSchedule", Arc::new(visits::ScheduleHook))
         .register("MaintenanceVisit", Arc::new(visits::VisitHook));
+    hooks.add_site("helpdesk", Arc::new(site::HelpdeskSite));
 }
 
 /// This package's reports.
