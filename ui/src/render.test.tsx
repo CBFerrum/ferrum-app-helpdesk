@@ -173,6 +173,7 @@ describe("the composer", () => {
         mode="reply"
         onMode={() => {}}
         inputRef={{ current: null }}
+        rootRef={null}
         to={{ name: "Ada", email: "ada@shop.test" }}
         assignee={null}
         about={{ ticket: {}, contact: {}, agent: {} }}

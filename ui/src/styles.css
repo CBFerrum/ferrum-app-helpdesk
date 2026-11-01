@@ -1154,11 +1154,28 @@ a.hd-file:hover {
   }
 }
 
+/* Whatever takes the keyboard's focus shows it. */
+.hd-write-tabs button:focus-visible,
+.hd-people button:focus-visible,
+.hd-queues a:focus-visible,
+.hd-saved a:focus-visible,
+a.hd-file:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
 /* Touch has no hover and wants bigger targets. */
 @media (pointer: coarse) {
   .hd-pick {
     width: 1.375rem;
     height: 1.375rem;
+  }
+
+  .hd-queues a,
+  .hd-saved a,
+  .hd-people button,
+  .hd-write-tabs button {
+    min-height: 2.75rem;
   }
 
   .hd-row > .icon-btn {

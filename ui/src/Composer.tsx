@@ -2,7 +2,7 @@
 // reply, files are dropped, pasted or attached, Ctrl or Cmd with Enter sends. What is typed is kept
 // for this ticket until it is sent, and the tab warns before it is closed on unsent words.
 
-import { type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type RefObject, useState } from "react";
+import { type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type Ref, type RefObject, useState } from "react";
 import { api, errorMessage } from "@ferrum/client";
 import { Alert, Button, Icon, toast } from "@ferrum/kit";
 import { fileSize } from "./feed";
@@ -40,6 +40,7 @@ export function Composer({
   mode,
   onMode,
   inputRef,
+  rootRef,
   to,
   assignee,
   about,
@@ -51,6 +52,8 @@ export function Composer({
   mode: Mode;
   onMode: (m: Mode) => void;
   inputRef: RefObject<HTMLTextAreaElement | null>;
+  /** The box itself, to scroll it into view (it sticks to the bottom of the page, so no wrapper may sit around it). */
+  rootRef: Ref<HTMLElement>;
   /** Who a reply is for; no address means it stays in the conversation and the portal. */
   to: { name: string; email: string | null };
   /** Who has the ticket, as a sentence ("Priya has this ticket"), or null when it is the agent's own or nobody's. */
@@ -161,6 +164,7 @@ export function Composer({
 
   return (
     <section
+      ref={rootRef}
       className="hd-write"
       data-mode={mode}
       data-dropping={dropping || undefined}
