@@ -831,20 +831,20 @@ async fn portal(k: &Arc<Kernel>) {
         )
         .await);
     let start = today - Duration::days(30);
-    t.insert("ServiceContract", json!({"contract_name": "Lapsed", "customer": covered.to_string(), "start_date": (today - Duration::days(400)).to_string(), "end_date": (today - Duration::days(35)).to_string()})).await;
+    t.insert("SupportContract", json!({"contract_name": "Lapsed", "customer": covered.to_string(), "start_date": (today - Duration::days(400)).to_string(), "end_date": (today - Duration::days(35)).to_string()})).await;
     let lapsed = t.insert("Ticket", open_ticket("Only a lapsed one", now)).await;
     assert_eq!(lapsed["entitlement"], json!("Expired"));
-    let contract = uid(&t.insert("ServiceContract", json!({"contract_name": "Gold", "customer": covered.to_string(), "start_date": start.to_string(), "service_level_agreement": tight.to_string(), "included_tickets": 2})).await);
+    let contract = uid(&t.insert("SupportContract", json!({"contract_name": "Gold", "customer": covered.to_string(), "start_date": start.to_string(), "service_level_agreement": tight.to_string(), "included_tickets": 2})).await);
     assert!(
         t.try_insert(
-            "ServiceContract",
+            "SupportContract",
             json!({"contract_name": "Backwards", "customer": covered.to_string(), "start_date": today.to_string(), "end_date": start.to_string()})
         )
         .await
         .is_err()
     );
     let first = t.insert("Ticket", open_ticket("Covered one", now - Duration::days(3))).await;
-    assert_eq!((first["entitlement"].as_str(), first["service_contract"].as_str()), (Some("Covered"), Some(contract.to_string().as_str())));
+    assert_eq!((first["entitlement"].as_str(), first["support_contract"].as_str()), (Some("Covered"), Some(contract.to_string().as_str())));
     assert_eq!(first["service_level_agreement"], json!(tight.to_string()), "the contract's agreement applies, whatever else would");
     t.insert("Ticket", open_ticket("Covered two", now)).await;
     let third = t.insert("Ticket", open_ticket("One too many", now)).await;

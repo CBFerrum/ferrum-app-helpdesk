@@ -422,7 +422,7 @@ async fn entitlement(hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
     let tenant = hc.ctx.tenant;
     #[allow(clippy::type_complexity)]
     let contracts: Vec<(Uuid, Option<chrono::NaiveDate>, Option<Uuid>, Option<i64>, chrono::NaiveDate)> = sqlx::query_as(
-        "select id, end_date, service_level_agreement, included_tickets, start_date from e_service_contract \
+        "select id, end_date, service_level_agreement, included_tickets, start_date from e_support_contract \
          where tenant_id = $1 and customer = $2 and start_date <= $3 order by end_date desc nulls first, start_date desc",
     )
     .bind(tenant)
@@ -435,13 +435,13 @@ async fn entitlement(hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
         set(doc, "entitlement", if contracts.is_empty() { "None" } else { "Expired" });
         return Ok(());
     };
-    let used: i64 = sqlx::query_scalar("select count(*) from e_ticket where tenant_id = $1 and service_contract = $2 and opened_at >= $3")
+    let used: i64 = sqlx::query_scalar("select count(*) from e_ticket where tenant_id = $1 and support_contract = $2 and opened_at >= $3")
         .bind(tenant)
         .bind(contract)
         .bind(start.and_hms_opt(0, 0, 0).map(|t| t.and_utc()))
         .fetch_one(&mut **hc.tx)
         .await?;
-    set(doc, "service_contract", json!(contract.to_string()));
+    set(doc, "support_contract", json!(contract.to_string()));
     set(doc, "entitlement", if included.is_some_and(|n| used >= n) { "Exhausted" } else { "Covered" });
     set(doc, "contract_sla", sla.map_or(Value::Null, |x| json!(x.to_string())));
     Ok(())
