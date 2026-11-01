@@ -1,6 +1,6 @@
 id: helpdesk
 name: Helpdesk
-version: 0.5.0
+version: 0.6.0
 publisher: cbferrum
 summary: Tickets with business-hours SLAs, assignment rules, knowledge base, warranty claims and maintenance visits
 description: README.md
@@ -19,7 +19,7 @@ contributes:
     - id: helpdesk
       route: helpdesk
       title: Helpdesk
-      description: The agent inbox, tickets and their conversations, the knowledge base
+      description: The agent inbox, tickets and their conversations, saved replies, the knowledge base
       icon: headset
       color: "#7c3aed"
       roles: [Support Agent, Support Manager]

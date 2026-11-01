@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.6.0
+
+- A ticket opens as one conversation: what the customer wrote, every reply and internal note, and
+  what happened to the ticket between them (its status, who took it, its priority, a service level
+  missed, an escalation) in a single feed, which can be narrowed to the replies or to the notes. One
+  box answers the customer or writes a note for the team. What is typed is kept for the ticket until
+  it is sent, and Ctrl or Cmd with Enter sends. Beside it: the two service levels (grey until
+  something has happened, then red, green or blue), who has the ticket, the customer with what their
+  support contract entitles them to and their other tickets, what is linked to the ticket, and its
+  files. R, N, E, A, J and K work a ticket from the keyboard, and ? lists them.
+- The inbox has queues with how many tickets each holds (Mine, Unassigned, SLA alerts, My teams, All
+  open). Each row shows the start of the last message, how long the ticket has waited, where its
+  service level stands and who has it. J and K move, Enter opens, X selects, E resolves, R replies,
+  A takes, / searches. Select several to assign them, set their priority or status, or resolve them
+  together. A change shows at once and goes back, with the server's reason, if it is refused. The
+  queue, order and filters are in the address, so a link opens the same view, and a view can be
+  saved by name (for the person who saved it). "Who has what" shows each agent's open tickets.
+  Replying to a ticket someone else has asks first and takes it over, and a ticket that changed while
+  it was open says so rather than being overwritten.
+- Saved replies, Personal, for a Team or for Everyone, with the customer's and the agent's names and
+  the ticket's number and subject filled in. Press / in a reply to find one. A reply with something
+  that cannot be filled in is held back until it is. The most used come first, and three come to
+  start from.
+- A reply now reaches the customer by email, through the platform's mail: the subject names the
+  ticket, the text keeps its paragraphs, lists, bold and links, and a link takes the customer to the
+  ticket. Each reply says whether it went out by email. Until now a reply was only in the
+  conversation and in the portal.
+- Files go with a reply (drop, paste or attach; up to ten, 20 MB together). They travel with the
+  email, and a portal customer can download the files sent to them, never those on a note.
+- Tickets keep when the customer and the team last spoke and the start of the last message, and
+  messages keep their files and whether they were emailed. Requires the platform's mail for emailed
+  replies (without a mailer a reply is added to the conversation and not emailed).
+
 ## 0.5.0
 
 - Escalation rules, and support contracts that say what a customer is entitled to.

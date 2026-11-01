@@ -1,17 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
   byUrgency,
+  describeBulk,
   dueAt,
   dueLabel,
   filterNameError,
   initials,
   isFilter,
   isRefined,
+  lastSpeaker,
   queueFilters,
   readState,
   refineFilters,
   requester,
   saveFilter,
+  savedFrom,
   sortTickets,
   span,
   START,
@@ -211,5 +214,55 @@ describe("saved filters", () => {
     expect(filterNameError("URGENT EMAIL", saved)).toBe("You have a saved filter with that name.");
     expect(filterNameError("URGENT EMAIL", saved, "f1")).toBeNull();
     expect(filterNameError("Chat today", saved)).toBeNull();
+  });
+});
+
+describe("whose words the preview is", () => {
+  it("is the customer's unless the team spoke after them", () => {
+    expect(lastSpeaker(t("a", { last_customer_message_at: "2026-11-01T10:00:00Z", last_agent_message_at: "2026-11-01T09:00:00Z" }))).toBe("Customer");
+    expect(lastSpeaker(t("b", { last_customer_message_at: "2026-11-01T10:00:00Z", last_agent_message_at: "2026-11-01T11:00:00Z" }))).toBe("Team");
+    expect(lastSpeaker(t("c", { last_agent_message_at: "2026-11-01T11:00:00Z" }))).toBe("Team");
+  });
+
+  it("is the request's writer before anyone has answered, and no one's when there is nothing to show", () => {
+    expect(lastSpeaker(t("d", { last_message_preview: "It jams." }))).toBe("Customer");
+    expect(lastSpeaker(t("e"))).toBeNull();
+  });
+});
+
+describe("filters read back from preferences", () => {
+  it("keeps what is well formed and drops the rest", () => {
+    expect(
+      savedFrom({ filters: [{ id: "a", name: "Urgent", query: { priority: "Urgent", n: 3 } }, { id: 1, name: "Bad" }, null, { id: "b", name: "No query" }, { id: "c", name: "Mine", query: {} }] }),
+    ).toEqual([
+      { id: "a", name: "Urgent", query: { priority: "Urgent" } },
+      { id: "c", name: "Mine", query: {} },
+    ]);
+  });
+
+  it("is empty when nothing was saved or what was saved is not a list", () => {
+    expect(savedFrom(null)).toEqual([]);
+    expect(savedFrom({})).toEqual([]);
+    expect(savedFrom({ filters: "x" })).toEqual([]);
+  });
+});
+
+describe("telling a change to many tickets", () => {
+  const label = (id: string) => `TKT-${id}`;
+  it("is a plain count when all went through", () => {
+    expect(describeBulk("Assigned to you", { succeeded: 3, failed: 0, results: [{ id: "1", ok: true }] }, label)).toEqual({ message: "Assigned to you: 3 tickets", bad: false, left: [] });
+    expect(describeBulk("Resolved", { succeeded: 1, failed: 0, results: [] }, label).message).toBe("Resolved: 1 ticket");
+  });
+
+  it("names why some did not, and leaves those to do", () => {
+    const res = { succeeded: 2, failed: 1, results: [{ id: "1", ok: true }, { id: "2", ok: false, error: { message: "a closed ticket is final" } }, { id: "3", ok: true }] };
+    expect(describeBulk("Resolved", res, label)).toEqual({ message: "Resolved: 2 of 3. TKT-2: a closed ticket is final.", bad: true, left: ["2"] });
+  });
+
+  it("says when nothing changed, and does not list every failure", () => {
+    const results = ["1", "2", "3", "4", "5"].map((id) => ({ id, ok: false }));
+    const told = describeBulk("Resolved", { succeeded: 0, failed: 5, results }, label);
+    expect(told.message).toBe("Nothing changed. TKT-1: not changed. TKT-2: not changed. TKT-3: not changed. And 2 more.");
+    expect(told.left).toHaveLength(5);
   });
 });

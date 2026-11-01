@@ -17,7 +17,8 @@ export interface Message {
   is_internal?: boolean | null;
   sent_at?: string | null;
   attachments?: Attachment[] | null;
-  emailed_to?: string | null;
+  /** A reply that went out by email to the ticket's contact. */
+  emailed?: boolean | null;
 }
 
 export interface AuditEvent {
@@ -62,7 +63,7 @@ export interface MessageItem {
   email: string | null;
   body: string;
   attachments: Attachment[];
-  emailedTo: string | null;
+  emailed: boolean;
 }
 
 export interface EventItem {
@@ -130,7 +131,7 @@ export function buildFeed(t: Story, events: AuditEvent[], name: (email: string) 
     email: t.contact_email ?? null,
     body: t.description || t.subject || "",
     attachments: [],
-    emailedTo: null,
+    emailed: false,
   });
   messages.forEach((m, i) => {
     const customer = m.author_kind === "Customer";
@@ -144,7 +145,7 @@ export function buildFeed(t: Story, events: AuditEvent[], name: (email: string) 
       email: customer ? (t.contact_email ?? null) : (m.author ?? null),
       body: m.body ?? "",
       attachments: m.attachments ?? [],
-      emailedTo: m.emailed_to ?? null,
+      emailed: !!m.emailed,
     });
   });
 
@@ -284,4 +285,30 @@ export function fileSize(bytes?: number | null): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** The part of a ticket a colleague's change shows in. */
+export interface Snapshot {
+  status?: string | null;
+  priority?: string | null;
+  assigned_to?: string | null;
+  conversation?: Message[] | null;
+}
+
+/** What a colleague changed while this ticket was open, in a line: new messages first, then who has it,
+ *  then status and priority. Null when nothing changed that is worth a notice. */
+export function whatChanged(before: Snapshot, after: Snapshot, name: (email: string) => string): string | null {
+  const seen = new Set((before.conversation ?? []).map((m) => m.id));
+  const fresh = (after.conversation ?? []).filter((m) => !seen.has(m.id));
+  const parts: string[] = [];
+  const last = fresh[fresh.length - 1];
+  if (last) {
+    const who = last.author_kind === "Customer" ? "The customer" : last.author ? name(last.author) : "A colleague";
+    const what = last.is_internal ? "added a note" : "replied";
+    parts.push(fresh.length > 1 ? `${fresh.length} new messages, the latest from ${who}` : `${who} ${what}`);
+  }
+  if ((before.assigned_to ?? null) !== (after.assigned_to ?? null)) parts.push(after.assigned_to ? `Now with ${name(after.assigned_to)}` : "No one has it now");
+  if (before.status !== after.status && after.status) parts.push(`Status is now ${after.status}`);
+  if (before.priority !== after.priority && after.priority) parts.push(`Priority is now ${after.priority}`);
+  return parts.length ? parts.join(". ") : null;
 }

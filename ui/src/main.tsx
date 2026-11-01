@@ -1,5 +1,5 @@
 // Helpdesk's own interface (Ferrum docs/plan/apps-ui.md §13, U5) at /helpdesk/: the agent inbox on
-// its home, each ticket's conversation in the ticket view, and the rest of Helpdesk's records
+// its home, each ticket's whole conversation in its workspace, and the rest of Helpdesk's records
 // (knowledge base, warranty claims, maintenance, SLAs, teams) as lists and forms in the records
 // frame, with Helpdesk's modules in the sidebar under the platform's bar. The same release draws
 // its page of the workspace's portal, "Your tickets" at /portal/tickets/ (§9.1, U7).
@@ -11,9 +11,7 @@ import { createBrowserRouter, Link, Outlet, RouterProvider, useRouteError } from
 import { bootstrap, routeBase, shell } from "@ferrum/client";
 import { ConfirmHost, EmptyState, ErrorState, Toaster } from "@ferrum/kit";
 import { RequireAuth, setFrameMode } from "@ferrum/records/frame";
-import { HelpdeskHome } from "./Home";
 import { PortalNewTicket, PortalTicket, PortalTickets } from "./Portal";
-import { TicketPage } from "./Ticket";
 import "./styles.css";
 
 /** A page of the records frame, loaded when first opened. */
@@ -81,8 +79,9 @@ const agentRoutes = [
     ),
     errorElement: <RouteError />,
     children: [
-      { index: true, element: <HelpdeskHome /> },
-      { path: "t/:id", element: <TicketPage /> },
+      // The inbox and the workspace are Helpdesk's two big screens: the first script holds only the frame.
+      { index: true, lazy: () => import("./Home").then((m) => ({ Component: m.HelpdeskHome })) },
+      { path: "t/:id", lazy: () => import("./Ticket").then((m) => ({ Component: m.TicketRoute })) },
       { path: "e/:entity", lazy: page("ListView") },
       { path: "e/:entity/:id", lazy: page("FormView") },
       { path: "r/:name", lazy: page("ReportView") },
