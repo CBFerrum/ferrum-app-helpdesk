@@ -7,7 +7,8 @@ import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-quer
 import { type FormEvent, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, errorMessage } from "@ferrum/client";
-import { Badge, Button, EmptyState, ErrorState, Field, Markdown, PageLoading, statusTone, toast, useShellTitle } from "@ferrum/kit";
+import { Badge, Button, EmptyState, ErrorState, Field, Icon, Markdown, PageLoading, statusTone, toast, useShellTitle } from "@ferrum/kit";
+import { fileSize } from "./feed";
 
 const BASE = "/api/app/helpdesk/portal/tickets";
 
@@ -28,6 +29,8 @@ export interface PortalMessage {
   author: string;
   body?: string | null;
   sent_at?: string | null;
+  /** Files the team sent with a reply. */
+  files?: { id: string; file_name: string; size?: number | null }[];
 }
 
 export interface PortalTicketDetail extends PortalTicketSummary {
@@ -256,6 +259,19 @@ export function PortalTicket() {
               <span className="faint">{when(m.sent_at)}</span>
             </div>
             <Markdown source={m.body ?? ""} />
+            {m.files && m.files.length > 0 && (
+              <ul className="hd-files" aria-label="Files">
+                {m.files.map((f) => (
+                  <li key={f.id}>
+                    <a className="hd-file" href={`${BASE}/${t.id}/files/${f.id}`} download={f.file_name}>
+                      <Icon name="file" size={14} />
+                      <span className="hd-file-name">{f.file_name}</span>
+                      {f.size ? <span className="faint">{fileSize(f.size)}</span> : null}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
           </li>
         ))}
       </ol>

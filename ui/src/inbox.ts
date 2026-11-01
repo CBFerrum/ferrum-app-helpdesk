@@ -26,6 +26,12 @@ export interface Ticket {
   _titles?: Record<string, string>;
 }
 
+/** The list an agent came from, carried by the link that opens a ticket, so next and previous walk it. */
+export interface Carried {
+  order?: string[];
+  queue?: string;
+}
+
 /** Statuses that still need someone: Open waits for an agent, Replied for the customer. */
 export const ACTIVE = ["Open", "Replied", "On Hold"];
 /** SLA states that need attention, the worse first. */
@@ -296,4 +302,44 @@ export function saveFilter(saved: SavedFilter[], name: string, state: InboxState
 export function isFilter(f: SavedFilter, state: InboxState): boolean {
   const a = writeState(stateOf(f)).toString();
   return a === writeState(state).toString();
+}
+
+/** Who wrote the last message the customer could read, so a preview is not mistaken for the other side's. */
+export function lastSpeaker(t: Ticket): "Customer" | "Team" | null {
+  const [c, a] = [Date.parse(t.last_customer_message_at ?? ""), Date.parse(t.last_agent_message_at ?? "")];
+  if (Number.isNaN(c) && Number.isNaN(a)) return t.last_message_preview ? "Customer" : null;
+  return Number.isNaN(a) || c >= a ? "Customer" : "Team";
+}
+
+/** Saved filters as stored in the person's preferences, which may be older, newer or damaged: only
+ *  what is well formed is kept. */
+export function savedFrom(value: unknown): SavedFilter[] {
+  const list = (value as { filters?: unknown } | null)?.filters;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((f): SavedFilter[] => {
+    const o = f as { id?: unknown; name?: unknown; query?: unknown } | null;
+    if (!o || typeof o.id !== "string" || typeof o.name !== "string" || !o.query || typeof o.query !== "object") return [];
+    const query = Object.fromEntries(Object.entries(o.query as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === "string"));
+    return [{ id: o.id, name: o.name, query }];
+  });
+}
+
+export interface BulkResult {
+  succeeded: number;
+  failed: number;
+  results: { id: string; ok: boolean; error?: { message?: string } }[];
+}
+
+/** What to tell the agent after a change to many tickets: a sentence, whether it went wrong, and which
+ *  tickets still need doing (they stay selected). `label` names a ticket by its number. */
+export function describeBulk(done: string, res: BulkResult, label: (id: string) => string): { message: string; bad: boolean; left: string[] } {
+  const failed = res.results.filter((r) => !r.ok);
+  if (!failed.length) return { message: `${done}: ${res.succeeded} ${res.succeeded === 1 ? "ticket" : "tickets"}`, bad: false, left: [] };
+  const why = failed
+    .slice(0, 3)
+    .map((r) => `${label(r.id)}: ${r.error?.message ?? "not changed"}`)
+    .join(". ");
+  const more = failed.length > 3 ? ` And ${failed.length - 3} more.` : "";
+  const lead = res.succeeded ? `${done}: ${res.succeeded} of ${res.succeeded + failed.length}. ` : "Nothing changed. ";
+  return { message: `${lead}${why}.${more}`, bad: true, left: failed.map((r) => r.id) };
 }

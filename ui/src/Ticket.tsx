@@ -1,269 +1,450 @@
-// A ticket as an agent works it: the conversation (the description first, as the requester wrote
-// it), a reply or an internal note, and beside them its status, priority, assignment and SLA. The
-// server stamps each new message's author and time and moves the status with the conversation (a
-// first public reply marks an open ticket replied). Every field is in the full form too.
+// A ticket as an agent works it: the whole conversation in one feed (what the customer wrote, every
+// reply and internal note, and what happened to the ticket between them), one box to answer the
+// customer or write to the team, and beside it where the service levels stand, who has it and who the
+// customer is. Everything is kept current while it is open, and a write carries the version on screen,
+// so two agents answering at once is told to the second, never overwritten.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useCallback, useState } from "react";
-import { Link, useParams } from "react-router";
-import { api, ApiError, errorMessage } from "@ferrum/client";
-import { Alert, Badge, Button, Dialog, EmptyState, ErrorState, Field, Markdown, PageLoading, statusTone, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
-import { LinkTitle, useMe } from "@ferrum/records";
-import { dueLabel, requester, type Ticket } from "./inbox";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
+import { api, ApiError, bootstrap, docPath, errorMessage } from "@ferrum/client";
+import { Alert, Badge, Button, confirmDialog, EmptyState, ErrorState, Icon, Menu, MenuItem, PageLoading, statusTone, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
+import { can, type Doc, type EntityMeta, useEntityMeta, useMe, useMetaIndex, useRecord } from "@ferrum/records";
+import { Composer, type Mode, type Outgoing } from "./Composer";
+import { Conversation } from "./Conversation";
+import { type AuditEvent, buildFeed, type FeedFilter, type Message, type Story, whatChanged } from "./feed";
+import { prefersReducedMotion, useMedia, useNames, useQuiet } from "./hooks";
+import { type Carried, initials, requester } from "./inbox";
+import { command, isTyping } from "./keys";
+import { Rail, type RailTicket } from "./Rail";
+import { ResolveDialog, type Resolution } from "./Resolve";
+import { Shortcuts } from "./Shortcuts";
 
-interface Message {
-  id?: string;
-  author_kind?: string | null;
-  author?: string | null;
-  body?: string | null;
-  is_internal?: boolean | null;
-  sent_at?: string | null;
-}
-
-interface TicketDoc extends Ticket {
-  version: number;
-  description?: string | null;
-  team?: string | null;
-  customer?: string | null;
-  resolution_details?: string | null;
+interface TicketDoc extends RailTicket, Story {
   conversation?: Message[];
+  resolution_details?: string | null;
+  updated_by?: string | null;
 }
 
-const STATUSES = ["Open", "Replied", "On Hold", "Resolved", "Closed"];
-const PRIORITIES = ["Low", "Medium", "High", "Urgent"];
-const when = (s?: string | null) => (s ? new Date(s).toLocaleString() : "");
+const KEYS = { r: "reply", n: "note", e: "resolve", a: "take", j: "next", k: "previous", d: "details", "?": "help" } as const;
 
-function Thread({ t }: { t: TicketDoc }) {
-  return (
-    <ol className="hd-thread" aria-label="Conversation">
-      <li className="hd-message hd-from-customer">
-        <div className="hd-message-head">
-          <strong>{requester(t) || "Requester"}</strong>
-          <span className="faint">{when(t.opened_at)}</span>
-        </div>
-        {t.description ? <Markdown source={t.description} /> : <p className="muted">{t.subject}</p>}
-      </li>
-      {(t.conversation ?? []).map((m, i) => (
-        <li key={m.id ?? i} className={`hd-message ${m.is_internal ? "hd-internal" : m.author_kind === "Customer" ? "hd-from-customer" : "hd-from-agent"}`}>
-          <div className="hd-message-head">
-            <strong>{m.author || m.author_kind}</strong>
-            {m.is_internal && <Badge tone="amber">Internal note</Badge>}
-            <span className="faint">{when(m.sent_at)}</span>
-          </div>
-          <Markdown source={m.body ?? ""} />
-        </li>
-      ))}
-    </ol>
-  );
+const SHORTCUTS = [
+  { keys: ["r"], says: "Reply to the customer" },
+  { keys: ["n"], says: "Write an internal note" },
+  { keys: ["e"], says: "Resolve the ticket" },
+  { keys: ["a"], says: "Assign it to me" },
+  { keys: ["j"], says: "Next ticket in the list you came from" },
+  { keys: ["k"], says: "Previous ticket" },
+  { keys: ["d"], says: "Show or hide the details" },
+  { keys: ["/"], says: "In a reply: find a saved reply" },
+  { keys: ["Ctrl or ⌘", "Enter"], says: "Send what you have written" },
+  { keys: ["?"], says: "This list" },
+];
+
+const key = (id: string) => ["peek", "Ticket", id];
+
+/** What to tell the agent about a message just saved: whether it reached the customer by email. */
+function sentNote(saved: TicketDoc, internal: boolean): string {
+  const last = saved.conversation?.[saved.conversation.length - 1];
+  if (internal) return "Note added";
+  return last?.emailed ? `Reply sent. Emailed to ${saved.contact_email}.` : "Reply added. No email went out, but the customer can read it in the portal.";
 }
 
-/** A save with the version the page showed: someone else's change in between is not overwritten. */
-function useSave(t: TicketDoc) {
+/** The address of a ticket that works from anywhere, which takes a customer to the portal. */
+async function copyLink(id: string) {
+  const host = bootstrap()?.workspace.host ?? location.host;
+  try {
+    await navigator.clipboard.writeText(`${location.protocol}//${host}/open/Ticket/${id}`);
+    toast("Link copied");
+  } catch {
+    toast("Your browser did not allow copying", "error");
+  }
+}
+
+export function TicketRoute() {
+  const { id = "" } = useParams();
+  const meta = useEntityMeta("Ticket");
+  if (meta.error) return <ErrorState error={meta.error} onRetry={() => void meta.refetch()} />;
+  if (!meta.data) return <PageLoading label="Loading the ticket" />;
+  return <Workspace key={id} meta={meta.data} id={id} />;
+}
+
+function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
   const qc = useQueryClient();
-  return async (patch: Record<string, unknown>, done: string): Promise<boolean> => {
-    try {
-      const saved = await api.patch<TicketDoc>(`/api/v1/Ticket/${t.id}`, patch, { ifMatch: t.version });
-      qc.setQueryData(["helpdesk", "ticket", t.id], saved);
-      void qc.invalidateQueries({ queryKey: ["helpdesk", "queue"] });
-      toast(done);
-      return true;
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        void qc.invalidateQueries({ queryKey: ["helpdesk", "ticket", t.id] });
-        toast("Someone else changed this ticket meanwhile; it shows their change now. Try again.", "error");
-      } else {
-        toast(errorMessage(err), "error");
-      }
-      return false;
-    }
-  };
-}
+  const navigate = useNavigate();
+  const carried = (useLocation().state as Carried | null) ?? {};
+  const [asked] = useSearchParams();
+  const me = useMe().data?.user;
+  const { name, people } = useNames();
+  const index = useMetaIndex().data;
+  const { record, save } = useRecord(meta, id);
+  const t = record.data as TicketDoc | undefined;
+  const [filter, setFilter] = useState<FeedFilter>("all");
+  const [mode, setMode] = useState<Mode>("reply");
+  const [resolving, setResolving] = useState<"Resolved" | "Closed" | null>(null);
+  const [help, setHelp] = useState(false);
+  const [conflict, setConflict] = useState<string | null>(null);
+  const wide = useMedia("(min-width: 1000px)");
+  const [railChoice, setRailChoice] = useState<boolean | null>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
+  const bottom = useRef<HTMLDivElement>(null);
+  const feedEnd = useRef<HTMLLIElement>(null);
+  const arrived = useRef(false);
+  const seen = useRef<TicketDoc | null>(null);
+  useShellTitle(t ? `${t.number ?? ""} ${t.subject ?? ""}`.trim() : null);
 
-function Composer({ t, save }: { t: TicketDoc; save: ReturnType<typeof useSave> }) {
-  const [body, setBody] = useState("");
-  const [internal, setInternal] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const send = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!body.trim()) return;
-    setBusy(true);
-    // Rows the ticket has keep their ids (unchanged); the new one has none.
-    const conversation = [...(t.conversation ?? []).map((m) => ({ id: m.id })), { author_kind: "Agent", body: body.trim(), is_internal: internal }];
-    if (await save({ conversation }, internal ? "Note added" : "Reply added")) setBody("");
-    setBusy(false);
-  };
-  return (
-    <form className="hd-composer card" onSubmit={send}>
-      <div className="card-body stack">
-        <Field label={internal ? "Internal note (agents only)" : "Reply"} htmlFor="hd-reply">
-          <textarea id="hd-reply" className="input" rows={5} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Markdown works here" />
-        </Field>
-        <div className="row hd-composer-foot">
-          <label className="row">
-            <input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} /> Internal note
-          </label>
-          <Button type="submit" variant="primary" loading={busy} disabled={!body.trim()}>
-            {internal ? "Add note" : "Add reply"}
-          </Button>
-        </div>
-      </div>
-    </form>
-  );
-}
-
-/** Resolving or closing asks for the resolution, which the ticket requires then. */
-function StatusControl({ t, save }: { t: TicketDoc; save: ReturnType<typeof useSave> }) {
-  const [pending, setPending] = useState<string | null>(null);
-  const [resolution, setResolution] = useState("");
-  const change = (status: string) => {
-    if ((status === "Resolved" || status === "Closed") && !t.resolution_details) {
-      setResolution("");
-      setPending(status);
-      return;
-    }
-    void save({ status }, `Status: ${status}`);
-  };
-  return (
-    <>
-      <Field label="Status" htmlFor="hd-status">
-        <select id="hd-status" className="input" value={t.status ?? "Open"} onChange={(e) => change(e.target.value)}>
-          {STATUSES.map((s) => (
-            <option key={s}>{s}</option>
-          ))}
-        </select>
-      </Field>
-      <Dialog
-        open={!!pending}
-        onClose={() => setPending(null)}
-        title={`${pending === "Closed" ? "Close" : "Resolve"} the ticket`}
-        footer={
-          <>
-            <Button onClick={() => setPending(null)}>Cancel</Button>
-            <Button
-              variant="primary"
-              disabled={!resolution.trim()}
-              onClick={async () => {
-                if (pending && (await save({ status: pending, resolution_details: resolution.trim() }, `Status: ${pending}`))) setPending(null);
-              }}
-            >
-              {pending === "Closed" ? "Close" : "Resolve"}
-            </Button>
-          </>
-        }
-      >
-        <Field label="How it was resolved" htmlFor="hd-resolution" required>
-          <textarea id="hd-resolution" className="input" rows={4} value={resolution} onChange={(e) => setResolution(e.target.value)} />
-        </Field>
-      </Dialog>
-    </>
-  );
-}
-
-function Details({ t, save, me }: { t: TicketDoc; save: ReturnType<typeof useSave>; me?: string }) {
-  const responseDue = !t.first_responded_at && dueLabel(t.response_by);
-  const resolutionDue = !["Resolved", "Closed"].includes(t.status ?? "") && dueLabel(t.resolution_by);
-  return (
-    <aside className="hd-details card" aria-label="Ticket details">
-      <div className="card-body stack">
-        <StatusControl t={t} save={save} />
-        <Field label="Priority" htmlFor="hd-priority">
-          <select id="hd-priority" className="input" value={t.priority ?? "Medium"} onChange={(e) => void save({ priority: e.target.value }, `Priority: ${e.target.value}`)}>
-            {PRIORITIES.map((p) => (
-              <option key={p}>{p}</option>
-            ))}
-          </select>
-        </Field>
-        <div className="hd-detail">
-          <span className="hd-detail-label">Assigned to</span>
-          <span>{t.assigned_to || <span className="muted">Nobody</span>}</span>
-          {me && t.assigned_to !== me && (
-            <Button size="sm" onClick={() => void save({ assigned_to: me }, "Assigned to you")}>
-              Assign to me
-            </Button>
-          )}
-        </div>
-        {t.team && (
-          <div className="hd-detail">
-            <span className="hd-detail-label">Team</span>
-            <LinkTitle to="SupportTeam" id={t.team} />
-          </div>
-        )}
-        <div className="hd-detail">
-          <span className="hd-detail-label">From</span>
-          {t.customer ? <LinkTitle to="Customer" id={t.customer} title={t.customer_name ?? undefined} /> : <span>{requester(t) || "—"}</span>}
-          {t.contact_email && <a href={`mailto:${t.contact_email}`}>{t.contact_email}</a>}
-        </div>
-        {(t.sla_status || responseDue || resolutionDue) && (
-          <div className="hd-detail">
-            <span className="hd-detail-label">Service level</span>
-            {t.sla_status && <Badge tone={t.sla_status === "Breached" ? "red" : t.sla_status === "At Risk" ? "amber" : "green"}>{t.sla_status}</Badge>}
-            {responseDue && <span className={responseDue.startsWith("overdue") ? "hd-overdue" : "faint"}>First response {responseDue}</span>}
-            {resolutionDue && <span className={resolutionDue.startsWith("overdue") ? "hd-overdue" : "faint"}>Resolution {resolutionDue}</span>}
-          </div>
-        )}
-        <Link to={`/e/Ticket/${t.id}`}>Every field, in the form</Link>
-      </div>
-    </aside>
-  );
-}
-
-export function TicketPage() {
-  const { id } = useParams();
-  const me = useMe().data?.user.email;
-  const qc = useQueryClient();
-  const q = useQuery({
-    queryKey: ["helpdesk", "ticket", id],
-    queryFn: ({ signal }) => api.get<TicketDoc>(`/api/v1/Ticket/${id}`, undefined, signal),
-    enabled: !!id,
+  const audit = useQuery({
+    queryKey: ["helpdesk", "audit", id],
+    retry: false,
+    queryFn: ({ signal }) =>
+      api.get<{ events: AuditEvent[] }>(docPath("Ticket", id, "audit"), undefined, signal).catch((e) => {
+        // Reading a ticket does not always include its history, and the conversation does not wait for it.
+        if (e instanceof ApiError && e.status === 403) return { events: [] as AuditEvent[] };
+        throw e;
+      }),
   });
-  useShellTitle(q.data ? `${q.data.number ?? ""} ${q.data.subject ?? ""}`.trim() : null);
+  const feed = useMemo(() => (t ? buildFeed(t, audit.data?.events ?? [], name) : []), [t, audit.data, name]);
+
+  const refresh = useCallback(() => {
+    void qc.invalidateQueries({ queryKey: key(id) });
+    void qc.invalidateQueries({ queryKey: ["helpdesk", "audit", id] });
+    void qc.invalidateQueries({ queryKey: ["helpdesk", "files", id] });
+    void qc.invalidateQueries({ queryKey: ["helpdesk", "queue"] });
+  }, [qc, id]);
+  const soon = useQuiet(refresh, 400);
   useLiveEntity(
     "Ticket",
     useCallback(
-      (e: { id?: string }) => {
-        if (e.id === id) void qc.invalidateQueries({ queryKey: ["helpdesk", "ticket", id] });
+      (e) => {
+        if (e.id === id) soon();
       },
-      [qc, id],
+      [id, soon],
     ),
   );
-  if (q.error) {
-    if (q.error instanceof ApiError && q.error.status === 404) {
+
+  // A colleague's change while this is open is told in a line, by comparing what is on screen with what
+  // arrived; the agent's own writes are not news.
+  useEffect(() => {
+    if (!t) return;
+    const before = seen.current;
+    seen.current = t;
+    if (!before || before.version === t.version || t.updated_by === me?.id) return;
+    const said = whatChanged(before, t, name);
+    if (said) toast(said, "info");
+  }, [t, me?.id, name]);
+
+  // Open at the latest word, as a conversation does, with the box ready when the inbox asked to reply.
+  useEffect(() => {
+    // Once the history is in too, so that what arrives late does not push the end out of sight.
+    if (!t || audit.isLoading || arrived.current) return;
+    arrived.current = true;
+    (bottom.current ?? feedEnd.current)?.scrollIntoView({ block: "end" });
+    if (asked.has("reply") && t.status !== "Closed") input.current?.focus();
+  }, [t, audit.isLoading, asked]);
+
+  const status = t?.status ?? "Open";
+  const closed = status === "Closed";
+  const done = status === "Resolved" || closed;
+  const writable = can(meta.permissions, "write") && !closed;
+  const order = carried.order ?? [];
+  const at = order.indexOf(id);
+  const previous = at > 0 ? order[at - 1] : null;
+  const next = at >= 0 && at < order.length - 1 ? order[at + 1] : null;
+  const go = useCallback((to: string | null) => to && navigate(`/t/${to}`, { replace: true, state: carried }), [navigate, carried]);
+  const home = carried.queue ? `/?queue=${carried.queue}` : "/";
+
+  /** A write against the version on screen. A newer one is told to the agent and shown, not overwritten. */
+  const write = async (body: Record<string, unknown>): Promise<TicketDoc | null> => {
+    if (!t) return null;
+    try {
+      const saved = await api.patch<TicketDoc>(docPath("Ticket", id), body, { ifMatch: Number(t.version) });
+      seen.current = saved;
+      qc.setQueryData(key(id), (old: Doc | undefined) => ({ ...saved, _titles: { ...old?._titles, ...saved._titles } }));
+      void qc.invalidateQueries({ queryKey: ["helpdesk", "audit", id] });
+      void qc.invalidateQueries({ queryKey: ["helpdesk", "files", id] });
+      void qc.invalidateQueries({ queryKey: ["helpdesk", "queue"] });
+      return saved;
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 409 || err.status === 412)) {
+        setConflict("This ticket changed while you were writing. It shows the change now, and your words are kept. Read it, then send again if it still fits.");
+        refresh();
+      } else {
+        toast(errorMessage(err), "error");
+      }
+      return null;
+    }
+  };
+
+  const existing = () => (t?.conversation ?? []).map((m) => ({ id: m.id }));
+
+  const send = async (m: Outgoing): Promise<boolean> => {
+    if (!t || !me) return false;
+    const mineAlready = (t.assigned_to ?? "").toLowerCase() === me.email.toLowerCase();
+    const takeover: Record<string, unknown> = {};
+    if (!m.internal && !mineAlready) {
+      if (t.assigned_to) {
+        const ok = await confirmDialog({
+          title: `${name(t.assigned_to)} has this ticket`,
+          message: "Reply anyway? Sending also takes the ticket over, so the team can see you have it.",
+          confirmLabel: "Reply and take it",
+          cancelLabel: "Not yet",
+        });
+        if (!ok) return false;
+      }
+      takeover.assigned_to = me.email.toLowerCase();
+    }
+    const saved = await write({
+      conversation: [...existing(), { author_kind: "Agent", body: m.body, is_internal: m.internal, attachments: m.files.map((f) => ({ id: f.id })) }],
+      ...takeover,
+    });
+    if (!saved) return false;
+    setConflict(null);
+    toast(sentNote(saved, m.internal));
+    requestAnimationFrame(() => (bottom.current ?? feedEnd.current)?.scrollIntoView({ block: "end", behavior: prefersReducedMotion() ? "auto" : "smooth" }));
+    return true;
+  };
+
+  const setStatus = async (to: string) => {
+    if (!t) return;
+    if (to === "Resolved" || (to === "Closed" && !t.resolution_details)) {
+      setResolving(to);
+      return;
+    }
+    if (to === "Closed") {
+      const ok = await confirmDialog({ title: "Close this ticket for good?", message: "A closed ticket is final. It cannot be reopened and nothing more can be written on it.", confirmLabel: "Close it", danger: true });
+      if (!ok) return;
+    }
+    if (await write({ status: to })) toast(`Status: ${to}`);
+  };
+
+  const finish = async (r: Resolution): Promise<boolean> => {
+    if (!t || !resolving) return false;
+    const reply = r.reply ? [{ author_kind: "Agent", body: r.resolution, is_internal: false }] : [];
+    const saved = await write({ status: resolving, resolution_details: r.resolution, ...(reply.length ? { conversation: [...existing(), ...reply] } : {}) });
+    if (!saved) return false;
+    toast(r.reply ? `${resolving}. ${sentNote(saved, false)}` : resolving);
+    // The next ticket of the list is the next job.
+    if (next) go(next);
+    else if (order.length) navigate(home);
+    return true;
+  };
+
+  const take = () => {
+    if (me && writable) void save("assigned_to", me.email.toLowerCase());
+  };
+
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      if (isTyping(e.target as Element | null)) return;
+      const c = command(e, KEYS);
+      if (!c) return;
+      e.preventDefault();
+      switch (c) {
+        case "reply":
+        case "note":
+          if (!writable) return;
+          setMode(c === "reply" ? "reply" : "note");
+          input.current?.focus();
+          break;
+        case "resolve":
+          if (writable && !done) setResolving("Resolved");
+          break;
+        case "take":
+          take();
+          break;
+        case "next":
+          go(next);
+          break;
+        case "previous":
+          go(previous);
+          break;
+        case "details":
+          setRailChoice((v) => !(v ?? wide));
+          break;
+        case "help":
+          setHelp(true);
+          break;
+      }
+    };
+    document.addEventListener("keydown", on);
+    return () => document.removeEventListener("keydown", on);
+  });
+
+  if (record.error) {
+    if (record.error instanceof ApiError && record.error.status === 404) {
       return (
         <EmptyState title="This ticket no longer exists">
           <Link to="/">Back to the inbox</Link>
         </EmptyState>
       );
     }
-    return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+    return <ErrorState error={record.error} onRetry={() => void record.refetch()} />;
   }
-  if (!q.data) return <PageLoading label="Loading the ticket" />;
-  return <TicketBody t={q.data} me={me} />;
-}
+  if (!t || !me) return <PageLoading label="Loading the ticket" />;
 
-function TicketBody({ t, me }: { t: TicketDoc; me?: string }) {
-  const save = useSave(t);
-  const closed = t.status === "Closed";
+  const showRail = railChoice ?? wide;
+  const hasReplies = !!index?.entities.some((e) => e.name === "SavedReply");
+  const owner = t.assigned_to && t.assigned_to.toLowerCase() !== me.email.toLowerCase() ? name(t.assigned_to) : null;
+  const who = requester(t);
+  const about = {
+    ticket: { number: t.number, subject: t.subject },
+    contact: { name: t.contact_name, company: t.customer_name, email: t.contact_email },
+    agent: { name: me.full_name, email: me.email },
+  };
+  const canWarranty = !!t.item && !!t.customer && meta.actions.some((a) => a.name === "make_warranty_claim");
+
   return (
-    <div className="stack">
-      <div className="page-head">
-        <div>
-          <p className="page-sub">
-            <Link to="/">Inbox</Link> · {t.number}
+    <div className="hd-ws">
+      <header className="hd-ws-head">
+        <div className="hd-ws-title">
+          <p className="crumbs">
+            <Link to={home}>Inbox</Link>
+            <Icon name="chevronRight" size={12} />
+            <span>{t.number}</span>
           </p>
           <h1 className="page-title">{t.subject || "No subject"}</h1>
           <p className="row">
-            <Badge tone={statusTone(t.status)}>{t.status}</Badge>
-            {t.priority && <Badge tone={t.priority === "Urgent" ? "red" : t.priority === "High" ? "amber" : "neutral"}>{t.priority}</Badge>}
+            <Badge tone={statusTone(status)}>{status}</Badge>
+            {t.priority && t.priority !== "Medium" && <Badge tone={t.priority === "Urgent" ? "red" : t.priority === "High" ? "amber" : "neutral"}>{t.priority}</Badge>}
+            {t.assigned_to ? (
+              <span className="hd-owner" title={t.assigned_to}>
+                <span className="hd-avatar hd-avatar-sm" aria-hidden="true">
+                  {initials(name(t.assigned_to))}
+                </span>
+                {owner ?? "You have it"}
+              </span>
+            ) : (
+              <span className="faint">Nobody has it yet</span>
+            )}
+            {who && <span className="faint">from {who}</span>}
           </p>
         </div>
-      </div>
-      <div className="hd-ticket-layout">
-        <div className="stack">
-          <Thread t={t} />
-          {closed ? <Alert tone="info">This ticket is closed. Reopen it to reply.</Alert> : <Composer t={t} save={save} />}
+        <div className="page-actions">
+          {order.length > 0 && (
+            <span className="hd-step" role="group" aria-label="Tickets in your list">
+              <button type="button" className="icon-btn" aria-label="Previous ticket" title="Previous ticket (k)" disabled={!previous} onClick={() => go(previous)}>
+                <Icon name="up" />
+              </button>
+              <button type="button" className="icon-btn" aria-label="Next ticket" title="Next ticket (j)" disabled={!next} onClick={() => go(next)}>
+                <Icon name="down" />
+              </button>
+            </span>
+          )}
+          {writable && !done && (
+            <Button variant="primary" icon="check" onClick={() => setResolving("Resolved")} title="Resolve (e)">
+              Resolve
+            </Button>
+          )}
+          {writable && status === "Resolved" && <Button onClick={() => void setStatus("Open")}>Reopen</Button>}
+          <button type="button" className="btn btn-default btn-md" aria-pressed={showRail} onClick={() => setRailChoice(!showRail)} title="Details (d)">
+            Details
+          </button>
+          <Menu ariaLabel="More actions" icon="chevronDown" buttonClass="btn btn-default btn-md">
+            {(close) => (
+              <>
+                {writable && status !== "On Hold" && !done && (
+                  <MenuItem
+                    onSelect={() => {
+                      close();
+                      void setStatus("On Hold");
+                    }}
+                  >
+                    Put on hold
+                  </MenuItem>
+                )}
+                {writable && status === "On Hold" && (
+                  <MenuItem
+                    onSelect={() => {
+                      close();
+                      void setStatus("Open");
+                    }}
+                  >
+                    Take off hold
+                  </MenuItem>
+                )}
+                {writable && !closed && (
+                  <MenuItem
+                    danger
+                    onSelect={() => {
+                      close();
+                      void setStatus("Closed");
+                    }}
+                  >
+                    Close for good…
+                  </MenuItem>
+                )}
+                {canWarranty && writable && (
+                  <MenuItem
+                    onSelect={() => {
+                      close();
+                      void api
+                        .post<{ id?: string }>(docPath("Ticket", id, "actions", "make_warranty_claim"), {})
+                        .then((made) => made.id && navigate(`/e/WarrantyClaim/${made.id}`))
+                        .catch((err) => toast(errorMessage(err), "error"));
+                    }}
+                  >
+                    Create a warranty claim
+                  </MenuItem>
+                )}
+                <MenuItem
+                  onSelect={() => {
+                    close();
+                    void copyLink(id);
+                  }}
+                >
+                  Copy link to this ticket
+                </MenuItem>
+                <MenuItem
+                  onSelect={() => {
+                    close();
+                    setHelp(true);
+                  }}
+                >
+                  Keyboard shortcuts
+                </MenuItem>
+              </>
+            )}
+          </Menu>
         </div>
-        <Details t={t} save={save} me={me} />
+      </header>
+
+      {closed && <Alert tone="info">This ticket is closed for good. You can still read everything on it.</Alert>}
+
+      <div className="hd-ws-body" data-rail={showRail || undefined}>
+        <div className="hd-ws-main">
+          {audit.error && <p className="faint">What happened to the ticket could not be loaded; the conversation is complete.</p>}
+          <Conversation items={feed} filter={filter} onFilter={setFilter} address={t.contact_email ?? null} endRef={feedEnd} />
+          {writable ? (
+            <div ref={bottom}>
+              <Composer
+                ticket={id}
+                mode={mode}
+                onMode={setMode}
+                inputRef={input}
+                to={{ name: t.contact_name || t.customer_name || "the customer", email: t.contact_email ?? null }}
+                assignee={owner ? `${owner} has this ticket.` : null}
+                about={about}
+                replies={hasReplies}
+                conflict={conflict}
+                onSend={send}
+              />
+            </div>
+          ) : (
+            !closed && <p className="muted">You can read this ticket but not answer it.</p>
+          )}
+        </div>
+        {showRail && <Rail meta={meta} t={t} me={me.email} people={people} name={name} editable={writable} save={save} />}
       </div>
+
+      <ResolveDialog
+        open={!!resolving}
+        status={resolving ?? "Resolved"}
+        what={t.number ?? "the ticket"}
+        tell={t.contact_email ? (t.contact_name ?? t.contact_email) : null}
+        onClose={() => setResolving(null)}
+        onSubmit={finish}
+      />
+      <Shortcuts open={help} onClose={() => setHelp(false)} title="Keyboard shortcuts" rows={SHORTCUTS} />
     </div>
   );
 }

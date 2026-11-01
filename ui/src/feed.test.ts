@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildFeed, counts, dayKey, dayLabel, type EventItem, fileSize, filterFeed, type MessageItem, type Story } from "./feed";
+import { buildFeed, counts, dayKey, dayLabel, type EventItem, fileSize, filterFeed, type MessageItem, type Story, whatChanged } from "./feed";
 
 const name = (email: string) => ({ "priya@acme.test": "Priya" })[email] ?? email;
 
@@ -47,13 +47,13 @@ describe("a ticket's feed", () => {
     const feed = buildFeed(
       story({
         conversation: [
-          { id: "1", author_kind: "Agent", author: "priya@acme.test", body: "See attached.", sent_at: "2026-11-01T10:00:00Z", emailed_to: "ada@shop.test", attachments: [{ id: "f1", file_name: "fix.pdf", size: 2048 }] },
+          { id: "1", author_kind: "Agent", author: "priya@acme.test", body: "See attached.", sent_at: "2026-11-01T10:00:00Z", emailed: true, attachments: [{ id: "f1", file_name: "fix.pdf", size: 2048 }] },
         ],
       }),
       [],
       name,
     );
-    expect(messages(feed)[1]).toMatchObject({ emailedTo: "ada@shop.test", attachments: [{ file_name: "fix.pdf" }] });
+    expect(messages(feed)[1]).toMatchObject({ emailed: true, attachments: [{ file_name: "fix.pdf" }] });
   });
 
   it("tells status changes from the ticket's own history, with who made them when the trail knows", () => {
@@ -220,5 +220,30 @@ describe("days and sizes", () => {
 
   it("says a file's size the way a person would", () => {
     expect([fileSize(500), fileSize(2048), fileSize(3 * 1024 * 1024), fileSize(null), fileSize(0)]).toEqual(["500 B", "2 KB", "3.0 MB", "", ""]);
+  });
+});
+
+describe("what a colleague changed meanwhile", () => {
+  const before = { status: "Open", priority: "Medium", assigned_to: "priya@acme.test", conversation: [{ id: "1", author_kind: "Customer", body: "Hi" }] };
+  const reply = { id: "2", author_kind: "Agent", author: "raj@acme.test", body: "Hello" };
+
+  it("says who replied or wrote a note, and the customer's reply as the customer's", () => {
+    expect(whatChanged(before, { ...before, conversation: [...before.conversation, reply] }, name)).toBe("raj@acme.test replied");
+    expect(whatChanged(before, { ...before, conversation: [...before.conversation, { ...reply, is_internal: true, author: "priya@acme.test" }] }, name)).toBe("Priya added a note");
+    expect(whatChanged(before, { ...before, conversation: [...before.conversation, { id: "3", author_kind: "Customer", body: "?" }] }, name)).toBe("The customer replied");
+  });
+
+  it("counts several new messages and names the latest", () => {
+    const after = { ...before, conversation: [...before.conversation, reply, { id: "3", author_kind: "Customer", body: "Thanks" }] };
+    expect(whatChanged(before, after, name)).toBe("2 new messages, the latest from The customer");
+  });
+
+  it("tells who has the ticket, its status and its priority", () => {
+    expect(whatChanged(before, { ...before, assigned_to: "raj@acme.test", status: "On Hold", priority: "Urgent" }, name)).toBe("Now with raj@acme.test. Status is now On Hold. Priority is now Urgent");
+    expect(whatChanged(before, { ...before, assigned_to: null }, name)).toBe("No one has it now");
+  });
+
+  it("says nothing when nothing changed", () => {
+    expect(whatChanged(before, { ...before }, name)).toBeNull();
   });
 });

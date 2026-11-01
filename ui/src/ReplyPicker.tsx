@@ -1,0 +1,221 @@
+// Saved replies, found from the composer: type to search, arrows and Enter to choose. A reply is
+// filled in from the ticket before it goes into the text, so what you read is what is sent.
+
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { type FormEvent, type KeyboardEvent, useId, useMemo, useRef, useState } from "react";
+import { Link } from "react-router";
+import { api, docPath, errorMessage } from "@ferrum/client";
+import { Alert, Button, Dialog, ErrorState, Field, Spinner, toast, useDismiss } from "@ferrum/kit";
+import { LinkInput, useMe } from "@ferrum/records";
+import { useRemembered } from "./hooks";
+import { fill, type FillWith, pick, SCOPE_FILTERS, type ReplyScope, type SavedReply, type ScopeFilter } from "./replies";
+
+const KEY = ["helpdesk", "replies"];
+
+export function useReplies(enabled = true) {
+  return useQuery({
+    queryKey: KEY,
+    enabled,
+    staleTime: 60_000,
+    queryFn: ({ signal }) =>
+      api.get<{ rows: SavedReply[] }>("/api/v1/SavedReply", { fields: "title,body,scope,team,uses,created_by", sort: "uses desc", limit: 500 }, signal).then((r) => r.rows),
+  });
+}
+
+const WHO: Record<ReplyScope, string> = { Personal: "Yours", Team: "Team", Everyone: "Everyone" };
+
+/** Keeping what was typed as a reply to use again. */
+function SaveReply({ body, onClose }: { body: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [title, setTitle] = useState("");
+  const [scope, setScope] = useState<ReplyScope>("Personal");
+  const [team, setTeam] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const ready = title.trim() && (scope !== "Team" || team);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!ready) return;
+    setBusy(true);
+    try {
+      await api.post("/api/v1/SavedReply", { title: title.trim(), scope, team: scope === "Team" ? team : null, body });
+      void qc.invalidateQueries({ queryKey: KEY });
+      toast("Saved as a reply");
+      onClose();
+    } catch (err) {
+      setProblem(errorMessage(err));
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title="Save as a saved reply"
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" type="submit" form="hd-save-reply" loading={busy} disabled={!ready}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      <form id="hd-save-reply" className="stack" onSubmit={submit}>
+        {problem && <Alert tone="error">{problem}</Alert>}
+        <Field label="Name" htmlFor="hd-reply-title" required>
+          <input id="hd-reply-title" className="input" maxLength={120} value={title} onChange={(e) => setTitle(e.target.value)} />
+        </Field>
+        <Field label="Who can use it" htmlFor="hd-reply-scope">
+          <select id="hd-reply-scope" className="select" value={scope} onChange={(e) => setScope(e.target.value as ReplyScope)}>
+            <option value="Personal">Only me</option>
+            <option value="Team">A team</option>
+            <option value="Everyone">Every agent</option>
+          </select>
+        </Field>
+        {scope === "Team" && (
+          <Field label="Team" htmlFor="hd-reply-team" required>
+            <LinkInput to="SupportTeam" id="hd-reply-team" value={team} onChange={setTeam} required />
+          </Field>
+        )}
+        <p className="faint">
+          It is saved as typed. To have the customer's name filled in each time, write <code>{"{{customer.first_name}}"}</code> in its place.
+        </p>
+      </form>
+    </Dialog>
+  );
+}
+
+export function ReplyPicker({ about, draft, onPick, onClose }: { about: FillWith; draft: string; onPick: (text: string) => void; onClose: () => void }) {
+  const qc = useQueryClient();
+  const me = useMe().data?.user;
+  const list = useReplies();
+  const [query, setQuery] = useState("");
+  const [scope, setScope] = useRemembered<ScopeFilter>("helpdesk:reply-scope", "all");
+  const [at, setAt] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const id = useId();
+  useDismiss(box, !saving, onClose);
+
+  const found = useMemo(() => pick(list.data ?? [], { query, scope, me: me?.id }), [list.data, query, scope, me?.id]);
+  const active = Math.min(at, found.length - 1);
+  const chosen: SavedReply | undefined = found[active];
+  const filled = chosen ? fill(chosen.body, about) : null;
+
+  const choose = (r: SavedReply) => {
+    // Counting a use is for ordering the list next time; it never holds up the reply.
+    void api
+      .post(docPath("SavedReply", r.id, "actions", "used"), {})
+      .then(() => qc.invalidateQueries({ queryKey: KEY }))
+      .catch(() => {});
+    onPick(fill(r.body, about).text);
+  };
+  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setAt(Math.min(found.length - 1, active + 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setAt(Math.max(0, active - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (chosen) choose(chosen);
+    }
+  };
+
+  return (
+    <div ref={box} className="hd-picker" role="dialog" aria-label="Saved replies">
+      <div className="hd-picker-top">
+        <input
+          className="input"
+          type="search"
+          role="combobox"
+          aria-label="Search saved replies"
+          aria-expanded="true"
+          aria-controls={`${id}-list`}
+          aria-activedescendant={chosen ? `${id}-${chosen.id}` : undefined}
+          aria-autocomplete="list"
+          placeholder="Find a saved reply…"
+          autoFocus
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setAt(0);
+          }}
+          onKeyDown={onKey}
+        />
+        <div className="segmented" role="group" aria-label="Whose replies">
+          {SCOPE_FILTERS.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              aria-pressed={scope === f.id}
+              onClick={() => {
+                setScope(f.id);
+                setAt(0);
+              }}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="hd-picker-body">
+        {list.error ? (
+          <ErrorState error={list.error} onRetry={() => void list.refetch()} title="Saved replies did not load" />
+        ) : !list.data ? (
+          <Spinner label="Loading saved replies" />
+        ) : !found.length ? (
+          <p className="muted hd-picker-empty">
+            {list.data.length ? (query ? `Nothing matches “${query}”.` : "None here yet. Try another group above.") : "No saved replies yet. Write one and save it with the button below."}
+          </p>
+        ) : (
+          <>
+            <ul role="listbox" id={`${id}-list`} aria-label="Saved replies" className="hd-picker-list">
+              {found.map((r, i) => (
+                <li
+                  key={r.id}
+                  id={`${id}-${r.id}`}
+                  role="option"
+                  aria-selected={i === active}
+                  data-active={i === active || undefined}
+                  className="hd-picker-opt"
+                  onMouseEnter={() => setAt(i)}
+                  onClick={() => choose(r)}
+                >
+                  <span className="hd-picker-title">{r.title}</span>
+                  <span className="faint">{WHO[r.scope]}</span>
+                </li>
+              ))}
+            </ul>
+            {filled && (
+              <div className="hd-picker-preview" aria-live="polite">
+                <h3>For this ticket</h3>
+                <p className="hd-picker-text">{filled.text}</p>
+                {filled.missing.length > 0 && (
+                  <p className="hd-warn">
+                    {filled.missing.map((m) => `{{${m}}}`).join(", ")} cannot be filled from this ticket. It stays in the text for you to write, and sending waits for it.
+                  </p>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      <div className="hd-picker-foot">
+        <Link to="/e/SavedReply" className="faint">
+          Manage saved replies
+        </Link>
+        <span className="spacer" />
+        <Button size="sm" disabled={!draft.trim()} onClick={() => setSaving(true)}>
+          Save what I have written
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onClose}>
+          Close
+        </Button>
+      </div>
+      {saving && <SaveReply body={draft} onClose={() => setSaving(false)} />}
+    </div>
+  );
+}
