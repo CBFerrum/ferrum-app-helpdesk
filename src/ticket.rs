@@ -485,8 +485,8 @@ impl DocHook for TicketHook {
             old.as_ref().map(|o| rows(o, "conversation").iter().filter_map(|r| s(r, "id").map(str::to_string)).collect()).unwrap_or_default();
         let contact = s(doc, "contact_email").map(str::to_string);
         let (ticket, number, title) = (id(doc, "id"), s(doc, "number").unwrap_or("Ticket").to_string(), s(doc, "subject").unwrap_or_default().to_string());
-        // Asked once, when a public reply needs it: the address the reply is emailed to, if there is one.
-        let mut emailed: Option<Option<String>> = None;
+        // Asked once, when a public reply needs it: whether the reply goes out by email.
+        let mut emailed: Option<bool> = None;
         let mut last_new = None;
         let mut messages = rows(doc, "conversation");
         for m in messages.iter_mut().filter(|m| !s(m, "id").is_some_and(|i| known.contains(i))) {
@@ -507,11 +507,9 @@ impl DocHook for TicketHook {
             set(m, "attachments", Value::Array(files));
             if kind == "Agent" && !b(m, "is_internal") {
                 if emailed.is_none() {
-                    emailed = Some(outgoing::reply_address(hc, old.is_some(), contact.as_deref(), &number, &title).await?);
+                    emailed = Some(outgoing::goes_by_email(hc, old.is_some(), contact.as_deref(), &number, &title).await?);
                 }
-                if let Some(Some(to)) = &emailed {
-                    set(m, "emailed_to", to.clone());
-                }
+                set(m, "emailed", emailed == Some(true));
             }
             last_new = Some((kind == "Customer", b(m, "is_internal")));
             set(m, "author_kind", kind);
