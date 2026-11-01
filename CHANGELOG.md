@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.0
+
+- Escalation rules, and service contracts that say what a customer is entitled to.
+
 ## 0.4.1
 
 - The interface starts faster: its first download holds the frame and the app's own pages, and

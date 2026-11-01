@@ -51,9 +51,10 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
             }
             let ctx = Ctx::system(tenant, schema);
             let refreshed = ticket::refresh_slas(k, &ctx).await?;
+            let escalated = ticket::escalate(k, &ctx).await?;
             let closed = ticket::auto_close(k, &ctx).await?;
-            if refreshed + closed > 0 {
-                tracing::info!(%tenant, refreshed, closed, "support maintenance");
+            if refreshed + escalated + closed > 0 {
+                tracing::info!(%tenant, refreshed, escalated, closed, "support maintenance");
             }
             Ok::<_, Error>(())
         }

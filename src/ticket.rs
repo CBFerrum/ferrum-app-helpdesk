@@ -134,6 +134,10 @@ fn applies(head: &Doc, customer: Option<Uuid>, groups: &[Uuid], ticket_type: Opt
 /// validation prevents, go to the first name).
 fn pick<'a>(slas: &'a [Sla], doc: &Doc, groups: &[Uuid]) -> Option<&'a Sla> {
     let priority = s(doc, "priority").unwrap_or("Medium");
+    // What a contract promises comes first, if it covers this priority.
+    if let Some(contracted) = id(doc, "contract_sla").and_then(|c| slas.iter().find(|x| x.id == c)).filter(|x| x.targets.contains_key(priority)) {
+        return Some(contracted);
+    }
     slas.iter()
         .filter(|x| x.targets.contains_key(priority))
         .filter_map(|x| x.rank(id(doc, "customer"), groups, id(doc, "ticket_type")).map(|r| (r, x)))
@@ -406,6 +410,43 @@ async fn notify_agent(tx: &mut Tx, tenant: Uuid, email: &str, kind: &str, title:
     Ok(())
 }
 
+/// What covers a new ticket: a customer's contract in force when it was opened, if any. Its
+/// agreement applies, and a contract out of tickets or past its end says so. Nothing is refused:
+/// an agent decides what to do with a customer who is not covered.
+async fn entitlement(hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
+    let Some(customer) = id(doc, "customer") else {
+        set(doc, "entitlement", "None");
+        return Ok(());
+    };
+    let day = ts(doc, "opened_at").unwrap_or_else(Utc::now).date_naive();
+    let tenant = hc.ctx.tenant;
+    #[allow(clippy::type_complexity)]
+    let contracts: Vec<(Uuid, Option<chrono::NaiveDate>, Option<Uuid>, Option<i64>, chrono::NaiveDate)> = sqlx::query_as(
+        "select id, end_date, service_level_agreement, included_tickets, start_date from e_service_contract \
+         where tenant_id = $1 and customer = $2 and start_date <= $3 order by end_date desc nulls first, start_date desc",
+    )
+    .bind(tenant)
+    .bind(customer)
+    .bind(day)
+    .fetch_all(&mut **hc.tx)
+    .await?;
+    let in_force = contracts.iter().find(|c| c.1.is_none_or(|end| end >= day));
+    let Some((contract, _, sla, included, start)) = in_force else {
+        set(doc, "entitlement", if contracts.is_empty() { "None" } else { "Expired" });
+        return Ok(());
+    };
+    let used: i64 = sqlx::query_scalar("select count(*) from e_ticket where tenant_id = $1 and service_contract = $2 and opened_at >= $3")
+        .bind(tenant)
+        .bind(contract)
+        .bind(start.and_hms_opt(0, 0, 0).map(|t| t.and_utc()))
+        .fetch_one(&mut **hc.tx)
+        .await?;
+    set(doc, "service_contract", json!(contract.to_string()));
+    set(doc, "entitlement", if included.is_some_and(|n| used >= n) { "Exhausted" } else { "Covered" });
+    set(doc, "contract_sla", sla.map_or(Value::Null, |x| json!(x.to_string())));
+    Ok(())
+}
+
 /// The stored version of the document being saved (`None` while it is being created).
 async fn stored(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Option<Doc>> {
     match id(doc, "id") {
@@ -464,6 +505,9 @@ impl DocHook for TicketHook {
             }
         }
 
+        if old.is_none() {
+            entitlement(hc, doc).await?;
+        }
         let status = s(doc, "status").unwrap_or("Open").to_string();
         let opened = ts(doc, "opened_at").unwrap_or(now);
         let at = now.max(opened);
@@ -662,6 +706,104 @@ pub async fn refresh_slas(k: &Kernel, ctx: &Ctx) -> Result<usize> {
     Ok(changed)
 }
 
+/// A rule of what happens to a ticket whose agreement is in trouble.
+#[derive(Debug, Clone)]
+pub struct Escalation {
+    pub level: i64,
+    trigger: String,
+    priority: Option<String>,
+    team: Option<Uuid>,
+    assign_to: Option<String>,
+    move_to_team: Option<Uuid>,
+    raise_priority_to: Option<String>,
+    notify: Option<String>,
+}
+
+impl Escalation {
+    fn from_doc(doc: &Doc) -> Escalation {
+        let text = |f: &str| s(doc, f).map(str::to_string);
+        Escalation {
+            level: int(doc, "level"),
+            trigger: text("trigger").unwrap_or_default(),
+            priority: text("priority"),
+            team: id(doc, "team"),
+            assign_to: text("assign_to"),
+            move_to_team: id(doc, "move_to_team"),
+            raise_priority_to: text("raise_priority_to"),
+            notify: text("notify"),
+        }
+    }
+
+    fn applies(&self, doc: &Doc) -> bool {
+        let verdict = s(doc, "sla_status").unwrap_or_default();
+        let due = verdict == "Breached" || (self.trigger == "At Risk" && verdict == "At Risk");
+        due && self.priority.as_deref().is_none_or(|p| s(doc, "priority") == Some(p)) && self.team.is_none_or(|t| id(doc, "team") == Some(t))
+    }
+}
+
+/// The next rule for a ticket: the lowest level above the one it reached that applies to it.
+pub fn next_escalation<'a>(rules: &'a [Escalation], doc: &Doc) -> Option<&'a Escalation> {
+    let reached = int(doc, "escalation_level");
+    rules.iter().filter(|r| r.level > reached && r.applies(doc)).min_by_key(|r| r.level)
+}
+
+/// Fires what is due on tickets in trouble. A level is recorded on the ticket, so a rule fires once
+/// however often this runs, on however many replicas: rows are re-read under a lock.
+pub async fn escalate(k: &Kernel, ctx: &Ctx) -> Result<usize> {
+    let ent = k.entity(ctx, "Ticket")?;
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let rows_: Vec<(Uuid,)> =
+        sqlx::query_as("select id from e_ticket where tenant_id = $1 and status = any($2) and sla_status in ('At Risk', 'Breached') order by id")
+            .bind(ctx.tenant)
+            .bind(&OPEN[..])
+            .fetch_all(&mut *tx)
+            .await?;
+    let rules: Vec<Escalation> = k
+        .list(ctx, "EscalationRule", &ferrum_kernel::ListQuery { limit: Some(100), filters: vec![Filter::eq("enabled", json!(true))], ..Default::default() })
+        .await?
+        .rows
+        .iter()
+        .map(Escalation::from_doc)
+        .collect();
+    tx.commit().await?;
+    if rules.is_empty() {
+        return Ok(0);
+    }
+    let mut fired = 0;
+    for (ticket,) in rows_ {
+        let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+        let Some(doc) = store::load(&mut tx, &ctx.schema, &ent, ctx.tenant, ticket, true).await? else { continue };
+        if !s(&doc, "status").is_some_and(|st| OPEN.contains(&st)) {
+            continue;
+        }
+        let Some(rule) = next_escalation(&rules, &doc) else { continue };
+        let mut values = Doc::new();
+        values.insert("escalation_level".into(), json!(rule.level));
+        values.insert("escalated_at".into(), ts_value(Utc::now()));
+        if let Some(who) = &rule.assign_to {
+            values.insert("assigned_to".into(), json!(who));
+        }
+        if let Some(team) = rule.move_to_team {
+            values.insert("team".into(), json!(team.to_string()));
+        }
+        if let Some(priority) = &rule.raise_priority_to {
+            values.insert("priority".into(), json!(priority));
+        }
+        k.set_values_tx(ctx, &mut tx, "Ticket", ticket, values).await?;
+        let label = format!("{} {}", s(&doc, "number").unwrap_or("Ticket"), s(&doc, "subject").unwrap_or_default());
+        let title = format!("Escalated: {label}");
+        for who in rule.assign_to.iter().chain(rule.notify.iter()).map(String::as_str).chain(s(&doc, "assigned_to")) {
+            notify_agent(&mut tx, ctx.tenant, who, SLA, &title, ticket).await?;
+        }
+        let payload = json!({"entity": "Ticket", "id": ticket, "event": "updated", "actor": Value::Null, "depth": ctx.depth, "doc": store::load(&mut tx, &ctx.schema, &ent, ctx.tenant, ticket, false).await?});
+        outbox::enqueue(&mut tx, ctx.tenant, "Ticket.updated", Some("Ticket"), Some(ticket), payload).await?;
+        ferrum_kernel::audit::record(&mut tx, ctx, "Ticket", ticket, "escalate", None, json!({"level": rule.level})).await?;
+        tx.commit().await?;
+        fired += 1;
+    }
+    Ok(fired)
+}
+
 /// Closes tickets resolved longer ago than the grace period (Support Settings, 7 days by default)
 /// through the full document pipeline (event, audit). The version read with the candidate is
 /// required, so a ticket reopened in the meantime is left alone.
@@ -732,6 +874,32 @@ mod tests {
         assert_eq!(pick_member(&team, Some("b"), &open, true).as_deref(), Some("c"), "ties go to whoever's turn comes first");
         let capped = [m("a", true, 0), m("b", true, 1)];
         assert_eq!(pick_member(&capped, None, &HashMap::from([("a".to_string(), 5), ("b".to_string(), 1)]), true).as_deref(), Some("a"));
+    }
+
+    fn rule(level: i64, trigger: &str, priority: Option<&str>) -> Escalation {
+        Escalation {
+            level,
+            trigger: trigger.into(),
+            priority: priority.map(str::to_string),
+            team: None,
+            assign_to: None,
+            move_to_team: None,
+            raise_priority_to: None,
+            notify: None,
+        }
+    }
+
+    #[test]
+    fn escalations_fire_in_order_and_once() {
+        let rules = [rule(2, "Breached", None), rule(1, "At Risk", None), rule(3, "Breached", Some("Urgent"))];
+        let level = |fields: Value| next_escalation(&rules, &ticket(fields)).map(|r| r.level);
+        assert_eq!(level(json!({"sla_status": "On Track"})), None, "nothing is wrong");
+        assert_eq!(level(json!({"sla_status": "At Risk"})), Some(1));
+        assert_eq!(level(json!({"sla_status": "At Risk", "escalation_level": 1})), None, "a rule does not fire twice");
+        assert_eq!(level(json!({"sla_status": "Breached", "escalation_level": 1})), Some(2), "a breach goes further");
+        assert_eq!(level(json!({"sla_status": "Breached"})), Some(1), "from the bottom, one at a time");
+        assert_eq!(level(json!({"sla_status": "Breached", "escalation_level": 2, "priority": "Low"})), None, "not this priority");
+        assert_eq!(level(json!({"sla_status": "Breached", "escalation_level": 2, "priority": "Urgent"})), Some(3));
     }
 
     #[test]
