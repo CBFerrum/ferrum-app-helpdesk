@@ -991,7 +991,7 @@ async fn replies_and_files(k: &Arc<Kernel>) {
         .await
         .unwrap();
     let reply = answered["conversation"].as_array().unwrap().last().unwrap().clone();
-    assert_eq!(reply["emailed_to"], json!("ada@shop.test"), "the reply says where it was emailed");
+    assert_eq!(reply["emailed"], json!(true), "the reply says it was emailed");
     assert_eq!(answered["status"], json!("Replied"));
     assert!(!answered["last_agent_message_at"].is_null() && answered["last_customer_message_at"].is_null());
     assert!(answered["last_message_preview"].as_str().unwrap().starts_with("Try the **rear tray**. See [the guide]"), "{}", answered["last_message_preview"]);
@@ -1007,7 +1007,7 @@ async fn replies_and_files(k: &Arc<Kernel>) {
 
     // A note and the customer's own words are not mailed to the customer; the inbox's fields follow them.
     let noted = priya.say(ticket, json!({"author_kind": "Agent", "body": "Probably the roller", "is_internal": true})).await.unwrap();
-    assert!(noted["conversation"].as_array().unwrap().last().unwrap()["emailed_to"].is_null());
+    assert_eq!(noted["conversation"].as_array().unwrap().last().unwrap()["emailed"], json!(false));
     assert_eq!(noted["last_message_preview"], answered["last_message_preview"], "a note is not what the customer last heard");
     priya.say(ticket, json!({"author_kind": "Customer", "body": "Still jams.\nAnd now it squeaks."})).await.unwrap();
     let after = t.get("Ticket", ticket).await;
@@ -1019,7 +1019,7 @@ async fn replies_and_files(k: &Arc<Kernel>) {
     // Nobody to email: the reply is in the conversation, and says it went nowhere.
     let walk_in = t.insert("Ticket", json!({"subject": "Phone call", "priority": "Low"})).await;
     let called = priya.say(uid(&walk_in), json!({"author_kind": "Agent", "body": "Called back."})).await.unwrap();
-    assert!(called["conversation"][0]["emailed_to"].is_null());
+    assert_eq!(called["conversation"][0]["emailed"], json!(false));
     let mails_before = SENT.lock().unwrap().len();
     drain(k).await;
     assert_eq!(SENT.lock().unwrap().len(), mails_before, "no address, no mail");

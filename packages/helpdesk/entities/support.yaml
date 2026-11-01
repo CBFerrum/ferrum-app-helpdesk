@@ -144,7 +144,7 @@
     - {name: is_internal, type: check, label: Internal Note, in_list: true, description: "Visible to agents only; does not count as a response"}
     - {name: sent_at, type: datetime, default_expr: now, in_list: true}
     - {name: attachments, type: json, description: "Files sent with the message: [{id}] of files uploaded through /api/files (up to 10, 20 MB together). The server fills in each file's name and size"}
-    - {name: emailed_to, type: email, read_only: true, no_copy: true, description: "The address a reply was emailed to when it was sent"}
+    - {name: emailed, type: check, read_only: true, no_copy: true, description: "A reply that was emailed to the ticket's contact when it was sent (the address stays on the ticket, where a personal-data erasure reaches it)"}
 
 - name: Ticket
   label: Ticket

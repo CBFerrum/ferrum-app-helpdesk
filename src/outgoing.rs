@@ -5,7 +5,7 @@
 //! follow it. Files are the platform's stored files: an agent uploads one (`POST /api/files`), then
 //! names it in the message.
 
-use ferrum_domain::util::s;
+use ferrum_domain::util::{b, s};
 use ferrum_kernel::{Doc, Error, HookCtx, Kernel, Result, Tx};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -243,20 +243,17 @@ pub async fn attach(tx: &mut Tx, tenant: Uuid, ids: &[Uuid], ticket: Uuid) -> Re
 }
 
 /// After a ticket is saved: puts the files its new messages carry on the ticket, and emails the replies
-/// that were stamped with an address (`emailed_to`) when they were checked. Queued in the save's own
+/// that were marked `emailed` when they were checked, to the ticket's contact. Queued in the save's own
 /// transaction, so a reply that is refused sends nothing.
 pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Doc]) -> Result<()> {
     let files: Vec<Uuid> = fresh.iter().flat_map(|m| file_ids(m.get("attachments"))).collect();
     attach(hc.tx, hc.ctx.tenant, &files, ticket).await?;
-    if fresh.iter().all(|m| s(m, "emailed_to").is_none()) {
-        return Ok(());
-    }
+    let Some(to) = s(doc, "contact_email").filter(|_| fresh.iter().any(|m| b(m, "emailed"))) else { return Ok(()) };
     let number = s(doc, "number").unwrap_or("Ticket");
     let title = subject(number, s(doc, "subject").unwrap_or_default());
     let link = link_base(hc.kernel, hc.ctx.tenant).await.map(|base| format!("{base}/open/Ticket/{ticket}"));
     let can_attach = hc.kernel.mailer.as_ref().is_some_and(|m| m.can_attach());
-    for m in fresh {
-        let Some(to) = s(m, "emailed_to") else { continue };
+    for m in fresh.iter().filter(|m| b(m, "emailed")) {
         let ids = file_ids(m.get("attachments"));
         let names: Vec<String> = m
             .get("attachments")
@@ -276,15 +273,15 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
     Ok(())
 }
 
-/// Whom a new public reply is emailed: the ticket's contact, when the server has a mailer, the address
-/// is one the platform's mail accepts, and nothing restricts writing to it. Nobody otherwise (the reply
-/// is still in the conversation, and in the portal).
-pub async fn reply_address(hc: &mut HookCtx<'_>, existing: bool, contact: Option<&str>, number: &str, title: &str) -> Result<Option<String>> {
-    let Some(to) = contact.filter(|_| existing && hc.kernel.mailer.is_some()) else { return Ok(None) };
-    if ferrum_kernel::outbox::check_mail(to, &subject(number, title)).is_err() || !hc.kernel.may_contact(hc.tx, hc.ctx.tenant, to).await? {
-        return Ok(None);
+/// Whether a new public reply goes out by email: the ticket has a contact address, the server has a
+/// mailer, the platform's mail accepts the address, and nothing restricts writing to it. If not, the
+/// reply is still in the conversation, and in the portal.
+pub async fn goes_by_email(hc: &mut HookCtx<'_>, existing: bool, contact: Option<&str>, number: &str, title: &str) -> Result<bool> {
+    let Some(to) = contact.filter(|_| existing && hc.kernel.mailer.is_some()) else { return Ok(false) };
+    if ferrum_kernel::outbox::check_mail(to, &subject(number, title)).is_err() {
+        return Ok(false);
     }
-    Ok(Some(to.to_string()))
+    hc.kernel.may_contact(hc.tx, hc.ctx.tenant, to).await
 }
 
 #[cfg(test)]
