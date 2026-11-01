@@ -143,6 +143,8 @@
     - {name: body, type: markdown, required: true, in_list: true}
     - {name: is_internal, type: check, label: Internal Note, in_list: true, description: "Visible to agents only; does not count as a response"}
     - {name: sent_at, type: datetime, default_expr: now, in_list: true}
+    - {name: attachments, type: json, description: "Files sent with the message: [{id}] of files uploaded through /api/files (up to 10, 20 MB together). The server fills in each file's name and size"}
+    - {name: emailed_to, type: email, read_only: true, no_copy: true, description: "The address a reply was emailed to when it was sent"}
 
 - name: Ticket
   label: Ticket
@@ -175,6 +177,9 @@
     - {name: item, type: link, to: Item}
     - {name: serial_no, type: data, label: Serial No}
     - {name: conversation, type: table, of: TicketMessage, no_copy: true, description: "Append-only: sent messages cannot be edited or removed"}
+    - {name: last_customer_message_at, type: datetime, read_only: true, no_copy: true, description: "When the customer last wrote"}
+    - {name: last_agent_message_at, type: datetime, read_only: true, no_copy: true, description: "When the team last answered the customer (an internal note does not answer)"}
+    - {name: last_message_preview, type: data, max_length: 200, read_only: true, no_copy: true, description: "The start of the latest message the customer could read, for the inbox"}
     - {name: support_contract, type: link, to: SupportContract, read_only: true, no_copy: true, in_filter: true}
     - {name: contract_sla, type: link, to: ServiceLevelAgreement, read_only: true, hidden: true, no_copy: true}
     - {name: entitlement, type: select, options: [Covered, Expired, Exhausted, None], read_only: true, no_copy: true, in_filter: true, description: "Whether a support contract covers this ticket, as of when it was opened"}
@@ -202,6 +207,24 @@
   actions:
     - {name: make_warranty_claim, label: Create Warranty Claim, permission: write, condition: "doc.item != null && doc.customer != null"}
   list: {columns: [number, subject, customer_name, priority, status, assigned_to, sla_status], sort: opened_at desc}
+
+- name: SavedReply
+  label: Saved Reply
+  label_plural: Saved Replies
+  kind: master
+  module: support
+  title_field: title
+  search_fields: [body]
+  description: "A reply written once, inserted from a ticket's composer. These are filled in from the ticket: {{customer.first_name}}, {{customer.name}}, {{customer.company}}, {{ticket.number}}, {{ticket.subject}}, {{agent.first_name}} and {{agent.name}}."
+  fields:
+    - {name: title, type: data, required: true, max_length: 120, in_list: true}
+    - {name: scope, type: select, options: [Personal, Team, Everyone], required: true, default: Personal, in_list: true, in_filter: true, description: "Personal: only you. Team: the team's members. Everyone: every agent"}
+    - {name: team, type: link, to: SupportTeam, in_list: true, in_filter: true, required_if: "doc.scope == 'Team'", visible_if: "doc.scope == 'Team'"}
+    - {name: body, type: markdown, required: true, max_length: 20000}
+    - {name: uses, type: int, label: Times Used, default: 0, read_only: true, no_copy: true, in_list: true}
+  actions:
+    - {name: used, label: Count a Use, permission: read}
+  list: {columns: [title, scope, team, uses], sort: uses desc}
 
 - name: KbCategory
   label: Knowledge Base Category

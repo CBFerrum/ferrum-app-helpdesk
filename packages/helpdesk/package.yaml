@@ -17,8 +17,8 @@ modules:
     label: Support
     icon: life-buoy
     order: 45
-    items: [Ticket, WarrantyClaim, MaintenanceSchedule, MaintenanceVisit, KbArticle, KbCategory, ServiceLevelAgreement, SupportContract, EscalationRule, SupportTeam,
-            TicketAssignmentRule, TicketType, SupportSettings, report:support_ticket_summary, report:support_sla_compliance, report:support_response_times,
+    items: [Ticket, SavedReply, WarrantyClaim, MaintenanceSchedule, MaintenanceVisit, KbArticle, KbCategory, ServiceLevelAgreement, SupportContract, EscalationRule,
+            SupportTeam, TicketAssignmentRule, TicketType, SupportSettings, report:support_ticket_summary, report:support_sla_compliance, report:support_response_times,
             report:support_agent_workload, report:support_customer_satisfaction]
 
 # What a personal-data request exports and erases for the person who raised tickets (their email):
@@ -35,6 +35,9 @@ roles:
       - {entity: ServiceLevelAgreement, read: true}
       - {entity: SupportContract, read: true}
       - {entity: SupportSettings, read: true}
+      # Saved replies: those shared with a team or everyone, and the agent's own (Personal ones stay theirs).
+      - {entity: SavedReply, read: true, where: {scope: [Team, Everyone]}}
+      - {entity: SavedReply, read: true, write: true, create: true, delete: true, if_owner: true}
       - {entity: KbArticle, read: true, write: true, create: true}
       - {entity: KbCategory, read: true}
       - {entity: WarrantyClaim, read: true, write: true, create: true}
@@ -54,6 +57,8 @@ roles:
       - {entity: SupportContract, read: true, write: true, create: true, delete: true}
       - {entity: EscalationRule, read: true, write: true, create: true, delete: true}
       - {entity: SupportSettings, read: true, write: true, create: true}
+      - {entity: SavedReply, read: true, write: true, create: true, delete: true, where: {scope: [Team, Everyone]}}
+      - {entity: SavedReply, read: true, write: true, create: true, delete: true, if_owner: true}
       - {entity: KbArticle, read: true, write: true, create: true, delete: true}
       - {entity: KbCategory, read: true, write: true, create: true, delete: true}
       - {entity: WarrantyClaim, read: true, write: true, create: true, delete: true, export: true}
@@ -83,6 +88,12 @@ seed:
     records:
       - {category_name: All Categories, is_group: true}
       - {category_name: General, parent_category: "@KbCategory:category_name=All Categories"}
+  - entity: SavedReply
+    key: [title]
+    records:
+      - {title: Thanks for getting in touch, scope: Everyone, body: "Hi {{customer.first_name}},\n\nThanks for getting in touch. I have your request ({{ticket.number}}) and will come back to you shortly.\n\n{{agent.first_name}}"}
+      - {title: We are looking into it, scope: Everyone, body: "Hi {{customer.first_name}},\n\nI am looking into this now and will update you as soon as I know more.\n\n{{agent.first_name}}"}
+      - {title: Is this resolved, scope: Everyone, body: "Hi {{customer.first_name}},\n\nI think this is sorted now. Could you check and let me know if anything is still wrong? If I do not hear back, I will close {{ticket.number}} in a few days.\n\n{{agent.first_name}}"}
 handover:
   - {entity: Ticket, field: assigned_to, where: {status: [Open, Replied, On Hold]}}
   - {entity: SupportTeam, field: members.agent}
