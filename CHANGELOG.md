@@ -2,7 +2,7 @@
 
 ## 0.5.0
 
-- Escalation rules, and service contracts that say what a customer is entitled to.
+- Escalation rules, and support contracts that say what a customer is entitled to.
 
 ## 0.4.1
 

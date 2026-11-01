@@ -116,8 +116,8 @@
     - {name: notify, type: email, description: "Who is told, besides whoever the ticket is assigned to"}
   list: {columns: [level, rule_name, trigger, priority, team, enabled], sort: level asc}
 
-- name: ServiceContract
-  label: Service Contract
+- name: SupportContract
+  label: Support Contract
   kind: master
   module: support
   title_field: contract_name
@@ -175,9 +175,9 @@
     - {name: item, type: link, to: Item}
     - {name: serial_no, type: data, label: Serial No}
     - {name: conversation, type: table, of: TicketMessage, no_copy: true, description: "Append-only: sent messages cannot be edited or removed"}
-    - {name: service_contract, type: link, to: ServiceContract, read_only: true, no_copy: true, in_filter: true}
+    - {name: support_contract, type: link, to: SupportContract, read_only: true, no_copy: true, in_filter: true}
     - {name: contract_sla, type: link, to: ServiceLevelAgreement, read_only: true, hidden: true, no_copy: true}
-    - {name: entitlement, type: select, options: [Covered, Expired, Exhausted, None], read_only: true, no_copy: true, in_filter: true, description: "Whether a service contract covers this ticket, as of when it was opened"}
+    - {name: entitlement, type: select, options: [Covered, Expired, Exhausted, None], read_only: true, no_copy: true, in_filter: true, description: "Whether a support contract covers this ticket, as of when it was opened"}
     - {name: escalation_level, type: int, default: 0, read_only: true, no_copy: true, in_filter: true}
     - {name: escalated_at, type: datetime, read_only: true, no_copy: true}
     - {name: service_level_agreement, type: link, to: ServiceLevelAgreement, label: SLA, read_only: true, no_copy: true, in_filter: true}
@@ -196,7 +196,7 @@
     - {label: Assignment, fields: [team, assigned_to]}
     - {label: Conversation, fields: [conversation]}
     - {label: Resolution, fields: [resolution_details, satisfaction_rating, feedback]}
-    - {label: Entitlement, collapsible: true, fields: [service_contract, entitlement]}
+    - {label: Entitlement, collapsible: true, fields: [support_contract, entitlement]}
     - {label: Service Level, collapsible: true, fields: [escalation_level, escalated_at, service_level_agreement, sla_status, response_by, resolution_by, response_breached, resolution_breached, opened_at, first_responded_at, resolved_at, closed_at, first_response_hours, resolution_hours, paused_hours]}
     - {label: Product, collapsible: true, fields: [item, serial_no, sales_invoice]}
   actions:
