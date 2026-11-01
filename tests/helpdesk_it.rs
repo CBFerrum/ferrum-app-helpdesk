@@ -1073,13 +1073,30 @@ async fn replies_and_files(k: &Arc<Kernel>) {
     );
     assert_eq!(file_home(&t, rajs["id"].as_str().unwrap().parse().unwrap()).await, (None, None), "a refused reply attaches nothing");
 
+    // The interface sends the messages already there by id alone, the new one with its files, and takes the
+    // ticket over in the same save: the old messages stay as they were.
+    let cv = priya.k.store_file(&priya.ctx, None, "cv.txt", "text/plain", b"details").await.unwrap();
+    let mut rows: Vec<Value> = t.get("Ticket", ticket).await["conversation"].as_array().unwrap().iter().map(|m| json!({"id": m["id"]})).collect();
+    let before = rows.len();
+    rows.push(json!({"author_kind": "Agent", "body": "As the page sends it.", "is_internal": false, "attachments": [{"id": cv["id"]}]}));
+    let by_page = priya.try_update("Ticket", ticket, json!({"conversation": rows, "assigned_to": "priya@desk.test"})).await.unwrap();
+    let kept = by_page["conversation"].as_array().unwrap();
+    assert_eq!(
+        (kept.len(), kept[0]["body"].as_str(), kept[before]["emailed"].clone()),
+        (before + 1, Some("Try the **rear tray**.\n\nSee [the guide](https://help.example.test/g) <b>now</b>"), json!(true))
+    );
+    assert_eq!(kept[before]["attachments"][0]["file_name"], json!("cv.txt"));
+    assert_eq!(by_page["assigned_to"], json!("priya@desk.test"));
+    drain(k).await;
+    assert_eq!(sent_to("ada@shop.test").len(), 3);
+
     // A note can carry a file too; it is not mailed.
     let memo = k.store_file(&priya.ctx, None, "memo.txt", "text/plain", b"for us").await.unwrap();
     let memo_id: Uuid = memo["id"].as_str().unwrap().parse().unwrap();
     priya.say(ticket, json!({"author_kind": "Agent", "body": "For us.", "is_internal": true, "attachments": [{"id": memo_id.to_string()}]})).await.unwrap();
     assert_eq!(file_home(&t, memo_id).await.0.as_deref(), Some("Ticket"));
     drain(k).await;
-    assert_eq!(sent_to("ada@shop.test").len(), 2);
+    assert_eq!(sent_to("ada@shop.test").len(), 3);
 
     // ───────────── a customer downloads what was sent to them ─────────────
     let dee_id = k.create_user(&t.ctx, "dee@shop.test", "Dee", None, &[], false).await.unwrap();
