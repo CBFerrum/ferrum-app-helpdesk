@@ -80,3 +80,7 @@ seed:
     records:
       - {category_name: All Categories, is_group: true}
       - {category_name: General, parent_category: "@KbCategory:category_name=All Categories"}
+handover:
+  - {entity: Ticket, field: assigned_to, where: {status: [Open, Replied, On Hold]}}
+  - {entity: SupportTeam, field: members.agent}
+  - {entity: MaintenanceSchedule, field: assigned_to, where: {status: [Draft, Active]}}
