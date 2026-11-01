@@ -817,6 +817,74 @@ async fn portal(k: &Arc<Kernel>) {
     assert_eq!((rated["rating"].as_i64(), rated["can_rate"].as_bool()), (Some(5), Some(false)));
     assert_eq!(t.get("Ticket", id).await["satisfaction_rating"], json!(5));
     assert_eq!(call(k, Some(&agent.ctx), "GET", "work", Value::Null).await.unwrap()["items"], json!([]), "resolved is no longer work");
+
+    // ───────────── what a customer is entitled to ─────────────
+    let covered = uid(&t.insert("Customer", json!({"customer_name": "Covered Ltd"})).await);
+    let open_ticket = |subject: &str, opened: DateTime<Utc>| json!({"subject": subject, "customer": covered.to_string(), "opened_at": opened.to_rfc3339(), "priority": "Medium"});
+    let now = Utc::now();
+    let today = now.date_naive();
+    assert_eq!(t.insert("Ticket", open_ticket("Before any contract", now)).await["entitlement"], json!("None"));
+    let tight = uid(&t
+        .insert(
+            "ServiceLevelAgreement",
+            json!({"sla_name": "Contracted", "priorities": [{"priority": "Medium", "response_hours": "1", "resolution_hours": "2"}]}),
+        )
+        .await);
+    let start = today - Duration::days(30);
+    t.insert("ServiceContract", json!({"contract_name": "Lapsed", "customer": covered.to_string(), "start_date": (today - Duration::days(400)).to_string(), "end_date": (today - Duration::days(35)).to_string()})).await;
+    let lapsed = t.insert("Ticket", open_ticket("Only a lapsed one", now)).await;
+    assert_eq!(lapsed["entitlement"], json!("Expired"));
+    let contract = uid(&t.insert("ServiceContract", json!({"contract_name": "Gold", "customer": covered.to_string(), "start_date": start.to_string(), "service_level_agreement": tight.to_string(), "included_tickets": 2})).await);
+    assert!(
+        t.try_insert(
+            "ServiceContract",
+            json!({"contract_name": "Backwards", "customer": covered.to_string(), "start_date": today.to_string(), "end_date": start.to_string()})
+        )
+        .await
+        .is_err()
+    );
+    let first = t.insert("Ticket", open_ticket("Covered one", now - Duration::days(3))).await;
+    assert_eq!((first["entitlement"].as_str(), first["service_contract"].as_str()), (Some("Covered"), Some(contract.to_string().as_str())));
+    assert_eq!(first["service_level_agreement"], json!(tight.to_string()), "the contract's agreement applies, whatever else would");
+    t.insert("Ticket", open_ticket("Covered two", now)).await;
+    let third = t.insert("Ticket", open_ticket("One too many", now)).await;
+    assert_eq!(third["entitlement"], json!("Exhausted"), "said, not refused: an agent decides");
+
+    // ───────────── escalations ─────────────
+    let lead = t.user("lead@sd.test", &["Support Agent"], &[]).await;
+    t.insert("EscalationRule", json!({"rule_name": "Tell the lead", "level": 1, "trigger": "Breached", "notify": "lead@sd.test"})).await;
+    t.insert(
+        "EscalationRule",
+        json!({"rule_name": "Take it over", "level": 2, "trigger": "Breached", "assign_to": "lead@sd.test", "raise_priority_to": "Urgent"}),
+    )
+    .await;
+    t.insert("EscalationRule", json!({"rule_name": "Switched off", "level": 3, "trigger": "Breached", "enabled": false, "assign_to": "nobody@sd.test"})).await;
+    let late = uid(&first);
+    assert_eq!(t.get("Ticket", late).await["sla_status"], json!("Breached"));
+    ferrum_app_helpdesk::maintenance(k).await.unwrap();
+    let once = t.get("Ticket", late).await;
+    assert_eq!((once["escalation_level"].as_i64(), once["assigned_to"].as_str()), (Some(1), None), "the first rule, and only it");
+    assert!(t.notifications(lead.ctx.user).await.iter().any(|n| n.starts_with("Escalated")), "who it names is told");
+    let version = once["version"].clone();
+    ferrum_app_helpdesk::maintenance(k).await.unwrap();
+    let twice = t.get("Ticket", late).await;
+    assert_eq!(
+        (twice["escalation_level"].as_i64(), twice["assigned_to"].as_str(), twice["priority"].as_str()),
+        (Some(2), Some("lead@sd.test"), Some("Urgent")),
+        "then the next"
+    );
+    assert_eq!(twice["version"], version, "an agent's open form stays valid");
+    ferrum_app_helpdesk::maintenance(k).await.unwrap();
+    assert_eq!(t.get("Ticket", late).await["escalation_level"], json!(2), "nothing further: the rest is off");
+    let done = t.update("Ticket", late, json!({"status": "Resolved", "resolution_details": "Fixed."})).await;
+    assert_eq!(done["escalation_level"], json!(2), "it stays on the record");
+
+    // Two agents answering at once: the second is told, and nothing is lost.
+    let busy = t.insert("Ticket", json!({"subject": "Two agents", "customer": covered.to_string()})).await;
+    let v = busy["version"].as_i64();
+    let say = |text: &str| obj(json!({"conversation": [{"body": text, "author_kind": "Agent"}]}));
+    t.k.update(&t.ctx, "Ticket", uid(&busy), say("First"), v).await.expect("the first");
+    assert!(matches!(t.k.update(&t.ctx, "Ticket", uid(&busy), say("Second"), v).await, Err(Error::Conflict(_))), "the second saw an older ticket");
 }
 
 fn n(s: &str) -> Decimal {

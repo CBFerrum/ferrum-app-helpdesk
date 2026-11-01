@@ -17,8 +17,8 @@ modules:
     label: Support
     icon: life-buoy
     order: 45
-    items: [Ticket, WarrantyClaim, MaintenanceSchedule, MaintenanceVisit, KbArticle, KbCategory, ServiceLevelAgreement, SupportTeam, TicketAssignmentRule,
-            TicketType, SupportSettings, report:support_ticket_summary, report:support_sla_compliance, report:support_response_times,
+    items: [Ticket, WarrantyClaim, MaintenanceSchedule, MaintenanceVisit, KbArticle, KbCategory, ServiceLevelAgreement, ServiceContract, EscalationRule, SupportTeam,
+            TicketAssignmentRule, TicketType, SupportSettings, report:support_ticket_summary, report:support_sla_compliance, report:support_response_times,
             report:support_agent_workload, report:support_customer_satisfaction]
 
 # What a personal-data request exports and erases for the person who raised tickets (their email):
@@ -33,6 +33,7 @@ roles:
       - {entity: TicketType, read: true}
       - {entity: SupportTeam, read: true}
       - {entity: ServiceLevelAgreement, read: true}
+      - {entity: ServiceContract, read: true}
       - {entity: SupportSettings, read: true}
       - {entity: KbArticle, read: true, write: true, create: true}
       - {entity: KbCategory, read: true}
@@ -50,6 +51,8 @@ roles:
       - {entity: SupportTeam, read: true, write: true, create: true, delete: true}
       - {entity: TicketAssignmentRule, read: true, write: true, create: true, delete: true}
       - {entity: ServiceLevelAgreement, read: true, write: true, create: true, delete: true}
+      - {entity: ServiceContract, read: true, write: true, create: true, delete: true}
+      - {entity: EscalationRule, read: true, write: true, create: true, delete: true}
       - {entity: SupportSettings, read: true, write: true, create: true}
       - {entity: KbArticle, read: true, write: true, create: true, delete: true}
       - {entity: KbCategory, read: true, write: true, create: true, delete: true}

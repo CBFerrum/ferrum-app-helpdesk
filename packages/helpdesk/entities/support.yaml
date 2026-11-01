@@ -97,6 +97,43 @@
     - {name: description, type: text}
   list: {columns: [sla_name, customer, customer_group, ticket_type, enabled], sort: sla_name asc}
 
+- name: EscalationRule
+  label: Escalation Rule
+  kind: master
+  module: support
+  title_field: rule_name
+  description: "What happens when a ticket's agreement is at risk or breached. Rules fire in order of level, each at most once on a ticket, one per run of the SLA check."
+  fields:
+    - {name: rule_name, type: data, label: Name, required: true, unique: true, in_list: true}
+    - {name: enabled, type: check, default: true, in_list: true, in_filter: true}
+    - {name: level, type: int, required: true, default: 1, min: 1, max: 9, in_list: true}
+    - {name: trigger, type: select, options: [At Risk, Breached], required: true, default: Breached, in_list: true}
+    - {name: priority, type: select, options: [Low, Medium, High, Urgent], in_list: true, description: "Tickets of this priority; empty: any"}
+    - {name: team, type: link, to: SupportTeam, in_list: true, description: "Tickets of this team; empty: any"}
+    - {name: assign_to, type: email, description: "Who takes the ticket over"}
+    - {name: move_to_team, type: link, to: SupportTeam}
+    - {name: raise_priority_to, type: select, options: [High, Urgent], description: "Changes the ticket's targets too, from the next check"}
+    - {name: notify, type: email, description: "Who is told, besides whoever the ticket is assigned to"}
+  list: {columns: [level, rule_name, trigger, priority, team, enabled], sort: level asc}
+
+- name: ServiceContract
+  label: Service Contract
+  kind: master
+  module: support
+  title_field: contract_name
+  description: "What a customer is entitled to: a period, optionally an agreement that applies whatever else would, and optionally a number of tickets."
+  fields:
+    - {name: contract_name, type: data, label: Name, required: true, unique: true, in_list: true}
+    - {name: customer, type: link, to: Customer, required: true, in_list: true, in_filter: true, index: true}
+    - {name: start_date, type: date, required: true, in_list: true}
+    - {name: end_date, type: date, in_list: true, description: "Empty: open-ended"}
+    - {name: service_level_agreement, type: link, to: ServiceLevelAgreement, label: SLA, in_list: true}
+    - {name: included_tickets, type: int, min: 1, in_list: true, description: "Tickets covered in the contract's period; empty: unlimited"}
+    - {name: notes, type: text}
+  rules:
+    - {name: period, check: "doc.end_date == null || doc.end_date >= doc.start_date", message: "A contract cannot end before it starts"}
+  list: {columns: [contract_name, customer, start_date, end_date, included_tickets], sort: start_date desc}
+
 - name: TicketMessage
   label: Ticket Message
   kind: child
@@ -138,6 +175,11 @@
     - {name: item, type: link, to: Item}
     - {name: serial_no, type: data, label: Serial No}
     - {name: conversation, type: table, of: TicketMessage, no_copy: true, description: "Append-only: sent messages cannot be edited or removed"}
+    - {name: service_contract, type: link, to: ServiceContract, read_only: true, no_copy: true, in_filter: true}
+    - {name: contract_sla, type: link, to: ServiceLevelAgreement, read_only: true, hidden: true, no_copy: true}
+    - {name: entitlement, type: select, options: [Covered, Expired, Exhausted, None], read_only: true, no_copy: true, in_filter: true, description: "Whether a service contract covers this ticket, as of when it was opened"}
+    - {name: escalation_level, type: int, default: 0, read_only: true, no_copy: true, in_filter: true}
+    - {name: escalated_at, type: datetime, read_only: true, no_copy: true}
     - {name: service_level_agreement, type: link, to: ServiceLevelAgreement, label: SLA, read_only: true, no_copy: true, in_filter: true}
     - {name: sla_status, type: select, label: SLA Status, options: [On Track, At Risk, Breached, Fulfilled], read_only: true, no_copy: true, in_list: true, in_filter: true}
     - {name: response_by, type: datetime, read_only: true, no_copy: true}
@@ -154,7 +196,8 @@
     - {label: Assignment, fields: [team, assigned_to]}
     - {label: Conversation, fields: [conversation]}
     - {label: Resolution, fields: [resolution_details, satisfaction_rating, feedback]}
-    - {label: Service Level, collapsible: true, fields: [service_level_agreement, sla_status, response_by, resolution_by, response_breached, resolution_breached, opened_at, first_responded_at, resolved_at, closed_at, first_response_hours, resolution_hours, paused_hours]}
+    - {label: Entitlement, collapsible: true, fields: [service_contract, entitlement]}
+    - {label: Service Level, collapsible: true, fields: [escalation_level, escalated_at, service_level_agreement, sla_status, response_by, resolution_by, response_breached, resolution_breached, opened_at, first_responded_at, resolved_at, closed_at, first_response_hours, resolution_hours, paused_hours]}
     - {label: Product, collapsible: true, fields: [item, serial_no, sales_invoice]}
   actions:
     - {name: make_warranty_claim, label: Create Warranty Claim, permission: write, condition: "doc.item != null && doc.customer != null"}
