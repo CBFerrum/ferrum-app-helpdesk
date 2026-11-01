@@ -80,7 +80,61 @@ async fn fresh_kernel() -> Arc<Kernel> {
     for source in ferrum_app_helpdesk::reports() {
         ferrum_domain::reports::add_source(source);
     }
-    Kernel::boot(db, catalog, hooks, KernelSettings::default(), None).await.expect("boot")
+    let settings = KernelSettings { public_url: Some("https://help.example.test".into()), ..Default::default() };
+    let kernel = Kernel::boot(db, catalog, hooks, settings, Some(Arc::new(Captured))).await.expect("boot");
+    kernel.set_file_store(Arc::new(MemFiles::default()));
+    kernel
+}
+
+/// Mail the server sent, in order: (to, subject, html, names of the files attached).
+static SENT: std::sync::Mutex<Vec<(String, String, String, Vec<String>)>> = std::sync::Mutex::new(Vec::new());
+
+struct Captured;
+
+#[async_trait::async_trait]
+impl ferrum_kernel::Mailer for Captured {
+    async fn send(&self, to: &str, subject: &str, html: &str) -> Result<()> {
+        SENT.lock().unwrap().push((to.into(), subject.into(), html.into(), vec![]));
+        Ok(())
+    }
+
+    fn can_attach(&self) -> bool {
+        true
+    }
+
+    async fn send_with(&self, to: &str, subject: &str, html: &str, attachments: &[ferrum_kernel::MailAttachment]) -> Result<()> {
+        SENT.lock().unwrap().push((to.into(), subject.into(), html.into(), attachments.iter().map(|a| a.file_name.clone()).collect()));
+        Ok(())
+    }
+}
+
+/// An in-memory object store standing in for S3.
+#[derive(Default)]
+struct MemFiles(std::sync::Mutex<HashMap<String, Vec<u8>>>);
+
+#[async_trait::async_trait]
+impl ferrum_kernel::files::FileStore for MemFiles {
+    async fn put(&self, key: &str, data: &[u8]) -> Result<()> {
+        self.0.lock().unwrap().insert(key.to_string(), data.to_vec());
+        Ok(())
+    }
+    async fn get(&self, key: &str) -> Result<Vec<u8>> {
+        self.0.lock().unwrap().get(key).cloned().ok_or_else(|| Error::NotFound("object".into()))
+    }
+    async fn delete(&self, key: &str) -> Result<()> {
+        self.0.lock().unwrap().remove(key);
+        Ok(())
+    }
+}
+
+/// Sends what is queued, as the server's dispatcher would.
+async fn drain(k: &Kernel) {
+    while k.dispatch_outbox_once().await.unwrap() > 0 {}
+}
+
+/// The mail sent to an address, in order.
+fn sent_to(to: &str) -> Vec<(String, String, String, Vec<String>)> {
+    SENT.lock().unwrap().iter().filter(|m| m.0 == to).cloned().collect()
 }
 
 #[derive(Clone)]
@@ -695,6 +749,7 @@ async fn scenario() {
 
     helpdesk_alone(&k).await;
     portal(&k).await;
+    replies_and_files(&k).await;
 }
 
 /// Helpdesk in a workspace without ERP (Ferrum docs/plan/apps-ui.md §13): customers and items are
@@ -885,6 +940,204 @@ async fn portal(k: &Arc<Kernel>) {
     let say = |text: &str| obj(json!({"conversation": [{"body": text, "author_kind": "Agent"}]}));
     t.k.update(&t.ctx, "Ticket", uid(&busy), say("First"), v).await.expect("the first");
     assert!(matches!(t.k.update(&t.ctx, "Ticket", uid(&busy), say("Second"), v).await, Err(Error::Conflict(_))), "the second saw an older ticket");
+}
+
+/// A call to Helpdesk's endpoints that answers with a file, not JSON.
+async fn call_raw(k: &Kernel, who: &Ctx, path: &str) -> Result<ferrum_kernel::SiteResponse> {
+    let site = k.hooks.site("helpdesk").expect("helpdesk's endpoints").clone();
+    let req = ferrum_kernel::SiteRequest {
+        tenant: who.tenant,
+        user: Some(who.clone()),
+        method: "GET".into(),
+        path: format!("/{path}"),
+        query: Default::default(),
+        headers: Default::default(),
+        body: vec![],
+        client_ip: "203.0.113.9".into(),
+    };
+    site.handle(k, req).await
+}
+
+/// What a file belongs to: (entity, record).
+async fn file_home(t: &T, id: Uuid) -> (Option<String>, Option<Uuid>) {
+    let mut tx = t.k.db.tenant_tx(t.ctx.tenant).await.unwrap();
+    sqlx::query_as("select entity, record_id from file_object where tenant_id = $1 and id = $2").bind(t.ctx.tenant).bind(id).fetch_one(&mut *tx).await.unwrap()
+}
+
+/// What the interface needs of a conversation: a reply reaches the customer by email, with its files; the inbox's
+/// fields follow what was said; a customer downloads what was sent to them and nothing the team kept to
+/// itself; saved replies reach agents as their scope says.
+async fn replies_and_files(k: &Arc<Kernel>) {
+    let session = k.login("desk", "admin@desk.test", PASSWORD).await.expect("login");
+    let t = T { k: k.clone(), ctx: k.load_ctx(session.tenant, session.user, Some(session.token_version), "it".into()).await.expect("ctx") };
+    let priya = t.user("priya@desk.test", &["Support Agent"], &[]).await;
+    let raj = t.user("raj@desk.test", &["Support Agent"], &[]).await;
+    let boss = t.user("boss@desk.test", &["Support Manager"], &[]).await;
+
+    // ───────────── a reply goes out by email ─────────────
+    let opened = t
+        .insert("Ticket", json!({"subject": "Printer jam <urgent>", "description": "It jams.", "contact_name": "Ada", "contact_email": "Ada@Shop.test", "priority": "Medium"}))
+        .await;
+    let ticket = uid(&opened);
+    let number = opened["number"].as_str().unwrap().to_string();
+    assert_eq!(opened["last_message_preview"], json!("It jams."), "before anyone writes, the request itself");
+    assert!(opened["last_customer_message_at"].is_null() && opened["last_agent_message_at"].is_null());
+
+    let answered = priya
+        .say(
+            ticket,
+            json!({"author_kind": "Agent", "body": "Try the **rear tray**.\n\nSee [the guide](https://help.example.test/g) <b>now</b>", "is_internal": false}),
+        )
+        .await
+        .unwrap();
+    let reply = answered["conversation"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!(reply["emailed_to"], json!("ada@shop.test"), "the reply says where it was emailed");
+    assert_eq!(answered["status"], json!("Replied"));
+    assert!(!answered["last_agent_message_at"].is_null() && answered["last_customer_message_at"].is_null());
+    assert!(answered["last_message_preview"].as_str().unwrap().starts_with("Try the **rear tray**. See [the guide]"), "{}", answered["last_message_preview"]);
+    assert!(sent_to("ada@shop.test").is_empty(), "queued with the save, sent by the dispatcher");
+    drain(k).await;
+    let mails = sent_to("ada@shop.test");
+    assert_eq!(mails.len(), 1, "{mails:?}");
+    assert_eq!(mails[0].1, format!("Re: [{number}] Printer jam <urgent>"), "the subject names the ticket");
+    let html = &mails[0].2;
+    assert!(html.contains("<strong>rear tray</strong>") && html.contains("<a href=\"https://help.example.test/g\">the guide</a>"), "{html}");
+    assert!(html.contains("&lt;b&gt;now&lt;/b&gt;") && !html.contains("<b>"), "what an agent typed is text: {html}");
+    assert!(html.contains(&format!("https://help.example.test/open/Ticket/{ticket}")), "the customer is told where to follow it: {html}");
+
+    // A note and the customer's own words are not mailed to the customer; the inbox's fields follow them.
+    let noted = priya.say(ticket, json!({"author_kind": "Agent", "body": "Probably the roller", "is_internal": true})).await.unwrap();
+    assert!(noted["conversation"].as_array().unwrap().last().unwrap()["emailed_to"].is_null());
+    assert_eq!(noted["last_message_preview"], answered["last_message_preview"], "a note is not what the customer last heard");
+    priya.say(ticket, json!({"author_kind": "Customer", "body": "Still jams.\nAnd now it squeaks."})).await.unwrap();
+    let after = t.get("Ticket", ticket).await;
+    assert_eq!(after["last_message_preview"], json!("Still jams. And now it squeaks."), "on one line");
+    assert!(!after["last_customer_message_at"].is_null());
+    drain(k).await;
+    assert_eq!(sent_to("ada@shop.test").len(), 1, "nothing more went out");
+
+    // Nobody to email: the reply is in the conversation, and says it went nowhere.
+    let walk_in = t.insert("Ticket", json!({"subject": "Phone call", "priority": "Low"})).await;
+    let called = priya.say(uid(&walk_in), json!({"author_kind": "Agent", "body": "Called back."})).await.unwrap();
+    assert!(called["conversation"][0]["emailed_to"].is_null());
+    let mails_before = SENT.lock().unwrap().len();
+    drain(k).await;
+    assert_eq!(SENT.lock().unwrap().len(), mails_before, "no address, no mail");
+
+    // ───────────── files go with a reply ─────────────
+    let fix = k.store_file(&priya.ctx, None, "fix.pdf", "application/pdf", b"%PDF-1.7 fix").await.unwrap();
+    let fix_id: Uuid = fix["id"].as_str().unwrap().parse().unwrap();
+    let sent = priya
+        .say(ticket, json!({"author_kind": "Agent", "body": "The fix is attached.", "attachments": [{"id": fix_id.to_string(), "file_name": "innocent.txt", "size": 1}]}))
+        .await
+        .unwrap();
+    let message = sent["conversation"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!(
+        message["attachments"],
+        json!([{"id": fix_id.to_string(), "file_name": "fix.pdf", "content_type": "application/pdf", "size": 12}]),
+        "described by the stored file, not by what the client said"
+    );
+    assert_eq!(file_home(&t, fix_id).await, (Some("Ticket".to_string()), Some(ticket)), "the file follows the ticket's access now");
+    drain(k).await;
+    let with_file = sent_to("ada@shop.test");
+    assert_eq!((with_file.len(), with_file[1].3.clone()), (2, vec!["fix.pdf".to_string()]), "the file travels with the email");
+
+    // What may not be sent: someone else's upload, a file of another record, one that does not exist, too many.
+    let rajs = k.store_file(&raj.ctx, None, "private.pdf", "application/pdf", b"%PDF-1.7 raj").await.unwrap();
+    assert!(
+        refused(&priya.say(ticket, json!({"author_kind": "Agent", "body": "x", "attachments": [{"id": rajs["id"]}]})).await, "attachments"),
+        "another agent's upload"
+    );
+    let elsewhere = k.store_file(&t.ctx, Some(("Ticket", uid(&walk_in))), "other.pdf", "application/pdf", b"%PDF-1.7 other").await.unwrap();
+    assert!(
+        refused(&priya.say(ticket, json!({"author_kind": "Agent", "body": "x", "attachments": [{"id": elsewhere["id"]}]})).await, "attachments"),
+        "another ticket's file"
+    );
+    assert!(refused(
+        &priya.say(ticket, json!({"author_kind": "Agent", "body": "x", "attachments": [{"id": Uuid::now_v7().to_string()}]})).await,
+        "attachments"
+    ));
+    assert!(refused(&priya.say(ticket, json!({"author_kind": "Agent", "body": "x", "attachments": "fix.pdf"})).await, "attachments"));
+    let many: Vec<Value> = (0..11).map(|_| json!({"id": Uuid::now_v7().to_string()})).collect();
+    assert!(refused(&priya.say(ticket, json!({"author_kind": "Agent", "body": "x", "attachments": many})).await, "attachments"), "at most ten");
+    assert!(
+        refused(
+            &t.try_insert(
+                "Ticket",
+                json!({"subject": "With a file", "conversation": [{"author_kind": "Customer", "body": "hi", "attachments": [{"id": fix_id.to_string()}]}]})
+            )
+            .await,
+            "attachments"
+        ),
+        "a ticket that does not exist yet has nothing to attach to"
+    );
+    assert_eq!(file_home(&t, rajs["id"].as_str().unwrap().parse().unwrap()).await, (None, None), "a refused reply attaches nothing");
+
+    // A note can carry a file too; it is not mailed.
+    let memo = k.store_file(&priya.ctx, None, "memo.txt", "text/plain", b"for us").await.unwrap();
+    let memo_id: Uuid = memo["id"].as_str().unwrap().parse().unwrap();
+    priya.say(ticket, json!({"author_kind": "Agent", "body": "For us.", "is_internal": true, "attachments": [{"id": memo_id.to_string()}]})).await.unwrap();
+    assert_eq!(file_home(&t, memo_id).await.0.as_deref(), Some("Ticket"));
+    drain(k).await;
+    assert_eq!(sent_to("ada@shop.test").len(), 2);
+
+    // ───────────── a customer downloads what was sent to them ─────────────
+    let dee_id = k.create_user(&t.ctx, "dee@shop.test", "Dee", None, &[], false).await.unwrap();
+    k.set_user_kind(&t.ctx, dee_id, "portal").await.unwrap();
+    let dee = k.load_ctx(session.tenant, dee_id, None, "it".into()).await.unwrap();
+    let hers = uid(&t.insert("Ticket", json!({"subject": "Dee's order", "contact_email": "dee@shop.test", "priority": "Low"})).await);
+    let public = k.store_file(&priya.ctx, None, "invoice.pdf", "application/pdf", b"%PDF-1.7 invoice").await.unwrap();
+    let hidden = k.store_file(&priya.ctx, None, "cost.xlsx", "application/octet-stream", b"our margins").await.unwrap();
+    priya.say(hers, json!({"author_kind": "Agent", "body": "Your invoice.", "attachments": [{"id": public["id"]}]})).await.unwrap();
+    priya
+        .say(hers, json!({"author_kind": "Agent", "body": "Do not send them this.", "is_internal": true, "attachments": [{"id": hidden["id"]}]}))
+        .await
+        .unwrap();
+    let seen = call(k, Some(&dee), "GET", &format!("portal/tickets/{hers}"), Value::Null).await.unwrap();
+    assert_eq!(seen["messages"].as_array().unwrap().len(), 1, "the note never reaches her");
+    assert_eq!(seen["messages"][0]["files"], json!([{"id": public["id"], "file_name": "invoice.pdf", "size": 16}]));
+    let got = call_raw(k, &dee, &format!("portal/tickets/{hers}/files/{}", public["id"].as_str().unwrap())).await.unwrap();
+    assert_eq!((got.body.as_slice(), got.content_type.as_str()), (&b"%PDF-1.7 invoice"[..], "application/pdf"));
+    assert!(got.headers.iter().any(|h| h.0 == "content-disposition" && h.1 == "attachment; filename=\"invoice.pdf\""), "{:?}", got.headers);
+    for (what, ticket, file) in [
+        ("a file on a note", hers, hidden["id"].as_str().unwrap().to_string()),
+        ("another ticket's file", hers, fix_id.to_string()),
+        ("not a file", hers, "nonsense".to_string()),
+    ] {
+        let r = call_raw(k, &dee, &format!("portal/tickets/{ticket}/files/{file}")).await;
+        assert!(matches!(r, Err(Error::NotFound(_))), "{what}: {r:?}");
+    }
+    let r = call_raw(k, &dee, &format!("portal/tickets/{ticket}/files/{fix_id}")).await;
+    assert!(matches!(r, Err(Error::NotFound(_))), "someone else's ticket: {r:?}");
+
+    // ───────────── saved replies ─────────────
+    let titles = |rows: &[Doc]| -> Vec<String> {
+        let mut v: Vec<String> = rows.iter().map(|r| r["title"].as_str().unwrap().to_string()).collect();
+        v.sort();
+        v
+    };
+    let starters = ["Is this resolved", "Thanks for getting in touch", "We are looking into it"];
+    assert_eq!(titles(&priya.list("SavedReply", json!({})).await.unwrap()), starters, "the starter replies are everyone's");
+    let mine = priya.insert("SavedReply", json!({"title": "My sign-off", "body": "Best, {{agent.first_name}}"})).await;
+    assert_eq!(mine["scope"], json!("Personal"));
+    assert_eq!(priya.list("SavedReply", json!({})).await.unwrap().len(), 4);
+    assert_eq!(titles(&raj.list("SavedReply", json!({})).await.unwrap()), starters, "a personal reply is its writer's only");
+    assert!(raj.k.get(&raj.ctx, "SavedReply", uid(&mine), false).await.is_err());
+    assert_eq!(boss.list("SavedReply", json!({})).await.unwrap().len(), 3, "not even a manager reads another's personal reply");
+    assert_eq!(t.list("SavedReply", json!({})).await.unwrap().len(), 4, "an administrator reads them all");
+    assert!(
+        refused(&priya.try_insert("SavedReply", json!({"title": "For the front line", "scope": "Team", "body": "x"})).await, "team"),
+        "a team's reply names its team"
+    );
+    let front = uid(&t.insert("SupportTeam", json!({"team_name": "Front line", "members": [{"agent": "priya@desk.test"}]})).await);
+    priya.insert("SavedReply", json!({"title": "For the front line", "scope": "Team", "team": front.to_string(), "body": "x"})).await;
+    assert_eq!(raj.list("SavedReply", json!({})).await.unwrap().len(), 4, "a team's reply is for agents with no team limit");
+
+    let thanks = uid(&t.find_one("SavedReply", json!({"title": "Thanks for getting in touch"})).await);
+    assert_eq!(priya.action("SavedReply", thanks, "used", json!({})).await["uses"], json!(1));
+    assert_eq!(raj.action("SavedReply", thanks, "used", json!({})).await["uses"], json!(2), "counted for everyone it is shared with");
+    assert!(priya.try_update("SavedReply", thanks, json!({"body": "changed"})).await.is_err(), "a shared reply is its writer's and the managers' to change");
+    assert_eq!(boss.update("SavedReply", thanks, json!({"body": "Hi {{customer.first_name}}"})).await["body"], json!("Hi {{customer.first_name}}"));
 }
 
 fn n(s: &str) -> Decimal {

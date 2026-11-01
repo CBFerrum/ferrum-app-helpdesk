@@ -7,7 +7,7 @@
 //! always yields the same deadlines as if they had been known from the start.
 
 use crate::sla::{self, Calendar, Clock, State, Ts};
-use crate::{int, linked};
+use crate::{int, linked, outgoing};
 use async_trait::async_trait;
 use chrono::{Duration, SecondsFormat, Utc};
 use ferrum_domain::flow::create_for_user;
@@ -447,6 +447,13 @@ async fn entitlement(hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
     Ok(())
 }
 
+/// The start of a message on one line, for the inbox's list.
+fn preview(text: &str) -> String {
+    let flat: String = text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let line = flat.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.chars().count() <= 140 { line } else { format!("{}…", line.chars().take(139).collect::<String>().trim_end()) }
+}
+
 /// The stored version of the document being saved (`None` while it is being created).
 async fn stored(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Option<Doc>> {
     match id(doc, "id") {
@@ -477,6 +484,9 @@ impl DocHook for TicketHook {
         let known: HashSet<String> =
             old.as_ref().map(|o| rows(o, "conversation").iter().filter_map(|r| s(r, "id").map(str::to_string)).collect()).unwrap_or_default();
         let contact = s(doc, "contact_email").map(str::to_string);
+        let (ticket, number, title) = (id(doc, "id"), s(doc, "number").unwrap_or("Ticket").to_string(), s(doc, "subject").unwrap_or_default().to_string());
+        // Asked once, when a public reply needs it: the address the reply is emailed to, if there is one.
+        let mut emailed: Option<Option<String>> = None;
         let mut last_new = None;
         let mut messages = rows(doc, "conversation");
         for m in messages.iter_mut().filter(|m| !s(m, "id").is_some_and(|i| known.contains(i))) {
@@ -488,10 +498,36 @@ impl DocHook for TicketHook {
             if old.is_some() || s(m, "sent_at").is_none() {
                 set(m, "sent_at", ts_value(now));
             }
+            // Files are described by what was stored, not by what the client says about them.
+            let files = match (m.get("attachments").filter(|v| !v.is_null()), ticket) {
+                (None, _) => Vec::new(),
+                (Some(_), None) => return Err(Error::field("attachments", "can be added once the ticket exists")),
+                (Some(wanted), Some(t)) => outgoing::check_files(hc, t, wanted).await?,
+            };
+            set(m, "attachments", Value::Array(files));
+            if kind == "Agent" && !b(m, "is_internal") {
+                if emailed.is_none() {
+                    emailed = Some(outgoing::reply_address(hc, old.is_some(), contact.as_deref(), &number, &title).await?);
+                }
+                if let Some(Some(to)) = &emailed {
+                    set(m, "emailed_to", to.clone());
+                }
+            }
             last_new = Some((kind == "Customer", b(m, "is_internal")));
             set(m, "author_kind", kind);
         }
         set(doc, "conversation", Value::Array(messages.into_iter().map(Value::Object).collect()));
+
+        // What the inbox shows of a ticket: who spoke last, and a line of what they said.
+        let sent = rows(doc, "conversation");
+        let latest = |customer: bool| {
+            sent.iter().filter(|m| !b(m, "is_internal") && (s(m, "author_kind") == Some("Customer")) == customer).filter_map(|m| ts(m, "sent_at")).max()
+        };
+        set(doc, "last_customer_message_at", latest(true).map_or(Value::Null, ts_value));
+        set(doc, "last_agent_message_at", latest(false).map_or(Value::Null, ts_value));
+        let last = sent.iter().filter(|m| !b(m, "is_internal")).max_by_key(|m| ts(m, "sent_at")).and_then(|m| s(m, "body")).or(s(doc, "description"));
+        let line = last.map(preview).filter(|p| !p.is_empty());
+        set(doc, "last_message_preview", line.map_or(Value::Null, Value::String));
 
         // The status follows the conversation unless this save sets it: a customer reply reopens,
         // the first public agent reply on an open ticket marks it replied.
@@ -562,13 +598,16 @@ impl DocHook for TicketHook {
     /// Tells the agent in the app when a ticket becomes theirs or the customer writes back
     /// (automations cannot address the user behind an email field).
     async fn after_save(&self, hc: &mut HookCtx<'_>, doc: &Doc, old: Option<&Doc>) -> Result<()> {
-        let (Some(agent), Some(ticket)) = (s(doc, "assigned_to"), id(doc, "id")) else { return Ok(()) };
+        let Some(ticket) = id(doc, "id") else { return Ok(()) };
+        let known: HashSet<String> = old.map(|o| rows(o, "conversation").iter().filter_map(|r| s(r, "id").map(str::to_string)).collect()).unwrap_or_default();
+        let fresh: Vec<Doc> = rows(doc, "conversation").into_iter().filter(|m| !s(m, "id").is_some_and(|i| known.contains(i))).collect();
+        outgoing::dispatch(hc, doc, ticket, &fresh).await?;
+        let Some(agent) = s(doc, "assigned_to") else { return Ok(()) };
         let label = format!("{} {}", s(doc, "number").unwrap_or("Ticket"), s(doc, "subject").unwrap_or_default());
         if old.is_none_or(|o| s(o, "assigned_to") != Some(agent)) && agent != hc.ctx.email {
             notify_agent(hc.tx, hc.ctx.tenant, agent, ASSIGNED, &format!("{label} was assigned to you"), ticket).await?;
         }
-        let known: HashSet<String> = old.map(|o| rows(o, "conversation").iter().filter_map(|r| s(r, "id").map(str::to_string)).collect()).unwrap_or_default();
-        let replied = rows(doc, "conversation").iter().any(|m| s(m, "author_kind") == Some("Customer") && !s(m, "id").is_some_and(|i| known.contains(i)));
+        let replied = fresh.iter().any(|m| s(m, "author_kind") == Some("Customer"));
         if old.is_some() && replied {
             notify_agent(hc.tx, hc.ctx.tenant, agent, REPLY, &format!("The customer replied on {label}"), ticket).await?;
         }

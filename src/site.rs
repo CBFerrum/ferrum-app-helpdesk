@@ -30,6 +30,7 @@ impl Site for HelpdeskSite {
             ("GET", ["portal", "tickets", t]) => (200, one(k, user, ticket_id(t)?).await?),
             ("POST", ["portal", "tickets", t, "replies"]) => (200, reply(k, user, ticket_id(t)?, &body(&req)?).await?),
             ("POST", ["portal", "tickets", t, "rating"]) => (200, rate(k, user, ticket_id(t)?, &body(&req)?).await?),
+            ("GET", ["portal", "tickets", t, "files", f]) => return file(k, user, ticket_id(t)?, f).await,
             _ => return Err(Error::NotFound(format!("helpdesk endpoint {} {}", req.method, req.path))),
         };
         let mut r = SiteResponse::json(status, &out);
@@ -160,7 +161,7 @@ async fn detail(tx: &mut Tx, user: &Ctx, t: &Doc) -> Result<Value> {
         "messages": messages.iter().map(|m| {
             let mine = s(m, "author_kind") == Some("Customer");
             let who = if mine { "You".to_string() } else { s(m, "author").and_then(|a| names.get(a)).cloned().unwrap_or_else(|| "Support team".into()) };
-            json!({"id": s(m, "id"), "mine": mine, "author": who, "body": s(m, "body"), "sent_at": s(m, "sent_at")})
+            json!({"id": s(m, "id"), "mine": mine, "author": who, "body": s(m, "body"), "sent_at": s(m, "sent_at"), "files": files(m)})
         }).collect::<Vec<_>>(),
         "resolution": if done { s(t, "resolution_details") } else { None },
         "rating": t.get("satisfaction_rating").cloned().unwrap_or(Value::Null),
@@ -172,6 +173,39 @@ async fn detail(tx: &mut Tx, user: &Ctx, t: &Doc) -> Result<Value> {
         v.extend(e);
     }
     Ok(view)
+}
+
+/// The files a message came with, as the customer is told of them.
+fn files(m: &Doc) -> Vec<Value> {
+    m.get("attachments")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|f| json!({"id": f.get("id"), "file_name": f.get("file_name"), "size": f.get("size")}))
+        .collect()
+}
+
+/// `GET portal/tickets/{id}/files/{file}`: a file the team sent with a reply. Only the customer's own
+/// ticket, and only a file on a message they can read: one on an internal note is not there for them.
+async fn file(k: &Kernel, user: &Ctx, ticket: Uuid, file: &str) -> Result<SiteResponse> {
+    let file: Uuid = file.parse().map_err(|_| Error::NotFound("file".into()))?;
+    let sctx = sys(user);
+    let mut tx = k.db.tenant_tx(user.tenant).await?;
+    let t = own(k, &sctx, &mut tx, user, ticket, false).await?;
+    tx.commit().await?;
+    let sent = rows(&t, "conversation").iter().filter(|m| !b(m, "is_internal")).any(|m| crate::outgoing::file_ids(m.get("attachments")).contains(&file));
+    if !sent {
+        return Err(Error::NotFound("file".into()));
+    }
+    let (name, content_type, body) = k.read_file(&sctx, file).await?;
+    let disposition = format!("attachment; filename=\"{}\"", name.replace(['"', '\\'], ""));
+    let headers = vec![
+        ("content-disposition".into(), disposition),
+        ("x-content-type-options".into(), "nosniff".into()),
+        ("content-security-policy".into(), "sandbox".into()),
+        ("cache-control".into(), "private, no-store".into()),
+    ];
+    Ok(SiteResponse { status: 200, content_type, headers, body })
 }
 
 /// `POST portal/tickets` `{subject, description, priority?}`: a new ticket from the portal.

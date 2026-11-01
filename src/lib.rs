@@ -3,6 +3,8 @@
 //! Hooks are registered per entity, so a tenant without the `support` package never runs them.
 
 mod kb;
+mod outgoing;
+mod replies;
 mod reports;
 mod site;
 mod sla;
@@ -24,6 +26,7 @@ pub fn register(hooks: &mut HookRegistry) {
         .register("SupportTeam", Arc::new(ticket::TeamHook))
         .register("TicketAssignmentRule", Arc::new(ticket::RuleHook))
         .register("KbArticle", Arc::new(kb::ArticleHook))
+        .register("SavedReply", Arc::new(replies::ReplyHook))
         .register("WarrantyClaim", Arc::new(warranty::ClaimHook))
         .register("MaintenanceSchedule", Arc::new(visits::ScheduleHook))
         .register("MaintenanceVisit", Arc::new(visits::VisitHook));
