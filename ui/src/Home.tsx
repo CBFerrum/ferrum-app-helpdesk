@@ -129,7 +129,7 @@ function SaveView({ saved, onSave, onClose }: { saved: SavedFilter[]; onSave: (n
     <Dialog
       open
       onClose={onClose}
-      title="Save this view"
+      title="Save these filters"
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
@@ -273,7 +273,7 @@ export function HelpdeskHome() {
   // ── what is shown ──
   const shown = useMemo(() => sortTickets(loaded.map((t) => (overrides[t.id] ? { ...t, ...overrides[t.id] } : t)), state.sort), [loaded, overrides, state.sort]);
   const order = useMemo(() => shown.map((t) => t.id), [shown]);
-  const carried = useMemo<Carried>(() => ({ order, queue: state.queue }), [order, state.queue]);
+  const carried = useMemo<Carried>(() => ({ order, search: sp.toString() }), [order, sp]);
   const numbers = useMemo(() => new Map(loaded.map((t) => [t.id, t.number ?? "A ticket"])), [loaded]);
   const writable = !!entity && can(entity.permissions, "write");
   const queue = QUEUES.find((q) => q.id === state.queue) ?? QUEUES[0];
@@ -571,7 +571,7 @@ export function HelpdeskHome() {
             )}
             {refined && !alreadySaved && (
               <Button size="sm" onClick={() => setSaving(true)}>
-                Save this view
+                Save these filters
               </Button>
             )}
           </div>

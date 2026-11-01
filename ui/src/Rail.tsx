@@ -128,7 +128,7 @@ export function Rail({
       </section>
 
       <section className="hd-card" aria-labelledby="hd-rail-fields">
-        <h3 id="hd-rail-fields">Handling</h3>
+        <h3 id="hd-rail-fields">This ticket</h3>
         <div className="stack hd-fields">
           <div className="field">
             <label className="field-label" htmlFor="hd-priority">

@@ -29,7 +29,13 @@ export interface Ticket {
 /** The list an agent came from, carried by the link that opens a ticket, so next and previous walk it. */
 export interface Carried {
   order?: string[];
-  queue?: string;
+  /** The inbox's address (its query string) when the ticket was opened, to come back to the same view. */
+  search?: string;
+}
+
+/** Where "Inbox" leads back to: the view the ticket was opened from, else the inbox as it starts. */
+export function inboxLink(c: Carried): string {
+  return c.search ? `/?${c.search}` : "/";
 }
 
 /** Statuses that still need someone: Open waits for an agent, Replied for the customer. */

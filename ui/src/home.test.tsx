@@ -80,9 +80,9 @@ describe("the inbox", () => {
     expect(html).toContain("Clear the filters");
   });
 
-  it("offers a view to save when the filters are new, but not when they are a saved one", () => {
-    expect(draw({ url: "/?priority=High" })).toContain("Save this view");
-    expect(draw({ url: "/?priority=Urgent&channel=Email", rows: [ticket("1")] })).not.toContain("Save this view");
+  it("offers to save the filters when they are new, but not when they are a saved one", () => {
+    expect(draw({ url: "/?priority=High" })).toContain("Save these filters");
+    expect(draw({ url: "/?priority=Urgent&channel=Email", rows: [ticket("1")] })).not.toContain("Save these filters");
   });
 
   it("does not offer changes to someone who may only read", () => {
