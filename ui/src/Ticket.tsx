@@ -87,7 +87,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
   const wide = useMedia("(min-width: 1000px)");
   const [railChoice, setRailChoice] = useState<boolean | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
-  const bottom = useRef<HTMLDivElement>(null);
+  const bottom = useRef<HTMLElement>(null);
   const feedEnd = useRef<HTMLLIElement>(null);
   const arrived = useRef(false);
   const seen = useRef<TicketDoc | null>(null);
@@ -415,20 +415,19 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
           {audit.error && <p className="faint">What happened to the ticket could not be loaded; the conversation is complete.</p>}
           <Conversation items={feed} filter={filter} onFilter={setFilter} address={t.contact_email ?? null} endRef={feedEnd} />
           {writable ? (
-            <div ref={bottom}>
-              <Composer
-                ticket={id}
-                mode={mode}
-                onMode={setMode}
-                inputRef={input}
-                to={{ name: t.contact_name || t.customer_name || "the customer", email: t.contact_email ?? null }}
-                assignee={owner ? `${owner} has this ticket.` : null}
-                about={about}
-                replies={hasReplies}
-                conflict={conflict}
-                onSend={send}
-              />
-            </div>
+            <Composer
+              ticket={id}
+              mode={mode}
+              onMode={setMode}
+              inputRef={input}
+              rootRef={bottom}
+              to={{ name: t.contact_name || t.customer_name || "the customer", email: t.contact_email ?? null }}
+              assignee={owner ? `${owner} has this ticket.` : null}
+              about={about}
+              replies={hasReplies}
+              conflict={conflict}
+              onSend={send}
+            />
           ) : (
             !closed && <p className="muted">You can read this ticket but not answer it.</p>
           )}
