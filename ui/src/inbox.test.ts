@@ -7,6 +7,7 @@ import {
   filterNameError,
   initials,
   isFilter,
+  inboxLink,
   isRefined,
   lastSpeaker,
   queueFilters,
@@ -264,5 +265,16 @@ describe("telling a change to many tickets", () => {
     const told = describeBulk("Resolved", { succeeded: 0, failed: 5, results }, label);
     expect(told.message).toBe("Nothing changed. TKT-1: not changed. TKT-2: not changed. TKT-3: not changed. And 2 more.");
     expect(told.left).toHaveLength(5);
+  });
+});
+
+describe("coming back to the inbox", () => {
+  it("returns to the view the ticket was opened from, filters and all", () => {
+    expect(inboxLink({ order: ["a"], search: "queue=alerts&priority=High" })).toBe("/?queue=alerts&priority=High");
+  });
+
+  it("returns to the inbox as it starts when the ticket was opened by a link", () => {
+    expect(inboxLink({})).toBe("/");
+    expect(inboxLink({ search: "" })).toBe("/");
   });
 });

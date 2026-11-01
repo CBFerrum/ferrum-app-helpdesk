@@ -91,6 +91,10 @@ describe("a ticket's workspace", () => {
     expect(draw()).toContain("Raj Rao has this ticket. Sending takes it over.");
   });
 
+  it("says that sending takes a ticket nobody has", () => {
+    expect(draw({ doc: { assigned_to: null } })).toContain("Nobody has this ticket yet. Sending takes it over.");
+  });
+
   it("offers saved replies only where the workspace has them", () => {
     expect(draw()).toContain("Saved replies");
     expect(draw({ replies: false })).not.toContain("Saved replies");

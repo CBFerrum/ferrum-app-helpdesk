@@ -14,7 +14,7 @@ import { Composer, type Mode, type Outgoing } from "./Composer";
 import { Conversation } from "./Conversation";
 import { type AuditEvent, buildFeed, type FeedFilter, type Message, type Story, whatChanged } from "./feed";
 import { prefersReducedMotion, useMedia, useNames, useQuiet } from "./hooks";
-import { type Carried, initials, requester } from "./inbox";
+import { type Carried, inboxLink, initials, requester } from "./inbox";
 import { command, isTyping } from "./keys";
 import { Rail, type RailTicket } from "./Rail";
 import { ResolveDialog, type Resolution } from "./Resolve";
@@ -151,7 +151,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
   const previous = at > 0 ? order[at - 1] : null;
   const next = at >= 0 && at < order.length - 1 ? order[at + 1] : null;
   const go = useCallback((to: string | null) => to && navigate(`/t/${to}`, { replace: true, state: carried }), [navigate, carried]);
-  const home = carried.queue ? `/?queue=${carried.queue}` : "/";
+  const home = inboxLink(carried);
 
   /** A write against the version on screen. A newer one is told to the agent and shown, not overwritten. */
   const write = async (body: Record<string, unknown>): Promise<TicketDoc | null> => {
@@ -422,7 +422,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
               inputRef={input}
               rootRef={bottom}
               to={{ name: t.contact_name || t.customer_name || "the customer", email: t.contact_email ?? null }}
-              assignee={owner ? `${owner} has this ticket.` : null}
+              assignee={owner ? `${owner} has this ticket.` : t.assigned_to ? null : "Nobody has this ticket yet."}
               about={about}
               replies={hasReplies}
               conflict={conflict}
