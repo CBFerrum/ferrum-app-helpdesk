@@ -10,7 +10,7 @@
 
 use chrono::{DateTime, Duration, Months, SubsecRound, Utc};
 use ferrum_kernel::tenant::NewTenant;
-use ferrum_kernel::{Ctx, Db, DbConfig, Doc, Error, HookRegistry, Kernel, KernelSettings, ListQuery, Result};
+use ferrum_kernel::{Ctx, Db, DbConfig, Doc, Error, HookRegistry, Kernel, KernelSettings, ListQuery, Result, SiteResponse};
 use ferrum_meta::Catalog;
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
@@ -218,6 +218,17 @@ impl T {
             .await
             .unwrap()
     }
+}
+
+/// An answer as the server sends it: a stored file it names (`SiteResponse::file`) becomes its
+/// body, as the server streams it from storage.
+async fn served(k: &Kernel, tenant: Uuid, mut r: SiteResponse) -> SiteResponse {
+    if let Some(i) = r.headers.iter().position(|(h, _)| h == ferrum_kernel::hooks::STREAM_FILE_HEADER) {
+        let id: Uuid = r.headers.remove(i).1.parse().expect("a file id");
+        assert!(r.body.is_empty(), "a named file is streamed, never read whole by the app");
+        r.body = k.read_file(&Ctx::system(tenant, k.registry.schema(tenant).await.unwrap()), id).await.unwrap().2;
+    }
+    r
 }
 
 #[test]
@@ -1113,7 +1124,7 @@ async fn replies_and_files(k: &Arc<Kernel>) {
     let seen = call(k, Some(&dee), "GET", &format!("portal/tickets/{hers}"), Value::Null).await.unwrap();
     assert_eq!(seen["messages"].as_array().unwrap().len(), 1, "the note never reaches her");
     assert_eq!(seen["messages"][0]["files"], json!([{"id": public["id"], "file_name": "invoice.pdf", "size": 16}]));
-    let got = call_raw(k, &dee, &format!("portal/tickets/{hers}/files/{}", public["id"].as_str().unwrap())).await.unwrap();
+    let got = served(k, dee.tenant, call_raw(k, &dee, &format!("portal/tickets/{hers}/files/{}", public["id"].as_str().unwrap())).await.unwrap()).await;
     assert_eq!((got.body.as_slice(), got.content_type.as_str()), (&b"%PDF-1.7 invoice"[..], "application/pdf"));
     assert!(got.headers.iter().any(|h| h.0 == "content-disposition" && h.1 == "attachment; filename=\"invoice.pdf\""), "{:?}", got.headers);
     for (what, ticket, file) in [
