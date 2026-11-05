@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.0
+
+Files on the portal stream: a file sent with a ticket's message is sent by the server straight from storage, whatever its size, instead of being read whole into memory first (Ferrum's SiteResponse::file, FERRUM-OPS-006).
+
 ## 0.6.3
 
 Rebuilt with Ferrum-Frontend 00dea07: in a workflow state that names what may change, the other fields show read-only, and the fields the state needs show required.
