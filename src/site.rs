@@ -197,15 +197,16 @@ async fn file(k: &Kernel, user: &Ctx, ticket: Uuid, file: &str) -> Result<SiteRe
     if !sent {
         return Err(Error::NotFound("file".into()));
     }
-    let (name, content_type, body) = k.read_file(&sctx, file).await?;
-    let disposition = format!("attachment; filename=\"{}\"", name.replace(['"', '\\'], ""));
+    let f = k.file_info(&sctx, file).await?;
+    let disposition = format!("attachment; filename=\"{}\"", f.name.replace(['"', '\\'], ""));
     let headers = vec![
         ("content-disposition".into(), disposition),
         ("x-content-type-options".into(), "nosniff".into()),
         ("content-security-policy".into(), "sandbox".into()),
         ("cache-control".into(), "private, no-store".into()),
     ];
-    Ok(SiteResponse { status: 200, content_type, headers, body })
+    // The server streams the stored file as the body, whatever its size.
+    Ok(SiteResponse::file(200, &f.content_type, headers, file))
 }
 
 /// `POST portal/tickets` `{subject, description, priority?}`: a new ticket from the portal.
