@@ -2,6 +2,8 @@
 // internal note, and between them what happened to the ticket (status, who has it, priority, the
 // SLA, escalation). Pure, so it is tested without a browser.
 
+import { formatMoment, shownTimeZone } from "@ferrum/client";
+
 export interface Attachment {
   id: string;
   file_name: string;
@@ -259,24 +261,24 @@ export function counts(items: FeedItem[]): { replies: number; notes: number } {
   return { replies: messages.filter((m) => !m.internal).length, notes: messages.filter((m) => m.internal).length };
 }
 
-/** "Today", "Yesterday", or the date, in the viewer's calendar. */
+/** The day instant `t` falls on in the workspace's calendar, the one its times are shown on: `YYYY-MM-DD`. */
+const calendarDay = (t: number | Date) => new Intl.DateTimeFormat("en-CA", { timeZone: shownTimeZone(), year: "numeric", month: "2-digit", day: "2-digit" }).format(t);
+
+/** "Today", "Yesterday", or the date, in the workspace's calendar. */
 export function dayLabel(at: string, now = new Date()): string {
   const t = time(at);
   if (t === null) return "";
-  const day = new Date(t);
-  const start = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const diff = Math.round((start(now) - start(day)) / 86_400_000);
+  const [day, today] = [calendarDay(t), calendarDay(now)];
+  const diff = Math.round((Date.parse(today) - Date.parse(day)) / 86_400_000);
   if (diff === 0) return "Today";
   if (diff === 1) return "Yesterday";
-  return day.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", ...(day.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }) });
+  return formatMoment(t, { weekday: "short", day: "numeric", month: "short", ...(day.slice(0, 4) === today.slice(0, 4) ? {} : { year: "numeric" }) });
 }
 
-/** The day a moment falls on in the viewer's calendar, to put a divider where it changes. */
+/** The day a moment falls on in the workspace's calendar, to put a divider where it changes. */
 export function dayKey(at: string): string {
   const t = time(at);
-  if (t === null) return "";
-  const d = new Date(t);
-  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  return t === null ? "" : calendarDay(t);
 }
 
 /** Names a file's size the way a person says it. */
