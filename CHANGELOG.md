@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.1
+
+Rebuilt with Ferrum-Frontend bb60115: a record page reads an empty number or check as the server does, so an action whose condition needs one shows, and a workspace's settings open as their one record.
+
 ## 0.7.0
 
 Files on the portal stream: a file sent with a ticket's message is sent by the server straight from storage, whatever its size, instead of being read whole into memory first (Ferrum's SiteResponse::file, FERRUM-OPS-006).
