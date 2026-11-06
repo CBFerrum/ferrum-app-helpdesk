@@ -2,6 +2,7 @@
 // grey ("Due in 3 h") and take a colour only when something has happened: met (green), missed (red),
 // paused (blue). Pure, so the wording is tested without a browser.
 
+import { formatMoment } from "@ferrum/client";
 import { span } from "./inbox";
 
 export interface SlaTicket {
@@ -46,7 +47,7 @@ export function hoursText(hours: string | number | null | undefined): string | n
   return mm ? `${hh} h ${mm} min` : `${hh} h`;
 }
 
-const when = (t: number) => new Date(t).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+const when = (t: number) => formatMoment(t, { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 
 function card(
   id: SlaCard["id"],

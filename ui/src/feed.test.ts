@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { setTimeZone } from "@ferrum/client";
 import { buildFeed, counts, dayKey, dayLabel, type EventItem, fileSize, filterFeed, type MessageItem, type Story, whatChanged } from "./feed";
 
 const name = (email: string) => ({ "priya@acme.test": "Priya" })[email] ?? email;
@@ -211,6 +212,16 @@ describe("days and sizes", () => {
     expect(dayLabel(new Date(2026, 10, 9, 23, 55).toISOString(), now)).toBe("Yesterday");
     expect(dayLabel(new Date(2026, 10, 2, 12, 0).toISOString(), now)).toMatch(/2/);
     expect(dayLabel("not a date", now)).toBe("");
+  });
+
+  it("puts days on the workspace's calendar when the browser's is another", () => {
+    const [at, today] = ["2026-11-09T11:00:00Z", new Date("2026-11-10T09:00:00Z")];
+    setTimeZone("Pacific/Kiritimati");
+    expect(dayLabel(at, today)).toBe("Today");
+    expect(dayKey(at)).toBe("2026-11-10");
+    setTimeZone("UTC");
+    expect(dayLabel(at, today)).toBe("Yesterday");
+    setTimeZone(undefined);
   });
 
   it("gives the same key to moments on one day and another to the next", () => {

@@ -2,12 +2,13 @@
 // internal notes tinted and labelled, and what happened to the ticket as one grey line between them.
 
 import { Fragment, type Ref } from "react";
+import { formatMoment } from "@ferrum/client";
 import { EmptyState, Icon, Markdown } from "@ferrum/kit";
 import { counts, dayKey, dayLabel, type EventItem, type FeedFilter, type FeedItem, fileSize, filterFeed, type MessageItem } from "./feed";
 import { initials } from "./inbox";
 
-const when = (at: string) => (at ? new Date(at).toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "");
-const full = (at: string) => (at ? new Date(at).toLocaleString() : "");
+const when = (at: string) => formatMoment(at, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+const full = (at: string) => formatMoment(at, { dateStyle: "medium", timeStyle: "medium" });
 
 const ICONS: Record<EventItem["icon"], string> = { status: "refresh", person: "user", priority: "up", clock: "calendar", alert: "alert", star: "check" };
 
