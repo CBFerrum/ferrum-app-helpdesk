@@ -1,7 +1,7 @@
 // The keys a screen answers to, shown on `?`.
 
 import { Dialog } from "@ferrum/kit";
-import { t } from "@ferrum/client";
+import { t, isolate } from "@ferrum/client";
 
 export interface KeyRow {
   keys: string[];
@@ -17,11 +17,11 @@ export function Shortcuts({ open, onClose, title, rows }: { open: boolean; onClo
             <dt>
               {r.keys.map((k) => (
                 <kbd key={k} className="kbd">
-                  {k}
+                  {isolate(k)}
                 </kbd>
               ))}
             </dt>
-            <dd>{r.says}</dd>
+            <dd>{isolate(r.says)}</dd>
           </div>
         ))}
       </dl>

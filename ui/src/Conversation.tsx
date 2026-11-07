@@ -2,7 +2,7 @@
 // internal notes tinted and labelled, and what happened to the ticket as one grey line between them.
 
 import { Fragment, type Ref } from "react";
-import { formatMoment, t } from "@ferrum/client";
+import { formatMoment, t, isolate } from "@ferrum/client";
 import { EmptyState, Icon, Markdown } from "@ferrum/kit";
 import { counts, dayKey, dayLabel, type EventItem, type FeedFilter, type FeedItem, fileSize, filterFeed, type MessageItem } from "./feed";
 import { initials } from "./inbox";
@@ -16,14 +16,14 @@ function Message({ m, address }: { m: MessageItem; address: string | null }) {
   return (
     <li className="hd-msg" data-side={m.side} data-internal={m.internal || undefined}>
       <span className="hd-avatar" aria-hidden="true">
-        {initials(m.email ?? m.author)}
+        {isolate(initials(m.email ?? m.author))}
       </span>
       <article className="hd-bubble">
         <header className="hd-bubble-head">
-          <strong>{m.author}</strong>
+          <strong>{isolate(m.author)}</strong>
           {m.internal && <span className="hd-note-chip">{t("Internal note")}</span>}
           <time dateTime={m.at} title={full(m.at)} className="faint">
-            {when(m.at)}
+            {isolate(when(m.at))}
           </time>
         </header>
         <div className="hd-bubble-body">
@@ -35,16 +35,16 @@ function Message({ m, address }: { m: MessageItem; address: string | null }) {
               <li key={f.id}>
                 <a className="hd-file" href={`/files/${f.id}`} download={f.file_name}>
                   <Icon name="file" size={14} />
-                  <span className="hd-file-name">{f.file_name}</span>
-                  {f.size ? <span className="faint">{fileSize(f.size)}</span> : null}
+                  <span className="hd-file-name">{isolate(f.file_name)}</span>
+                  {f.size ? <span className="faint">{isolate(fileSize(f.size))}</span> : null}
                 </a>
               </li>
             ))}
           </ul>
         )}
         {m.side === "agent" && !m.internal && (
-          <p className="hd-sent faint" title={m.emailed && address ? `Emailed to ${address}` : undefined}>
-            {m.emailed ? "Emailed to the customer" : "Not sent by email. The customer can read it in the portal."}
+          <p className="hd-sent faint" title={m.emailed && address ? t("Emailed to {address}", { address }) : undefined}>
+            {m.emailed ? t("Emailed to the customer") : t("Not sent by email. The customer can read it in the portal.")}
           </p>
         )}
       </article>
@@ -60,22 +60,22 @@ function Event({ e }: { e: EventItem }) {
       </span>
       <div className="hd-event-body">
         <span>
-          {e.text}
-          {e.who && <span className="faint"> · {e.who}</span>}
+          {isolate(e.text)}
+          {e.who && <span className="faint"> · {isolate(e.who)}</span>}
         </span>
         <time dateTime={e.at} title={full(e.at)} className="faint">
-          {when(e.at)}
+          {isolate(when(e.at))}
         </time>
-        {e.detail && <p className="hd-event-detail">{e.detail}</p>}
+        {e.detail && <p className="hd-event-detail">{isolate(e.detail)}</p>}
       </div>
     </li>
   );
 }
 
 const FILTERS: { id: FeedFilter; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "replies", label: "Replies" },
-  { id: "notes", label: "Notes" },
+  { id: "all", get label() { return t("All"); } },
+  { id: "replies", get label() { return t("Replies"); } },
+  { id: "notes", get label() { return t("Notes"); } },
 ];
 
 export function Conversation({
@@ -101,7 +101,7 @@ export function Conversation({
         <div className="segmented" role="group" aria-label={t("Show")}>
           {FILTERS.map((f) => (
             <button key={f.id} type="button" aria-pressed={filter === f.id} onClick={() => onFilter(f.id)}>
-              {f.label}
+              {isolate(f.label)}
               {f.id !== "all" && <span className="faint">{f.id === "replies" ? n.replies : n.notes}</span>}
             </button>
           ))}
@@ -117,7 +117,7 @@ export function Conversation({
             <Fragment key={item.key}>
               {(i === 0 || dayKey(item.at) !== dayKey(shown[i - 1].at)) && item.at && (
                 <li className="hd-day">
-                  <span>{dayLabel(item.at, today)}</span>
+                  <span>{isolate(dayLabel(item.at, today))}</span>
                 </li>
               )}
               {item.kind === "message" ? <Message m={item} address={address} /> : <Event e={item} />}

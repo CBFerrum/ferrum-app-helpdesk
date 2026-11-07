@@ -4,7 +4,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type KeyboardEvent, useId, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
-import { api, docPath, errorMessage, t } from "@ferrum/client";
+import { api, docPath, errorMessage, t, isolate } from "@ferrum/client";
 import { Alert, Button, Dialog, ErrorState, Field, Spinner, toast, useDismiss } from "@ferrum/kit";
 import { LinkInput, useMe } from "@ferrum/records";
 import { useRemembered } from "./hooks";
@@ -22,7 +22,7 @@ export function useReplies(enabled = true) {
   });
 }
 
-const WHO: Record<ReplyScope, string> = { Personal: "Yours", Team: "Team", Everyone: "Everyone" };
+const WHO: Record<ReplyScope, string> = { get Personal() { return t("Yours"); }, get Team() { return t("Team"); }, get Everyone() { return t("Everyone"); } };
 
 /** Keeping what was typed as a reply to use again. */
 function SaveReply({ body, onClose }: { body: string; onClose: () => void }) {
@@ -62,7 +62,7 @@ function SaveReply({ body, onClose }: { body: string; onClose: () => void }) {
       }
     >
       <form id="hd-save-reply" className="stack" onSubmit={submit}>
-        {problem && <Alert tone="error">{problem}</Alert>}
+        {problem && <Alert tone="error">{isolate(problem)}</Alert>}
         <Field label={t("Name")} htmlFor="hd-reply-title" required>
           <input id="hd-reply-title" className="input" maxLength={120} value={title} onChange={(e) => setTitle(e.target.value)} />
         </Field>
@@ -79,7 +79,7 @@ function SaveReply({ body, onClose }: { body: string; onClose: () => void }) {
           </Field>
         )}
         <p className="faint">
-          {t("It is saved as typed. To have the customer's name filled in each time, write")} <code>{"{{customer.first_name}}"}</code> {t("in its place.")}
+          {t("It is saved as typed. To have the customer's name filled in each time, write")} <code>{isolate("{{customer.first_name}}")}</code> {t("in its place.")}
         </p>
       </form>
     </Dialog>
@@ -156,7 +156,7 @@ export function ReplyPicker({ about, draft, onPick, onClose }: { about: FillWith
                 setAt(0);
               }}
             >
-              {f.label}
+              {isolate(f.label)}
             </button>
           ))}
         </div>
@@ -168,7 +168,7 @@ export function ReplyPicker({ about, draft, onPick, onClose }: { about: FillWith
           <Spinner label={t("Loading saved replies")} />
         ) : !found.length ? (
           <p className="muted hd-picker-empty">
-            {list.data.length ? (query ? `Nothing matches “${query}”.` : "None here yet. Try another group above.") : "No saved replies yet. Write one and save it with the button below."}
+            {list.data.length ? (query ? t("Nothing matches “{query}”.", { query }) : t("None here yet. Try another group above.")) : t("No saved replies yet. Write one and save it with the button below.")}
           </p>
         ) : (
           <>
@@ -184,18 +184,18 @@ export function ReplyPicker({ about, draft, onPick, onClose }: { about: FillWith
                   onMouseEnter={() => setAt(i)}
                   onClick={() => choose(r)}
                 >
-                  <span className="hd-picker-title">{r.title}</span>
-                  <span className="faint">{WHO[r.scope]}</span>
+                  <span className="hd-picker-title">{isolate(r.title)}</span>
+                  <span className="faint">{isolate(WHO[r.scope])}</span>
                 </li>
               ))}
             </ul>
             {filled && (
               <div className="hd-picker-preview" aria-live="polite">
                 <h3>{t("For this ticket")}</h3>
-                <p className="hd-picker-text">{filled.text}</p>
+                <p className="hd-picker-text">{isolate(filled.text)}</p>
                 {filled.missing.length > 0 && (
                   <p className="hd-warn">
-                    {filled.missing.map((m) => `{{${m}}}`).join(", ")} {t("cannot be filled from this ticket. It stays in the text for you to write, and sending waits for it.")}
+                    {isolate(filled.missing.map((m) => `{{${m}}}`).join(", "))} {t("cannot be filled from this ticket. It stays in the text for you to write, and sending waits for it.")}
                   </p>
                 )}
               </div>

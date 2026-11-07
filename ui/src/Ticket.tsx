@@ -7,7 +7,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
-import { api, ApiError, bootstrap, docPath, errorMessage, t as tr } from "@ferrum/client";
+import { api, ApiError, bootstrap, docPath, errorMessage, t as tr, isolate } from "@ferrum/client";
 import { Alert, Badge, Button, confirmDialog, EmptyState, ErrorState, Icon, Menu, MenuItem, PageLoading, statusTone, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
 import { can, type Doc, type EntityMeta, useEntityMeta, useMe, useMetaIndex, useRecord } from "@ferrum/records";
 import { Composer, type Mode, type Outgoing } from "./Composer";
@@ -184,10 +184,10 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
     if (!m.internal && !mineAlready) {
       if (t.assigned_to) {
         const ok = await confirmDialog({
-          title: `${name(t.assigned_to)} has this ticket`,
-          message: "Reply anyway? Sending also takes the ticket over, so the team can see you have it.",
-          confirmLabel: "Reply and take it",
-          cancelLabel: "Not yet",
+          title: tr("{value} has this ticket", { value: name(t.assigned_to) }),
+          message: tr("Reply anyway? Sending also takes the ticket over, so the team can see you have it."),
+          confirmLabel: tr("Reply and take it"),
+          cancelLabel: tr("Not yet"),
         });
         if (!ok) return false;
       }
@@ -211,10 +211,10 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
       return;
     }
     if (to === "Closed") {
-      const ok = await confirmDialog({ title: "Close this ticket for good?", message: "A closed ticket is final. It cannot be reopened and nothing more can be written on it.", confirmLabel: "Close it", danger: true });
+      const ok = await confirmDialog({ title: tr("Close this ticket for good?"), message: tr("A closed ticket is final. It cannot be reopened and nothing more can be written on it."), confirmLabel: tr("Close it"), danger: true });
       if (!ok) return;
     }
-    if (await write({ status: to })) toast(`Status: ${to}`);
+    if (await write({ status: to })) toast(tr("Status: {to}", { to }));
   };
 
   const finish = async (r: Resolution): Promise<boolean> => {
@@ -300,23 +300,23 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
           <p className="crumbs">
             <Link to={home}>{tr("Inbox")}</Link>
             <Icon name="chevronRight" size={12} />
-            <span>{t.number}</span>
+            <span>{isolate(t.number ?? "")}</span>
           </p>
-          <h1 className="page-title">{t.subject || "No subject"}</h1>
+          <h1 className="page-title">{t.subject || tr("No subject")}</h1>
           <p className="row">
-            <Badge tone={statusTone(status)}>{status}</Badge>
-            {t.priority && t.priority !== "Medium" && <Badge tone={t.priority === "Urgent" ? "red" : t.priority === "High" ? "amber" : "neutral"}>{t.priority}</Badge>}
+            <Badge tone={statusTone(status)}>{isolate(status)}</Badge>
+            {t.priority && t.priority !== "Medium" && <Badge tone={t.priority === "Urgent" ? "red" : t.priority === "High" ? "amber" : "neutral"}>{isolate(t.priority)}</Badge>}
             {t.assigned_to ? (
               <span className="hd-owner" title={t.assigned_to}>
                 <span className="hd-avatar hd-avatar-sm" aria-hidden="true">
-                  {initials(name(t.assigned_to))}
+                  {isolate(initials(name(t.assigned_to)))}
                 </span>
-                {owner ?? "You have it"}
+                {owner ?? tr("You have it")}
               </span>
             ) : (
               <span className="faint">{tr("Nobody has it yet")}</span>
             )}
-            {who && <span className="faint">from {who}</span>}
+            {who && <span className="faint">{tr("from {who}", { who })}</span>}
           </p>
         </div>
         <div className="page-actions">

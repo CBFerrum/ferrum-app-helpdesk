@@ -3,7 +3,7 @@
 // for this ticket until it is sent, and the tab warns before it is closed on unsent words.
 
 import { type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type Ref, type RefObject, useState } from "react";
-import { api, errorMessage, t as tr } from "@ferrum/client";
+import { api, errorMessage, t as tr, isolate } from "@ferrum/client";
 import { Alert, Button, Icon, toast } from "@ferrum/kit";
 import { fileSize } from "./feed";
 import { useDraft, useLeaveWarning } from "./hooks";
@@ -84,11 +84,11 @@ export function Composer({
   const add = async (picked: File[]) => {
     const room = MAX_FILES - mine.length;
     const total = mine.reduce((n, f) => n + f.size, 0);
-    if (picked.length > room) toast(`A message carries at most ${MAX_FILES} files.`, "error");
+    if (picked.length > room) toast(tr("A message carries at most {MAX_FILES} files.", { MAX_FILES }), "error");
     let used = total;
     for (const file of picked.slice(0, Math.max(0, room))) {
       if (used + file.size > MAX_BYTES) {
-        toast(`${file.name} would take the files past ${MAX_BYTES / 1024 / 1024} MB, the most one email carries.`, "error");
+        toast(tr("{name} would take the files past {value} MB, the most one email carries.", { name: file.name, value: MAX_BYTES / 1024 / 1024 }), "error");
         continue;
       }
       used += file.size;
@@ -187,18 +187,18 @@ export function Composer({
         </button>
         <span className="spacer" />
         <span className="faint hd-write-to">
-          {mode === "note" ? "Only your team sees this" : to.email ? `To ${to.name} <${to.email}>` : "No email address on this ticket"}
+          {mode === "note" ? tr("Only your team sees this") : to.email ? `To ${to.name} <${to.email}>` : tr("No email address on this ticket")}
         </span>
       </div>
-      {conflict && <Alert tone="warning">{conflict}</Alert>}
+      {conflict && <Alert tone="warning">{isolate(conflict)}</Alert>}
       <textarea
         ref={inputRef}
         id="hd-write-text"
         className="textarea hd-write-text"
         rows={4}
-        aria-label={mode === "reply" ? "Reply to the customer" : "Internal note"}
+        aria-label={mode === "reply" ? tr("Reply to the customer") : tr("Internal note")}
         aria-describedby="hd-write-help"
-        placeholder={mode === "reply" ? (replies ? "Write a reply. Press / for a saved reply." : "Write a reply") : "Write a note for your team"}
+        placeholder={mode === "reply" ? (replies ? tr("Write a reply. Press / for a saved reply.") : tr("Write a reply")) : tr("Write a note for your team")}
         value={body}
         maxLength={20000}
         onChange={(e) => setBody(e.target.value)}
@@ -206,13 +206,13 @@ export function Composer({
         onPaste={onPaste}
       />
       <div id="hd-write-help" className="hd-write-help faint">
-        {mode === "reply" && !to.email && "The reply is kept in the conversation, and the customer can read it in the portal. "}
-        {mode === "reply" && assignee && `${assignee} Sending takes it over. `}
+        {mode === "reply" && !to.email && tr("The reply is kept in the conversation, and the customer can read it in the portal. ")}
+        {mode === "reply" && assignee && tr("{assignee} Sending takes it over. ", { assignee })}
         {tr("Markdown works. Drop or paste files here.")}
       </div>
       {open.length > 0 && (
         <p className="hd-warn" role="status">
-          {open.map((o) => `{{${o}}}`).join(", ")} {tr("still to fill in before this can be sent.")}
+          {isolate(open.map((o) => `{{${o}}}`).join(", "))} {tr("still to fill in before this can be sent.")}
         </p>
       )}
       {(mine.length > 0 || uploading > 0) && (
@@ -220,9 +220,9 @@ export function Composer({
           {mine.map((f) => (
             <li key={f.id} className="hd-file">
               <Icon name="file" size={14} />
-              <span className="hd-file-name">{f.file_name}</span>
-              <span className="faint">{fileSize(f.size)}</span>
-              <button type="button" className="icon-btn icon-btn-sm" aria-label={`Remove ${f.file_name}`} onClick={() => drop(f)}>
+              <span className="hd-file-name">{isolate(f.file_name)}</span>
+              <span className="faint">{isolate(fileSize(f.size))}</span>
+              <button type="button" className="icon-btn icon-btn-sm" aria-label={tr("Remove {file_name}", { file_name: f.file_name })} onClick={() => drop(f)}>
                 <Icon name="x" size={12} />
               </button>
             </li>
@@ -257,7 +257,7 @@ export function Composer({
         <span className="spacer" />
         <span className="faint hd-hint">{tr("Ctrl or ⌘ + Enter")}</span>
         <Button variant="primary" loading={busy} disabled={!ready} onClick={() => void send()}>
-          {mode === "reply" ? "Send reply" : "Add note"}
+          {mode === "reply" ? tr("Send reply") : tr("Add note")}
         </Button>
       </div>
       {picker && <ReplyPicker about={about} draft={body} onPick={pasted} onClose={() => setPicker(false)} />}

@@ -8,7 +8,7 @@
 import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { api, ApiError, docPath, errorMessage, newKey, t as tr } from "@ferrum/client";
+import { api, ApiError, docPath, errorMessage, newKey, t as tr, isolate } from "@ferrum/client";
 import { Alert, Button, confirmDialog, Dialog, EmptyState, ErrorState, Field, Icon, Spinner, toast, useDebounced, useLiveEntity, useShellTitle } from "@ferrum/kit";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@ferrum/kit/primitives";
 import { can, useMe, useMetaIndex } from "@ferrum/records";
@@ -102,7 +102,7 @@ function Choose({ label, children }: { label: string; children: ReactNode }) {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button type="button" className="btn btn-default btn-sm">
-          {label}
+          {isolate(label)}
           <Icon name="chevronDown" size={12} />
         </button>
       </DropdownMenuTrigger>
@@ -149,7 +149,7 @@ function SaveView({ saved, onSave, onClose }: { saved: SavedFilter[]; onSave: (n
 }
 
 export function HelpdeskHome() {
-  useShellTitle("Inbox");
+  useShellTitle(tr("Inbox"));
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [sp, setSp] = useSearchParams();
@@ -324,8 +324,8 @@ export function HelpdeskHome() {
       void qc.invalidateQueries({ queryKey: ["helpdesk", "queue"] });
     }
   };
-  const take = (t: Ticket) => me && void change(t, { assigned_to: me.email.toLowerCase() }, `${t.number ?? "Ticket"} is yours`);
-  const hold = (t: Ticket) => void change(t, { status: "On Hold" }, `${t.number ?? "Ticket"} is on hold`);
+  const take = (t: Ticket) => me && void change(t, { assigned_to: me.email.toLowerCase() }, tr("{value} is yours", { value: t.number ?? "Ticket" }));
+  const hold = (t: Ticket) => void change(t, { status: "On Hold" }, tr("{value} is on hold", { value: t.number ?? "Ticket" }));
 
   /** Many tickets in one request, each in its own transaction: those that fail stay selected, with why. */
   const bulk = async (ids: string[], values: Record<string, unknown>, done: string): Promise<boolean> => {
@@ -355,11 +355,11 @@ export function HelpdeskHome() {
   const saveView = async (viewName: string) => {
     const next = saveFilter(saved, viewName, state, newKey());
     if (!(await keep(next))) return false;
-    toast(`Saved as ${viewName.trim()}`);
+    toast(tr("Saved as {viewName}", { viewName: viewName.trim() }));
     return true;
   };
   const removeView = async (f: SavedFilter) => {
-    if (await confirmDialog({ title: `Remove “${f.name}”?`, message: "Only the saved filter goes. Its tickets stay where they are.", confirmLabel: "Remove", danger: true })) void keep(saved.filter((x) => x.id !== f.id));
+    if (await confirmDialog({ title: tr("Remove “{name}”?", { name: f.name }), message: tr("Only the saved filter goes. Its tickets stay where they are."), confirmLabel: tr("Remove"), danger: true })) void keep(saved.filter((x) => x.id !== f.id));
   };
 
   // ── the keyboard ──
@@ -438,7 +438,7 @@ export function HelpdeskHome() {
   ) : !shown.length ? (
     refined ? (
       <EmptyState title={tr("No ticket matches")} icon="search">
-        <p className="muted">{tr("Nothing in")} {queue.label.toLowerCase()} {tr("fits these filters.")}</p>
+        <p className="muted">{tr("Nothing in")} {isolate(queue.label.toLowerCase())} {tr("fits these filters.")}</p>
         <Button onClick={() => update({ q: "", priority: "", team: "", channel: "", assignee: "" })}>{tr("Clear the filters")}</Button>
       </EmptyState>
     ) : (
@@ -537,7 +537,7 @@ export function HelpdeskHome() {
             <select className="select" aria-label={tr("Priority")} value={state.priority} onChange={(e) => update({ priority: e.target.value })}>
               <option value="">{tr("Any priority")}</option>
               {[...PRIORITIES].reverse().map((p) => (
-                <option key={p}>{p}</option>
+                <option key={p}>{isolate(p)}</option>
               ))}
             </select>
             {(teams.data?.length ?? 0) > 0 && (
@@ -545,7 +545,7 @@ export function HelpdeskHome() {
                 <option value="">{tr("Any team")}</option>
                 {teams.data?.map((t) => (
                   <option key={t.id} value={t.id}>
-                    {t.team_name}
+                    {isolate(t.team_name)}
                   </option>
                 ))}
               </select>
@@ -553,19 +553,19 @@ export function HelpdeskHome() {
             <select className="select" aria-label={tr("Channel")} value={state.channel} onChange={(e) => update({ channel: e.target.value })}>
               <option value="">{tr("Any channel")}</option>
               {CHANNELS.map((c) => (
-                <option key={c}>{c}</option>
+                <option key={c}>{isolate(c)}</option>
               ))}
             </select>
             <select className="select" aria-label={tr("Order")} value={state.sort} onChange={(e) => update({ sort: e.target.value as InboxState["sort"] })}>
               {SORTS.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.label}
+                  {isolate(s.label)}
                 </option>
               ))}
             </select>
             {state.assignee && (
-              <button type="button" className="chip" aria-label={`Showing ${name(state.assignee)}'s tickets. Show everyone's`} onClick={() => update({ assignee: "" })}>
-                {name(state.assignee)}
+              <button type="button" className="chip" aria-label={tr("Showing {value}'s tickets. Show everyone's", { value: name(state.assignee) })} onClick={() => update({ assignee: "" })}>
+                {isolate(name(state.assignee))}
                 <Icon name="x" size={12} />
               </button>
             )}
@@ -578,7 +578,7 @@ export function HelpdeskHome() {
 
           {picked.size > 0 && (
             <div className="hd-bulk" role="region" aria-label={tr("Actions for the selected tickets")}>
-              <strong>{picked.size} selected</strong>
+              <strong>{tr("{size} selected", { size: picked.size })}</strong>
               {me && (
                 <Button size="sm" onClick={() => void bulk(chosen, { assigned_to: me.email.toLowerCase() }, "Assigned to you")}>
                   {tr("Assign to me")}
@@ -594,7 +594,7 @@ export function HelpdeskHome() {
               <Choose label={tr("Priority")}>
                 {[...PRIORITIES].reverse().map((p) => (
                   <DropdownMenuItem key={p} onSelect={() => void bulk(chosen, { priority: p }, `Priority ${p}`)}>
-                    {p}
+                    {isolate(p)}
                   </DropdownMenuItem>
                 ))}
               </Choose>

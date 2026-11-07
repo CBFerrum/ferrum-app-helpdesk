@@ -4,7 +4,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
-import { api, docPath, t as tr } from "@ferrum/client";
+import { api, docPath, t as tr, isolate } from "@ferrum/client";
 import { Badge, Button, Spinner, statusTone } from "@ferrum/kit";
 import { type EntityMeta, LinkInput, LinkTitle, type Person, Related } from "@ferrum/records";
 import { fileSize } from "./feed";
@@ -56,7 +56,7 @@ function Others({ t }: { t: RailTicket }) {
               <Link to={`/t/${o.id}`}>
                 <span className="hd-others-subject">{o.subject || o.number}</span>
               </Link>
-              <Badge tone={statusTone(o.status)}>{o.status}</Badge>
+              <Badge tone={statusTone(o.status)}>{isolate(o.status ?? "")}</Badge>
             </li>
           ))}
         </ul>
@@ -79,8 +79,8 @@ function Files({ id }: { id: string }) {
         {files.map((f) => (
           <li key={f.id}>
             <a className="hd-file" href={f.url} download={f.file_name}>
-              <span className="hd-file-name">{f.file_name}</span>
-              <span className="faint">{fileSize(f.size_bytes)}</span>
+              <span className="hd-file-name">{isolate(f.file_name)}</span>
+              <span className="faint">{isolate(fileSize(f.size_bytes))}</span>
             </a>
           </li>
         ))}
@@ -118,9 +118,9 @@ export function Rail({
         <ul className="hd-sla">
           {cards.map((c) => (
             <li key={c.id} data-state={c.state}>
-              <span className="hd-sla-title">{c.title}</span>
-              <strong>{c.text}</strong>
-              {c.detail && <span className="faint">{c.detail}</span>}
+              <span className="hd-sla-title">{isolate(c.title)}</span>
+              <strong>{isolate(c.text)}</strong>
+              {c.detail && <span className="faint">{isolate(c.detail)}</span>}
             </li>
           ))}
         </ul>
@@ -136,7 +136,7 @@ export function Rail({
             </label>
             <select id="hd-priority" className="select" disabled={!editable} value={t.priority ?? "Medium"} onChange={(e) => void save("priority", e.target.value)}>
               {PRIORITIES.map((p) => (
-                <option key={p}>{p}</option>
+                <option key={p}>{isolate(p)}</option>
               ))}
             </select>
           </div>
@@ -146,7 +146,7 @@ export function Rail({
             </label>
             <select id="hd-assignee" className="select" disabled={!editable} value={assignee} onChange={(e) => void save("assigned_to", e.target.value || null)}>
               <option value="">{tr("Nobody")}</option>
-              {assignee && !known && <option value={assignee}>{name(assignee)}</option>}
+              {assignee && !known && <option value={assignee}>{isolate(name(assignee))}</option>}
               {people.map((p) => (
                 <option key={p.id} value={p.email.toLowerCase()}>
                   {p.full_name || p.email}
@@ -177,19 +177,19 @@ export function Rail({
       <section className="hd-card" aria-labelledby="hd-rail-customer">
         <h3 id="hd-rail-customer">{tr("Customer")}</h3>
         <p className="hd-customer">
-          {t.customer ? <LinkTitle to="Customer" id={t.customer} title={t.customer_name ?? undefined} /> : <strong>{requester(t) || "Unknown"}</strong>}
+          {t.customer ? <LinkTitle to="Customer" id={t.customer} title={t.customer_name ?? undefined} /> : <strong>{requester(t) || tr("Unknown")}</strong>}
         </p>
         <p className="faint">
-          {[t.contact_name && t.contact_name !== t.customer_name ? t.contact_name : null, t.channel ? `by ${t.channel.toLowerCase()}` : null].filter(Boolean).join(" · ")}
+          {isolate([t.contact_name && t.contact_name !== t.customer_name ? t.contact_name : null, t.channel ? `by ${t.channel.toLowerCase()}` : null].filter(Boolean).join(" · "))}
         </p>
         {t.contact_email && (
           <p>
-            <a href={`mailto:${t.contact_email}`}>{t.contact_email}</a>
+            <a href={`mailto:${t.contact_email}`}>{isolate(t.contact_email)}</a>
           </p>
         )}
         {entitled && (
           <p className="hd-entitled">
-            <Badge tone={entitled.tone}>{entitled.text}</Badge>
+            <Badge tone={entitled.tone}>{isolate(entitled.text)}</Badge>
             {t[CONTRACT.field] ? <LinkTitle to={CONTRACT.entity} id={String(t[CONTRACT.field])} title={t._titles?.[CONTRACT.field]} /> : null}
           </p>
         )}
