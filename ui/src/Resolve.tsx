@@ -3,7 +3,7 @@
 
 import { type FormEvent, useEffect, useState } from "react";
 import { Alert, Button, Dialog, Field } from "@ferrum/kit";
-import { t } from "@ferrum/client";
+import { t, isolate } from "@ferrum/client";
 
 export interface Resolution {
   resolution: string;
@@ -56,7 +56,7 @@ export function ResolveDialog({
         <>
           <Button onClick={onClose}>{t("Cancel")}</Button>
           <Button variant="primary" type="submit" form="hd-resolve-form" loading={busy} disabled={!text.trim()}>
-            {word}
+            {isolate(word)}
           </Button>
         </>
       }

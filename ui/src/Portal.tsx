@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { api, errorMessage, t as tr } from "@ferrum/client";
+import { api, errorMessage, t as tr, isolate } from "@ferrum/client";
 import { Badge, Button, EmptyState, ErrorState, Field, Icon, Markdown, PageLoading, statusTone, toast, useShellTitle } from "@ferrum/kit";
 import { fileSize } from "./feed";
 
@@ -47,7 +47,7 @@ const when = (s?: string | null) => (s ? new Date(s).toLocaleString() : "");
 const day = (s?: string | null) => (s ? new Date(s).toLocaleDateString() : "");
 
 export function PortalTickets() {
-  useShellTitle("Your tickets");
+  useShellTitle(tr("Your tickets"));
   const q = useInfiniteQuery({
     queryKey: ["helpdesk", "portal", "tickets"],
     queryFn: ({ pageParam, signal }) =>
@@ -82,9 +82,9 @@ export function PortalTickets() {
             <li key={t.id}>
               <Link className="hd-ticket" to={`/t/${t.id}`}>
                 <span className="hd-ticket-main">
-                  <span className="hd-ticket-subject">{t.subject}</span>
+                  <span className="hd-ticket-subject">{isolate(t.subject ?? "")}</span>
                   <span className="faint">
-                    {tr("{number} · opened", { number: t.number ?? "" })} {day(t.opened_at)}
+                    {tr("{number} · opened", { number: t.number ?? "" })} {isolate(day(t.opened_at))}
                   </span>
                 </span>
                 <span className="hd-ticket-tags">
@@ -105,7 +105,7 @@ export function PortalTickets() {
 }
 
 export function PortalNewTicket() {
-  useShellTitle("New ticket");
+  useShellTitle(tr("New ticket"));
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [subject, setSubject] = useState("");
@@ -119,7 +119,7 @@ export function PortalNewTicket() {
       const t = await api.post<PortalTicketDetail>(BASE, { subject: subject.trim(), description: description.trim(), priority });
       qc.setQueryData(["helpdesk", "portal", "ticket", t.id], t);
       void qc.invalidateQueries({ queryKey: ["helpdesk", "portal", "tickets"] });
-      toast(`Ticket ${t.number ?? ""} raised`);
+      toast(tr("Ticket {value} raised", { value: t.number ?? "" }));
       navigate(`/t/${t.id}`);
     } catch (err) {
       toast(errorMessage(err), "error");
@@ -181,7 +181,7 @@ function Rating({ t, onSaved }: { t: PortalTicketDetail; onSaved: (t: PortalTick
         <fieldset className="hd-stars">
           <legend>{tr("How was the help?")}</legend>
           {[1, 2, 3, 4, 5].map((n) => (
-            <label key={n} title={`${n} of 5`}>
+            <label key={n} title={tr("{n} of 5", { n })}>
               <input type="radio" name="rating" value={n} checked={rating === n} onChange={() => setRating(n)} />
               <span aria-hidden="true">{n <= rating ? "★" : "☆"}</span>
               <span className="sr-only">{tr("{n} of 5", { n })}</span>
@@ -208,7 +208,7 @@ export function PortalTicket() {
   const q = useQuery({ queryKey: key, queryFn: ({ signal }) => api.get<PortalTicketDetail>(`${BASE}/${id}`, {}, signal) });
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
-  useShellTitle(q.data?.subject ?? "Ticket");
+  useShellTitle(q.data?.subject ?? tr("Ticket"));
   const saved = (t: PortalTicketDetail) => {
     qc.setQueryData(key, t);
     void qc.invalidateQueries({ queryKey: ["helpdesk", "portal", "tickets"] });
@@ -237,9 +237,9 @@ export function PortalTicket() {
       </p>
       <div className="page-head">
         <div>
-          <h1 className="page-title">{t.subject}</h1>
+          <h1 className="page-title">{isolate(t.subject ?? "")}</h1>
           <p className="page-sub">
-            {tr("{number} · opened", { number: t.number ?? "" })} {when(t.opened_at)}
+            {tr("{number} · opened", { number: t.number ?? "" })} {isolate(when(t.opened_at))}
           </p>
         </div>
         <Badge tone={statusTone(t.status)}>{t.label ?? t.status}</Badge>
@@ -248,15 +248,15 @@ export function PortalTicket() {
         <li className="hd-message hd-from-customer">
           <div className="hd-message-head">
             <strong>{tr("You")}</strong>
-            <span className="faint">{when(t.opened_at)}</span>
+            <span className="faint">{isolate(when(t.opened_at))}</span>
           </div>
-          {t.description ? <Markdown source={t.description} /> : <p className="muted">{t.subject}</p>}
+          {t.description ? <Markdown source={t.description} /> : <p className="muted">{isolate(t.subject ?? "")}</p>}
         </li>
         {t.messages.map((m, i) => (
           <li key={m.id ?? i} className={`hd-message ${m.mine ? "hd-from-customer" : "hd-from-agent"}`}>
             <div className="hd-message-head">
-              <strong>{m.author}</strong>
-              <span className="faint">{when(m.sent_at)}</span>
+              <strong>{isolate(m.author)}</strong>
+              <span className="faint">{isolate(when(m.sent_at))}</span>
             </div>
             <Markdown source={m.body ?? ""} />
             {m.files && m.files.length > 0 && (
@@ -265,8 +265,8 @@ export function PortalTicket() {
                   <li key={f.id}>
                     <a className="hd-file" href={`${BASE}/${t.id}/files/${f.id}`} download={f.file_name}>
                       <Icon name="file" size={14} />
-                      <span className="hd-file-name">{f.file_name}</span>
-                      {f.size ? <span className="faint">{fileSize(f.size)}</span> : null}
+                      <span className="hd-file-name">{isolate(f.file_name)}</span>
+                      {f.size ? <span className="faint">{isolate(fileSize(f.size))}</span> : null}
                     </a>
                   </li>
                 ))}
@@ -290,7 +290,7 @@ export function PortalTicket() {
       {t.can_reply ? (
         <form className="hd-composer card" onSubmit={send}>
           <div className="card-body stack">
-            <Field label={t.status === "Resolved" ? "Still need help? Reply to reopen it" : "Reply"} htmlFor="hd-reply">
+            <Field label={t.status === "Resolved" ? tr("Still need help? Reply to reopen it") : tr("Reply")} htmlFor="hd-reply">
               <textarea id="hd-reply" className="input" rows={5} maxLength={20000} value={body} onChange={(e) => setBody(e.target.value)} />
             </Field>
             <div className="row hd-composer-foot">

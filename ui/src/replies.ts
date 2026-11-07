@@ -1,3 +1,4 @@
+import { t } from "@ferrum/client";
 // Saved replies: finding one to insert, and filling its placeholders from the ticket and the agent
 // answering it. A placeholder that cannot be filled stays in the text, marked, and holds back
 // sending, so "Hello {{customer.first_name}}" never reaches a customer. Pure, so it is tested.
@@ -80,10 +81,10 @@ export function leftover(text: string): string[] {
 export type ScopeFilter = "all" | "mine" | "team" | "everyone";
 
 export const SCOPE_FILTERS: { id: ScopeFilter; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "mine", label: "Personal" },
-  { id: "team", label: "My teams" },
-  { id: "everyone", label: "Everyone" },
+  { id: "all", get label() { return t("All"); } },
+  { id: "mine", get label() { return t("Personal"); } },
+  { id: "team", get label() { return t("My teams"); } },
+  { id: "everyone", get label() { return t("Everyone"); } },
 ];
 
 const norm = (s: string) => s.toLowerCase().normalize("NFKD").replace(/\p{M}/gu, "");

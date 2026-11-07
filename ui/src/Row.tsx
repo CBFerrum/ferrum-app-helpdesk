@@ -6,7 +6,7 @@ import { Link } from "react-router";
 import { Badge, Button, Icon, statusTone } from "@ferrum/kit";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@ferrum/kit/primitives";
 import { type Carried, dueAt, dueLabel, initials, lastSpeaker, requester, type Ticket, waitLabel } from "./inbox";
-import { t as tr } from "@ferrum/client";
+import { t as tr, isolate } from "@ferrum/client";
 
 const PRIORITY: Record<string, "red" | "amber" | "neutral"> = { Urgent: "red", High: "amber", Low: "neutral" };
 const SLA: Record<string, "red" | "amber"> = { Breached: "red", "At Risk": "amber" };
@@ -36,28 +36,28 @@ export const Row = memo(function Row({ t, now, me, who, picked, current, writabl
   const mine = (t.assigned_to ?? "").toLowerCase() === me.toLowerCase();
   return (
     <li id={`hd-row-${t.id}`} className="hd-row" data-picked={picked || undefined} data-current={current || undefined} data-priority={t.priority ?? "Medium"}>
-      <input type="checkbox" className="hd-pick" checked={picked} aria-label={`Select ${t.number ?? "ticket"}`} onChange={(e) => onPick(t.id, (e.nativeEvent as MouseEvent).shiftKey)} />
+      <input type="checkbox" className="hd-pick" checked={picked} aria-label={tr("Select {value}", { value: t.number ?? "ticket" })} onChange={(e) => onPick(t.id, (e.nativeEvent as MouseEvent).shiftKey)} />
       <Link className="hd-row-main" to={`/t/${t.id}`} state={carried}>
-        <span className="hd-row-subject">{t.subject || "No subject"}</span>
-        <span className="hd-row-meta">{[t.number, requester(t), t.channel && t.channel !== "Email" ? t.channel : null].filter(Boolean).join(" · ")}</span>
+        <span className="hd-row-subject">{t.subject || tr("No subject")}</span>
+        <span className="hd-row-meta">{isolate([t.number, requester(t), t.channel && t.channel !== "Email" ? t.channel : null].filter(Boolean).join(" · "))}</span>
         {t.last_message_preview && (
           <span className="hd-row-preview">
             {speaker === "Team" && <span className="faint">{tr("Team:")} </span>}
-            {t.last_message_preview}
+            {isolate(t.last_message_preview)}
           </span>
         )}
       </Link>
       <span className="hd-row-chips">
-        {t.priority && PRIORITY[t.priority] && <Badge tone={PRIORITY[t.priority]}>{t.priority}</Badge>}
-        {t.status && t.status !== "Open" && <Badge tone={statusTone(t.status)}>{t.status}</Badge>}
-        {t.sla_status && SLA[t.sla_status] && <Badge tone={SLA[t.sla_status]}>{t.sla_status}</Badge>}
-        {due && <span className={due.startsWith("overdue") ? "hd-overdue" : "faint"}>{due}</span>}
-        {wait && <span className="faint">{wait}</span>}
+        {t.priority && PRIORITY[t.priority] && <Badge tone={PRIORITY[t.priority]}>{isolate(t.priority)}</Badge>}
+        {t.status && t.status !== "Open" && <Badge tone={statusTone(t.status)}>{isolate(t.status)}</Badge>}
+        {t.sla_status && SLA[t.sla_status] && <Badge tone={SLA[t.sla_status]}>{isolate(t.sla_status)}</Badge>}
+        {due && <span className={due.startsWith("overdue") ? "hd-overdue" : "faint"}>{isolate(due)}</span>}
+        {wait && <span className="faint">{isolate(wait)}</span>}
       </span>
       <span className="hd-row-who">
         {owner ? (
-          <span className="hd-avatar" role="img" aria-label={mine ? "You have this ticket" : `${owner} has this ticket`} title={mine ? "You have it" : `${owner} has it`}>
-            {initials(owner)}
+          <span className="hd-avatar" role="img" aria-label={mine ? tr("You have this ticket") : tr("{owner} has this ticket", { owner })} title={mine ? tr("You have it") : tr("{owner} has it", { owner })}>
+            {isolate(initials(owner))}
           </span>
         ) : writable ? (
           <Button size="sm" onClick={() => onTake(t)} title={tr("Assign it to me (a)")}>
@@ -69,7 +69,7 @@ export const Row = memo(function Row({ t, now, me, who, picked, current, writabl
       </span>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button type="button" className="icon-btn" aria-label={`Actions for ${t.number ?? "this ticket"}`}>
+          <button type="button" className="icon-btn" aria-label={tr("Actions for {value}", { value: t.number ?? "this ticket" })}>
             <Icon name="chevronDown" size={14} />
           </button>
         </DropdownMenuTrigger>

@@ -1,3 +1,4 @@
+import { t as tr } from "@ferrum/client";
 // The agent inbox's rules (kept apart from the page, so they are tested): the queues and what each
 // asks the server, which tickets need someone first, how long each has waited, what the inbox keeps
 // in its address so a link opens the same view, and the filters a person saves.
@@ -129,11 +130,11 @@ export function waitLabel(t: Ticket, now = Date.now()): string | null {
 export type QueueId = "mine" | "unassigned" | "alerts" | "teams" | "open";
 
 export const QUEUES: { id: QueueId; label: string; empty: string }[] = [
-  { id: "mine", label: "Mine", empty: "Nothing assigned to you is open. Well done." },
-  { id: "unassigned", label: "Unassigned", empty: "Every open ticket has someone on it." },
-  { id: "alerts", label: "SLA alerts", empty: "No ticket is at risk of missing its SLA." },
-  { id: "teams", label: "My teams", empty: "Your teams have no open tickets." },
-  { id: "open", label: "All open", empty: "No open tickets." },
+  { id: "mine", get label() { return tr("Mine"); }, get empty() { return tr("Nothing assigned to you is open. Well done."); } },
+  { id: "unassigned", get label() { return tr("Unassigned"); }, get empty() { return tr("Every open ticket has someone on it."); } },
+  { id: "alerts", get label() { return tr("SLA alerts"); }, get empty() { return tr("No ticket is at risk of missing its SLA."); } },
+  { id: "teams", get label() { return tr("My teams"); }, get empty() { return tr("Your teams have no open tickets."); } },
+  { id: "open", get label() { return tr("All open"); }, get empty() { return tr("No open tickets."); } },
 ];
 
 export interface Who {
@@ -166,9 +167,9 @@ export function queueFilters(queue: QueueId, who: Who): unknown[] {
 export type SortId = "urgent" | "waiting" | "newest";
 
 export const SORTS: { id: SortId; label: string }[] = [
-  { id: "urgent", label: "Most pressing" },
-  { id: "waiting", label: "Longest waiting" },
-  { id: "newest", label: "Newest" },
+  { id: "urgent", get label() { return tr("Most pressing"); } },
+  { id: "waiting", get label() { return tr("Longest waiting"); } },
+  { id: "newest", get label() { return tr("Newest"); } },
 ];
 
 export interface Refine {

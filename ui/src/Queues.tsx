@@ -4,7 +4,7 @@
 import { Link } from "react-router";
 import { Icon } from "@ferrum/kit";
 import { initials, isFilter, type InboxState, type QueueId, type SavedFilter, START, writeState } from "./inbox";
-import { t } from "@ferrum/client";
+import { t, isolate } from "@ferrum/client";
 
 export interface QueueEntry {
   id: QueueId;
@@ -45,9 +45,9 @@ export function Queues({
           {queues.map((q, i) => (
             <li key={q.id}>
               <Link to={plain(q.id)} aria-current={state.queue === q.id && !onAFilter ? "page" : undefined}>
-                <span>{q.label}</span>
+                <span>{isolate(q.label)}</span>
                 {counts[q.id] !== undefined && <span className="hd-count">{counts[q.id]}</span>}
-                <kbd className="kbd" aria-hidden="true" title={`Press ${i + 1}`}>
+                <kbd className="kbd" aria-hidden="true" title={t("Press {value}", { value: i + 1 })}>
                   {i + 1}
                 </kbd>
               </Link>
@@ -64,9 +64,9 @@ export function Queues({
             {saved.map((f) => (
               <li key={f.id}>
                 <Link to={{ search: new URLSearchParams(f.query).toString() }} aria-current={isFilter(f, state) ? "page" : undefined}>
-                  {f.name}
+                  {isolate(f.name)}
                 </Link>
-                <button type="button" className="icon-btn icon-btn-sm" aria-label={`Remove the saved filter ${f.name}`} onClick={() => onRemove(f)}>
+                <button type="button" className="icon-btn icon-btn-sm" aria-label={t("Remove the saved filter {name}", { name: f.name })} onClick={() => onRemove(f)}>
                   <Icon name="x" size={12} />
                 </button>
               </li>
@@ -83,11 +83,11 @@ export function Queues({
             <ul className="hd-people">
               {people.map((p) => (
                 <li key={p.who}>
-                  <button type="button" aria-pressed={state.assignee.toLowerCase() === p.who.toLowerCase()} onClick={() => onPerson(p.who)} title={`Show ${name(p.who)}'s tickets`}>
+                  <button type="button" aria-pressed={state.assignee.toLowerCase() === p.who.toLowerCase()} onClick={() => onPerson(p.who)} title={t("Show {value}'s tickets", { value: name(p.who) })}>
                     <span className="hd-avatar hd-avatar-sm" aria-hidden="true">
-                      {initials(name(p.who))}
+                      {isolate(initials(name(p.who)))}
                     </span>
-                    <span className="hd-person-name">{name(p.who)}</span>
+                    <span className="hd-person-name">{isolate(name(p.who))}</span>
                     <span className="hd-count">{p.count}</span>
                     <span className="hd-bar" style={{ width: `${(p.count / most) * 100}%` }} aria-hidden="true" />
                   </button>
