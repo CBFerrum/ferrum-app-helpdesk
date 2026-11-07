@@ -1,6 +1,6 @@
 id: helpdesk
 name: Helpdesk
-version: 0.7.9
+version: 0.7.10
 publisher: cbferrum
 summary: Tickets with business-hours SLAs, assignment rules, knowledge base, warranty claims and maintenance visits
 description: README.md
@@ -40,3 +40,17 @@ contributes:
     - {id: assigned, label: Tickets assigned to you, default: [inapp, email]}
     - {id: reply, label: Customer replies on your tickets, default: [inapp, email]}
     - {id: sla, label: SLA breaches on your tickets, default: [inapp, email]}
+  # What the assistant should know in Helpdesk's pages, and what it suggests asking there.
+  shell.assistant:
+    - id: helpdesk
+      title: "Helpdesk"
+      instructions: >-
+        A Ticket is Open, Replied, On Hold, Resolved or Closed. Its SLA (ServiceLevelAgreement, by priority) sets when
+        a first response and a resolution are due, counted in working hours. TicketMessage holds the conversation. A
+        KbArticle (Draft, Published, Archived) is the knowledge base. Warranty claims and maintenance visits are for
+        customers' equipment.
+      suggestions:
+        - "Which tickets are about to miss their SLA?"
+        - "How many tickets did each team resolve this week?"
+        - "Which open tickets have waited longest for a reply?"
+        - "Find an article about resetting a password"
