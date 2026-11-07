@@ -47,7 +47,7 @@ const key = (id: string) => ["peek", "Ticket", id];
 function sentNote(saved: TicketDoc, internal: boolean): string {
   const last = saved.conversation?.[saved.conversation.length - 1];
   if (internal) return "Note added";
-  return last?.emailed ? `Reply sent. Emailed to ${saved.contact_email}.` : "Reply added. No email went out, but the customer can read it in the portal.";
+  return last?.emailed ? tr("Reply sent. Emailed to {contact_email}.", { contact_email: String(saved.contact_email) }) : "Reply added. No email went out, but the customer can read it in the portal.";
 }
 
 /** The address of a ticket that works from anywhere, which takes a customer to the portal. */
@@ -422,7 +422,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
               inputRef={input}
               rootRef={bottom}
               to={{ name: t.contact_name || t.customer_name || "the customer", email: t.contact_email ?? null }}
-              assignee={owner ? `${owner} has this ticket.` : t.assigned_to ? null : "Nobody has this ticket yet."}
+              assignee={owner ? tr("{owner} has this ticket.", { owner }) : t.assigned_to ? null : "Nobody has this ticket yet."}
               about={about}
               replies={hasReplies}
               conflict={conflict}

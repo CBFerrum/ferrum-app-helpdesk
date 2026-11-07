@@ -2,7 +2,7 @@
 // internal note, and between them what happened to the ticket (status, who has it, priority, the
 // SLA, escalation). Pure, so it is tested without a browser.
 
-import { formatMoment, shownTimeZone } from "@ferrum/client";
+import { formatMoment, shownTimeZone, t as tr } from "@ferrum/client";
 
 export interface Attachment {
   id: string;
@@ -187,7 +187,7 @@ export function buildFeed(t: Story, events: AuditEvent[], name: (email: string) 
         at: e.at,
         tone: "plain",
         icon: "person",
-        text: now ? (was ? `Reassigned from ${name(was)} to ${name(now)}` : `Assigned to ${name(now)}`) : `Unassigned from ${was ? name(was) : "the agent"}`,
+        text: now ? (was ? tr("Reassigned from {was} to {now}", { was: name(was), now: name(now) }) : tr("Assigned to {now}", { now: name(now) })) : (was ? tr("Unassigned from {name}", { name: name(was) }) : tr("Unassigned from the agent")),
         who: who(e),
         detail: null,
       });
@@ -213,7 +213,7 @@ export function buildFeed(t: Story, events: AuditEvent[], name: (email: string) 
         at: e.at,
         tone: rating[1] >= 4 ? "good" : rating[1] <= 2 ? "warn" : "plain",
         icon: "star",
-        text: `The customer rated the help ${rating[1]} of 5`,
+        text: tr("The customer rated the help {value} of 5", { value: rating[1] }),
         who: null,
         detail: text(t.feedback),
       });
@@ -226,7 +226,7 @@ export function buildFeed(t: Story, events: AuditEvent[], name: (email: string) 
         at: e.at,
         tone: "warn",
         icon: "alert",
-        text: typeof level === "number" ? `Escalated to level ${level}` : "Escalated",
+        text: typeof level === "number" ? tr("Escalated to level {level}", { level }) : "Escalated",
         who: null,
         detail: null,
       });
@@ -235,7 +235,7 @@ export function buildFeed(t: Story, events: AuditEvent[], name: (email: string) 
 
   // An escalation the audit trail could not show (it may be closed to this reader) is still on the ticket.
   if (t.escalated_at && !events.some((e) => e.action === "escalate")) {
-    items.push({ kind: "event", key: "escalated", at: t.escalated_at, tone: "warn", icon: "alert", text: `Escalated to level ${t.escalation_level ?? 1}`, who: null, detail: null });
+    items.push({ kind: "event", key: "escalated", at: t.escalated_at, tone: "warn", icon: "alert", text: tr("Escalated to level {value}", { value: t.escalation_level ?? 1 }), who: null, detail: null });
   }
   if (t.response_breached && t.response_by) {
     items.push({ kind: "event", key: "response-missed", at: t.response_by, tone: "bad", icon: "clock", text: "The first response target was missed", who: null, detail: null });
@@ -285,8 +285,8 @@ export function dayKey(at: string): string {
 export function fileSize(bytes?: number | null): string {
   if (!bytes || bytes < 0) return "";
   if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024) return tr("{n} KB", { n: Math.max(1, Math.round(bytes / 1024)) });
+  return tr("{value} MB", { value: (bytes / (1024 * 1024)).toFixed(1) });
 }
 
 /** The part of a ticket a colleague's change shows in. */
@@ -307,10 +307,10 @@ export function whatChanged(before: Snapshot, after: Snapshot, name: (email: str
   if (last) {
     const who = last.author_kind === "Customer" ? "The customer" : last.author ? name(last.author) : "A colleague";
     const what = last.is_internal ? "added a note" : "replied";
-    parts.push(fresh.length > 1 ? `${fresh.length} new messages, the latest from ${who}` : `${who} ${what}`);
+    parts.push(fresh.length > 1 ? tr("{length} new messages, the latest from {who}", { length: fresh.length, who }) : `${who} ${what}`);
   }
-  if ((before.assigned_to ?? null) !== (after.assigned_to ?? null)) parts.push(after.assigned_to ? `Now with ${name(after.assigned_to)}` : "No one has it now");
-  if (before.status !== after.status && after.status) parts.push(`Status is now ${after.status}`);
-  if (before.priority !== after.priority && after.priority) parts.push(`Priority is now ${after.priority}`);
+  if ((before.assigned_to ?? null) !== (after.assigned_to ?? null)) parts.push(after.assigned_to ? tr("Now with {value}", { value: name(after.assigned_to) }) : "No one has it now");
+  if (before.status !== after.status && after.status) parts.push(tr("Status is now {status}", { status: after.status }));
+  if (before.priority !== after.priority && after.priority) parts.push(tr("Priority is now {priority}", { priority: after.priority }));
   return parts.length ? parts.join(". ") : null;
 }
