@@ -4,7 +4,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
-import { api, docPath } from "@ferrum/client";
+import { api, docPath, t as tr } from "@ferrum/client";
 import { Badge, Button, Spinner, statusTone } from "@ferrum/kit";
 import { type EntityMeta, LinkInput, LinkTitle, type Person, Related } from "@ferrum/records";
 import { fileSize } from "./feed";
@@ -42,13 +42,13 @@ function Others({ t }: { t: RailTicket }) {
   if (!by) return null;
   return (
     <div className="hd-others">
-      <h4>Their other tickets</h4>
+      <h4>{tr("Their other tickets")}</h4>
       {q.isLoading ? (
-        <Spinner label="Looking for their other tickets" />
+        <Spinner label={tr("Looking for their other tickets")} />
       ) : q.error ? (
-        <p className="faint">They could not be loaded.</p>
+        <p className="faint">{tr("They could not be loaded.")}</p>
       ) : !q.data?.length ? (
-        <p className="faint">None. This is their first.</p>
+        <p className="faint">{tr("None. This is their first.")}</p>
       ) : (
         <ul>
           {q.data.map((o) => (
@@ -74,7 +74,7 @@ function Files({ id }: { id: string }) {
   if (!files.length) return null;
   return (
     <section className="hd-card" aria-labelledby="hd-rail-files">
-      <h3 id="hd-rail-files">Files</h3>
+      <h3 id="hd-rail-files">{tr("Files")}</h3>
       <ul className="hd-files">
         {files.map((f) => (
           <li key={f.id}>
@@ -112,9 +112,9 @@ export function Rail({
   const entitled = t.entitlement ? ENTITLEMENT[t.entitlement] : null;
   const known = people.some((p) => p.email.toLowerCase() === assignee);
   return (
-    <aside className="hd-rail" aria-label="Ticket details">
+    <aside className="hd-rail" aria-label={tr("Ticket details")}>
       <section className="hd-card" aria-labelledby="hd-rail-sla">
-        <h3 id="hd-rail-sla">Service levels</h3>
+        <h3 id="hd-rail-sla">{tr("Service levels")}</h3>
         <ul className="hd-sla">
           {cards.map((c) => (
             <li key={c.id} data-state={c.state}>
@@ -124,15 +124,15 @@ export function Rail({
             </li>
           ))}
         </ul>
-        {(t.escalation_level ?? 0) > 0 && <Badge tone="amber">Escalated to level {t.escalation_level}</Badge>}
+        {(t.escalation_level ?? 0) > 0 && <Badge tone="amber">{tr("Escalated to level {escalation_level}", { escalation_level: t.escalation_level ?? "" })}</Badge>}
       </section>
 
       <section className="hd-card" aria-labelledby="hd-rail-fields">
-        <h3 id="hd-rail-fields">This ticket</h3>
+        <h3 id="hd-rail-fields">{tr("This ticket")}</h3>
         <div className="stack hd-fields">
           <div className="field">
             <label className="field-label" htmlFor="hd-priority">
-              Priority
+              {tr("Priority")}
             </label>
             <select id="hd-priority" className="select" disabled={!editable} value={t.priority ?? "Medium"} onChange={(e) => void save("priority", e.target.value)}>
               {PRIORITIES.map((p) => (
@@ -142,10 +142,10 @@ export function Rail({
           </div>
           <div className="field">
             <label className="field-label" htmlFor="hd-assignee">
-              Assigned to
+              {tr("Assigned to")}
             </label>
             <select id="hd-assignee" className="select" disabled={!editable} value={assignee} onChange={(e) => void save("assigned_to", e.target.value || null)}>
-              <option value="">Nobody</option>
+              <option value="">{tr("Nobody")}</option>
               {assignee && !known && <option value={assignee}>{name(assignee)}</option>}
               {people.map((p) => (
                 <option key={p.id} value={p.email.toLowerCase()}>
@@ -155,19 +155,19 @@ export function Rail({
             </select>
             {editable && assignee !== me.toLowerCase() && (
               <Button size="sm" onClick={() => void save("assigned_to", me.toLowerCase())}>
-                Assign to me
+                {tr("Assign to me")}
               </Button>
             )}
           </div>
           <div className="field">
             <label className="field-label" htmlFor="hd-team">
-              Team
+              {tr("Team")}
             </label>
             <LinkInput to="SupportTeam" id="hd-team" value={t.team ?? null} title={t._titles?.team} disabled={!editable} onChange={(v) => void save("team", v)} />
           </div>
           <div className="field">
             <label className="field-label" htmlFor="hd-type">
-              Type
+              {tr("Type")}
             </label>
             <LinkInput to="TicketType" id="hd-type" value={(t.ticket_type as string | null | undefined) ?? null} title={t._titles?.ticket_type} disabled={!editable} onChange={(v) => void save("ticket_type", v)} />
           </div>
@@ -175,7 +175,7 @@ export function Rail({
       </section>
 
       <section className="hd-card" aria-labelledby="hd-rail-customer">
-        <h3 id="hd-rail-customer">Customer</h3>
+        <h3 id="hd-rail-customer">{tr("Customer")}</h3>
         <p className="hd-customer">
           {t.customer ? <LinkTitle to="Customer" id={t.customer} title={t.customer_name ?? undefined} /> : <strong>{requester(t) || "Unknown"}</strong>}
         </p>
@@ -198,7 +198,7 @@ export function Rail({
 
       {meta.linked_from?.length ? (
         <section className="hd-card" aria-labelledby="hd-rail-linked">
-          <h3 id="hd-rail-linked">Linked records</h3>
+          <h3 id="hd-rail-linked">{tr("Linked records")}</h3>
           <Related meta={meta} id={t.id} />
         </section>
       ) : null}
@@ -206,7 +206,7 @@ export function Rail({
       <Files id={t.id} />
 
       <Link className="hd-rail-form" to={`/e/Ticket/${t.id}`}>
-        Every field, in the form
+        {tr("Every field, in the form")}
       </Link>
     </aside>
   );

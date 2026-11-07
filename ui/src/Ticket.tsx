@@ -7,7 +7,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
-import { api, ApiError, bootstrap, docPath, errorMessage } from "@ferrum/client";
+import { api, ApiError, bootstrap, docPath, errorMessage, t as tr } from "@ferrum/client";
 import { Alert, Badge, Button, confirmDialog, EmptyState, ErrorState, Icon, Menu, MenuItem, PageLoading, statusTone, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
 import { can, type Doc, type EntityMeta, useEntityMeta, useMe, useMetaIndex, useRecord } from "@ferrum/records";
 import { Composer, type Mode, type Outgoing } from "./Composer";
@@ -55,9 +55,9 @@ async function copyLink(id: string) {
   const host = bootstrap()?.workspace.host ?? location.host;
   try {
     await navigator.clipboard.writeText(`${location.protocol}//${host}/open/Ticket/${id}`);
-    toast("Link copied");
+    toast(tr("Link copied"));
   } catch {
-    toast("Your browser did not allow copying", "error");
+    toast(tr("Your browser did not allow copying"), "error");
   }
 }
 
@@ -65,7 +65,7 @@ export function TicketRoute() {
   const { id = "" } = useParams();
   const meta = useEntityMeta("Ticket");
   if (meta.error) return <ErrorState error={meta.error} onRetry={() => void meta.refetch()} />;
-  if (!meta.data) return <PageLoading label="Loading the ticket" />;
+  if (!meta.data) return <PageLoading label={tr("Loading the ticket")} />;
   return <Workspace key={id} meta={meta.data} id={id} />;
 }
 
@@ -273,14 +273,14 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
   if (record.error) {
     if (record.error instanceof ApiError && record.error.status === 404) {
       return (
-        <EmptyState title="This ticket no longer exists">
-          <Link to="/">Back to the inbox</Link>
+        <EmptyState title={tr("This ticket no longer exists")}>
+          <Link to="/">{tr("Back to the inbox")}</Link>
         </EmptyState>
       );
     }
     return <ErrorState error={record.error} onRetry={() => void record.refetch()} />;
   }
-  if (!t || !me) return <PageLoading label="Loading the ticket" />;
+  if (!t || !me) return <PageLoading label={tr("Loading the ticket")} />;
 
   const showRail = railChoice ?? wide;
   const hasReplies = !!index?.entities.some((e) => e.name === "SavedReply");
@@ -298,7 +298,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
       <header className="hd-ws-head">
         <div className="hd-ws-title">
           <p className="crumbs">
-            <Link to={home}>Inbox</Link>
+            <Link to={home}>{tr("Inbox")}</Link>
             <Icon name="chevronRight" size={12} />
             <span>{t.number}</span>
           </p>
@@ -314,30 +314,30 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
                 {owner ?? "You have it"}
               </span>
             ) : (
-              <span className="faint">Nobody has it yet</span>
+              <span className="faint">{tr("Nobody has it yet")}</span>
             )}
             {who && <span className="faint">from {who}</span>}
           </p>
         </div>
         <div className="page-actions">
           {order.length > 0 && (
-            <span className="hd-step" role="group" aria-label="Tickets in your list">
-              <button type="button" className="icon-btn" aria-label="Previous ticket" title="Previous ticket (k)" disabled={!previous} onClick={() => go(previous)}>
+            <span className="hd-step" role="group" aria-label={tr("Tickets in your list")}>
+              <button type="button" className="icon-btn" aria-label={tr("Previous ticket")} title={tr("Previous ticket (k)")} disabled={!previous} onClick={() => go(previous)}>
                 <Icon name="up" />
               </button>
-              <button type="button" className="icon-btn" aria-label="Next ticket" title="Next ticket (j)" disabled={!next} onClick={() => go(next)}>
+              <button type="button" className="icon-btn" aria-label={tr("Next ticket")} title={tr("Next ticket (j)")} disabled={!next} onClick={() => go(next)}>
                 <Icon name="down" />
               </button>
             </span>
           )}
           {writable && !done && (
-            <Button variant="primary" icon="check" onClick={() => setResolving("Resolved")} title="Resolve (e)">
-              Resolve
+            <Button variant="primary" icon="check" onClick={() => setResolving("Resolved")} title={tr("Resolve (e)")}>
+              {tr("Resolve")}
             </Button>
           )}
-          {writable && status === "Resolved" && <Button onClick={() => void setStatus("Open")}>Reopen</Button>}
-          <button type="button" className="btn btn-default btn-md" aria-pressed={showRail} onClick={() => setRailChoice(!showRail)} title="Details (d)">
-            Details
+          {writable && status === "Resolved" && <Button onClick={() => void setStatus("Open")}>{tr("Reopen")}</Button>}
+          <button type="button" className="btn btn-default btn-md" aria-pressed={showRail} onClick={() => setRailChoice(!showRail)} title={tr("Details (d)")}>
+            {tr("Details")}
           </button>
           <Menu ariaLabel="More actions" icon="chevronDown" buttonClass="btn btn-default btn-md">
             {(close) => (
@@ -349,7 +349,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
                       void setStatus("On Hold");
                     }}
                   >
-                    Put on hold
+                    {tr("Put on hold")}
                   </MenuItem>
                 )}
                 {writable && status === "On Hold" && (
@@ -359,7 +359,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
                       void setStatus("Open");
                     }}
                   >
-                    Take off hold
+                    {tr("Take off hold")}
                   </MenuItem>
                 )}
                 {writable && !closed && (
@@ -370,7 +370,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
                       void setStatus("Closed");
                     }}
                   >
-                    Close for good…
+                    {tr("Close for good…")}
                   </MenuItem>
                 )}
                 {canWarranty && writable && (
@@ -383,7 +383,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
                         .catch((err) => toast(errorMessage(err), "error"));
                     }}
                   >
-                    Create a warranty claim
+                    {tr("Create a warranty claim")}
                   </MenuItem>
                 )}
                 <MenuItem
@@ -392,7 +392,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
                     void copyLink(id);
                   }}
                 >
-                  Copy link to this ticket
+                  {tr("Copy link to this ticket")}
                 </MenuItem>
                 <MenuItem
                   onSelect={() => {
@@ -400,7 +400,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
                     setHelp(true);
                   }}
                 >
-                  Keyboard shortcuts
+                  {tr("Keyboard shortcuts")}
                 </MenuItem>
               </>
             )}
@@ -408,11 +408,11 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
         </div>
       </header>
 
-      {closed && <Alert tone="info">This ticket is closed for good. You can still read everything on it.</Alert>}
+      {closed && <Alert tone="info">{tr("This ticket is closed for good. You can still read everything on it.")}</Alert>}
 
       <div className="hd-ws-body" data-rail={showRail || undefined}>
         <div className="hd-ws-main">
-          {audit.error && <p className="faint">What happened to the ticket could not be loaded; the conversation is complete.</p>}
+          {audit.error && <p className="faint">{tr("What happened to the ticket could not be loaded; the conversation is complete.")}</p>}
           <Conversation items={feed} filter={filter} onFilter={setFilter} address={t.contact_email ?? null} endRef={feedEnd} />
           {writable ? (
             <Composer
@@ -429,7 +429,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
               onSend={send}
             />
           ) : (
-            !closed && <p className="muted">You can read this ticket but not answer it.</p>
+            !closed && <p className="muted">{tr("You can read this ticket but not answer it.")}</p>
           )}
         </div>
         {showRail && <Rail meta={meta} t={t} me={me.email} people={people} name={name} editable={writable} save={save} />}
@@ -443,7 +443,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
         onClose={() => setResolving(null)}
         onSubmit={finish}
       />
-      <Shortcuts open={help} onClose={() => setHelp(false)} title="Keyboard shortcuts" rows={SHORTCUTS} />
+      <Shortcuts open={help} onClose={() => setHelp(false)} title={tr("Keyboard shortcuts")} rows={SHORTCUTS} />
     </div>
   );
 }

@@ -8,7 +8,7 @@
 import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { api, ApiError, docPath, errorMessage, newKey } from "@ferrum/client";
+import { api, ApiError, docPath, errorMessage, newKey, t as tr } from "@ferrum/client";
 import { Alert, Button, confirmDialog, Dialog, EmptyState, ErrorState, Field, Icon, Spinner, toast, useDebounced, useLiveEntity, useShellTitle } from "@ferrum/kit";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@ferrum/kit/primitives";
 import { can, useMe, useMetaIndex } from "@ferrum/records";
@@ -129,18 +129,18 @@ function SaveView({ saved, onSave, onClose }: { saved: SavedFilter[]; onSave: (n
     <Dialog
       open
       onClose={onClose}
-      title="Save these filters"
+      title={tr("Save these filters")}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose}>{tr("Cancel")}</Button>
           <Button variant="primary" type="submit" form="hd-save-view" loading={busy} disabled={!name.trim() || !!problem}>
-            Save
+            {tr("Save")}
           </Button>
         </>
       }
     >
       <form id="hd-save-view" className="stack" onSubmit={submit}>
-        <Field label="Name" htmlFor="hd-view-name" required error={problem ?? undefined} hint="It appears under Saved filters, only for you.">
+        <Field label={tr("Name")} htmlFor="hd-view-name" required error={problem ?? undefined} hint={tr("It appears under Saved filters, only for you.")}>
           <input id="hd-view-name" className="input" maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
       </form>
@@ -262,7 +262,7 @@ export function HelpdeskHome() {
       if (e instanceof ApiError && e.status === 409) {
         // Written from another tab meanwhile: what is there now is shown, and nothing is overwritten.
         void qc.invalidateQueries({ queryKey: ["helpdesk", "prefs"] });
-        toast("Your saved filters were changed in another tab. They are up to date now; try again.", "error");
+        toast(tr("Your saved filters were changed in another tab. They are up to date now; try again."), "error");
       } else {
         toast(errorMessage(e), "error");
       }
@@ -345,7 +345,7 @@ export function HelpdeskHome() {
   const target = (): string[] => (picked.size ? chosen : cursor ? [cursor] : []);
   const takeAll = () => {
     const ids = target();
-    if (!me || !ids.length) return toast("Pick a ticket first: j and k move, x selects", "info");
+    if (!me || !ids.length) return toast(tr("Pick a ticket first: j and k move, x selects"), "info");
     if (ids.length === 1) {
       const t = shown.find((x) => x.id === ids[0]);
       if (t) take(t);
@@ -420,8 +420,8 @@ export function HelpdeskHome() {
 
   if (index && !(entity && can(entity.permissions, "read"))) {
     return (
-      <EmptyState title="No tickets for you" icon="alert">
-        <p className="muted">Ask an administrator for a Support role.</p>
+      <EmptyState title={tr("No tickets for you")} icon="alert">
+        <p className="muted">{tr("Ask an administrator for a Support role.")}</p>
       </EmptyState>
     );
   }
@@ -434,19 +434,19 @@ export function HelpdeskHome() {
   const body = list.error ? (
     <ErrorState error={list.error} onRetry={() => void list.refetch()} />
   ) : !ready || list.isLoading ? (
-    <Spinner label="Loading tickets" />
+    <Spinner label={tr("Loading tickets")} />
   ) : !shown.length ? (
     refined ? (
-      <EmptyState title="No ticket matches" icon="search">
-        <p className="muted">Nothing in {queue.label.toLowerCase()} fits these filters.</p>
-        <Button onClick={() => update({ q: "", priority: "", team: "", channel: "", assignee: "" })}>Clear the filters</Button>
+      <EmptyState title={tr("No ticket matches")} icon="search">
+        <p className="muted">{tr("Nothing in")} {queue.label.toLowerCase()} {tr("fits these filters.")}</p>
+        <Button onClick={() => update({ q: "", priority: "", team: "", channel: "", assignee: "" })}>{tr("Clear the filters")}</Button>
       </EmptyState>
     ) : (
       <EmptyState title={queue.empty} icon="check" />
     )
   ) : (
     <>
-      <ul className="hd-rows" aria-label="Tickets">
+      <ul className="hd-rows" aria-label={tr("Tickets")}>
         {shown.map((t) => (
           <Row
             key={t.id}
@@ -468,7 +468,7 @@ export function HelpdeskHome() {
       {list.hasNextPage && (
         <div className="load-more">
           <Button loading={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>
-            Show more ({total - loaded.length} left)
+            {tr("Show more (")}{total - loaded.length} {tr("left)")}
           </Button>
         </div>
       )}
@@ -479,19 +479,19 @@ export function HelpdeskHome() {
     <div className="hd-inbox">
       <div className="page-head">
         <div>
-          <h1 className="page-title">Inbox</h1>
+          <h1 className="page-title">{tr("Inbox")}</h1>
           <p className="page-sub" aria-live="polite">
             {list.data ? `${total} ${total === 1 ? "ticket" : "tickets"} · ${SORTS.find((s) => s.id === state.sort)?.label.toLowerCase()}` : " "}
           </p>
         </div>
         <div className="page-actions">
-          <button type="button" className="icon-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onClick={() => setHelp(true)}>
+          <button type="button" className="icon-btn" aria-label={tr("Keyboard shortcuts")} title={tr("Keyboard shortcuts (?)")} onClick={() => setHelp(true)}>
             <Icon name="list" />
           </button>
           {entity && can(entity.permissions, "create") && (
             <Link className="btn btn-primary btn-md" to="e/Ticket/new">
               <Icon name="plus" />
-              New ticket
+              {tr("New ticket")}
             </Link>
           )}
         </div>
@@ -499,7 +499,7 @@ export function HelpdeskHome() {
 
       {!wide && (
         <button type="button" className="btn btn-default btn-md hd-more-toggle" aria-expanded={more} onClick={() => setMore(!more)}>
-          Saved filters and who has what
+          {tr("Saved filters and who has what")}
         </button>
       )}
       <div className="hd-inbox-body">
@@ -514,13 +514,13 @@ export function HelpdeskHome() {
           onPerson={(email) => update({ queue: "open", assignee: state.assignee.toLowerCase() === email.toLowerCase() ? "" : email })}
           showMore={wide || more}
         />
-        <section className="hd-list" aria-label="The queue">
+        <section className="hd-list" aria-label={tr("The queue")}>
           <div className="hd-toolbar">
             <input
               ref={all}
               type="checkbox"
               className="hd-pick"
-              aria-label="Select every ticket shown"
+              aria-label={tr("Select every ticket shown")}
               checked={!!order.length && picked.size === order.length}
               disabled={!order.length || !writable}
               onChange={() => setPicked(picked.size === order.length ? new Set() : new Set(order))}
@@ -529,20 +529,20 @@ export function HelpdeskHome() {
               ref={search}
               className="input hd-search"
               type="search"
-              aria-label="Search tickets"
-              placeholder="Search subject, customer, address…  ( / )"
+              aria-label={tr("Search tickets")}
+              placeholder={tr("Search subject, customer, address…  ( / )")}
               value={text}
               onChange={(e) => setText(e.target.value)}
             />
-            <select className="select" aria-label="Priority" value={state.priority} onChange={(e) => update({ priority: e.target.value })}>
-              <option value="">Any priority</option>
+            <select className="select" aria-label={tr("Priority")} value={state.priority} onChange={(e) => update({ priority: e.target.value })}>
+              <option value="">{tr("Any priority")}</option>
               {[...PRIORITIES].reverse().map((p) => (
                 <option key={p}>{p}</option>
               ))}
             </select>
             {(teams.data?.length ?? 0) > 0 && (
-              <select className="select" aria-label="Team" value={state.team} onChange={(e) => update({ team: e.target.value })}>
-                <option value="">Any team</option>
+              <select className="select" aria-label={tr("Team")} value={state.team} onChange={(e) => update({ team: e.target.value })}>
+                <option value="">{tr("Any team")}</option>
                 {teams.data?.map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.team_name}
@@ -550,13 +550,13 @@ export function HelpdeskHome() {
                 ))}
               </select>
             )}
-            <select className="select" aria-label="Channel" value={state.channel} onChange={(e) => update({ channel: e.target.value })}>
-              <option value="">Any channel</option>
+            <select className="select" aria-label={tr("Channel")} value={state.channel} onChange={(e) => update({ channel: e.target.value })}>
+              <option value="">{tr("Any channel")}</option>
               {CHANNELS.map((c) => (
                 <option key={c}>{c}</option>
               ))}
             </select>
-            <select className="select" aria-label="Order" value={state.sort} onChange={(e) => update({ sort: e.target.value as InboxState["sort"] })}>
+            <select className="select" aria-label={tr("Order")} value={state.sort} onChange={(e) => update({ sort: e.target.value as InboxState["sort"] })}>
               {SORTS.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.label}
@@ -571,47 +571,47 @@ export function HelpdeskHome() {
             )}
             {refined && !alreadySaved && (
               <Button size="sm" onClick={() => setSaving(true)}>
-                Save these filters
+                {tr("Save these filters")}
               </Button>
             )}
           </div>
 
           {picked.size > 0 && (
-            <div className="hd-bulk" role="region" aria-label="Actions for the selected tickets">
+            <div className="hd-bulk" role="region" aria-label={tr("Actions for the selected tickets")}>
               <strong>{picked.size} selected</strong>
               {me && (
                 <Button size="sm" onClick={() => void bulk(chosen, { assigned_to: me.email.toLowerCase() }, "Assigned to you")}>
-                  Assign to me
+                  {tr("Assign to me")}
                 </Button>
               )}
-              <Choose label="Assign to…">
+              <Choose label={tr("Assign to…")}>
                 {people.map((p) => (
                   <DropdownMenuItem key={p.id} onSelect={() => void bulk(chosen, { assigned_to: p.email.toLowerCase() }, `Assigned to ${p.full_name || p.email}`)}>
                     {p.full_name || p.email}
                   </DropdownMenuItem>
                 ))}
               </Choose>
-              <Choose label="Priority">
+              <Choose label={tr("Priority")}>
                 {[...PRIORITIES].reverse().map((p) => (
                   <DropdownMenuItem key={p} onSelect={() => void bulk(chosen, { priority: p }, `Priority ${p}`)}>
                     {p}
                   </DropdownMenuItem>
                 ))}
               </Choose>
-              <Choose label="Status">
-                <DropdownMenuLabel>Set the status</DropdownMenuLabel>
-                <DropdownMenuItem onSelect={() => void bulk(chosen, { status: "Open" }, "Opened")}>Open</DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => void bulk(chosen, { status: "On Hold" }, "Put on hold")}>On hold</DropdownMenuItem>
+              <Choose label={tr("Status")}>
+                <DropdownMenuLabel>{tr("Set the status")}</DropdownMenuLabel>
+                <DropdownMenuItem onSelect={() => void bulk(chosen, { status: "Open" }, "Opened")}>{tr("Open")}</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => void bulk(chosen, { status: "On Hold" }, "Put on hold")}>{tr("On hold")}</DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => setResolving(chosen)}>Resolve…</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setResolving(chosen)}>{tr("Resolve…")}</DropdownMenuItem>
               </Choose>
               <span className="spacer" />
               <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>
-                Clear
+                {tr("Clear")}
               </Button>
             </div>
           )}
-          {!writable && picked.size === 0 && entity && <Alert tone="info">You can read tickets here but not change them.</Alert>}
+          {!writable && picked.size === 0 && entity && <Alert tone="info">{tr("You can read tickets here but not change them.")}</Alert>}
           {body}
         </section>
       </div>
@@ -624,7 +624,7 @@ export function HelpdeskHome() {
         onSubmit={(r) => bulk(resolving ?? [], { status: "Resolved", resolution_details: r.resolution }, "Resolved")}
       />
       {saving && <SaveView saved={saved} onSave={saveView} onClose={() => setSaving(false)} />}
-      <Shortcuts open={help} onClose={() => setHelp(false)} title="Keyboard shortcuts" rows={SHORTCUTS} />
+      <Shortcuts open={help} onClose={() => setHelp(false)} title={tr("Keyboard shortcuts")} rows={SHORTCUTS} />
     </div>
   );
 }

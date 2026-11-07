@@ -3,7 +3,7 @@
 // for this ticket until it is sent, and the tab warns before it is closed on unsent words.
 
 import { type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type Ref, type RefObject, useState } from "react";
-import { api, errorMessage } from "@ferrum/client";
+import { api, errorMessage, t as tr } from "@ferrum/client";
 import { Alert, Button, Icon, toast } from "@ferrum/kit";
 import { fileSize } from "./feed";
 import { useDraft, useLeaveWarning } from "./hooks";
@@ -168,7 +168,7 @@ export function Composer({
       className="hd-write"
       data-mode={mode}
       data-dropping={dropping || undefined}
-      aria-label="Write to the ticket"
+      aria-label={tr("Write to the ticket")}
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes("Files")) {
           e.preventDefault();
@@ -178,12 +178,12 @@ export function Composer({
       onDragLeave={() => setDropping(false)}
       onDrop={onDrop}
     >
-      <div className="hd-write-tabs" role="tablist" aria-label="What to write">
+      <div className="hd-write-tabs" role="tablist" aria-label={tr("What to write")}>
         <button type="button" role="tab" aria-selected={mode === "reply"} onClick={() => onMode("reply")}>
-          Reply
+          {tr("Reply")}
         </button>
         <button type="button" role="tab" aria-selected={mode === "note"} onClick={() => onMode("note")}>
-          Internal note
+          {tr("Internal note")}
         </button>
         <span className="spacer" />
         <span className="faint hd-write-to">
@@ -208,15 +208,15 @@ export function Composer({
       <div id="hd-write-help" className="hd-write-help faint">
         {mode === "reply" && !to.email && "The reply is kept in the conversation, and the customer can read it in the portal. "}
         {mode === "reply" && assignee && `${assignee} Sending takes it over. `}
-        Markdown works. Drop or paste files here.
+        {tr("Markdown works. Drop or paste files here.")}
       </div>
       {open.length > 0 && (
         <p className="hd-warn" role="status">
-          {open.map((o) => `{{${o}}}`).join(", ")} still to fill in before this can be sent.
+          {open.map((o) => `{{${o}}}`).join(", ")} {tr("still to fill in before this can be sent.")}
         </p>
       )}
       {(mine.length > 0 || uploading > 0) && (
-        <ul className="hd-files" aria-label="Files to send">
+        <ul className="hd-files" aria-label={tr("Files to send")}>
           {mine.map((f) => (
             <li key={f.id} className="hd-file">
               <Icon name="file" size={14} />
@@ -230,7 +230,7 @@ export function Composer({
           {uploading > 0 && (
             <li className="hd-file" aria-live="polite">
               <span className="spinner spinner-sm" aria-hidden="true" />
-              Uploading…
+              {tr("Uploading…")}
             </li>
           )}
         </ul>
@@ -245,17 +245,17 @@ export function Composer({
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => setPicker((p) => !p)}
           >
-            Saved replies
+            {tr("Saved replies")}
             <kbd className="kbd">/</kbd>
           </button>
         )}
         <label className="btn btn-ghost btn-sm">
           <Icon name="upload" />
-          Attach
+          {tr("Attach")}
           <input type="file" multiple className="sr-only" onChange={choose} />
         </label>
         <span className="spacer" />
-        <span className="faint hd-hint">Ctrl or ⌘ + Enter</span>
+        <span className="faint hd-hint">{tr("Ctrl or ⌘ + Enter")}</span>
         <Button variant="primary" loading={busy} disabled={!ready} onClick={() => void send()}>
           {mode === "reply" ? "Send reply" : "Add note"}
         </Button>

@@ -2,7 +2,7 @@
 // internal notes tinted and labelled, and what happened to the ticket as one grey line between them.
 
 import { Fragment, type Ref } from "react";
-import { formatMoment } from "@ferrum/client";
+import { formatMoment, t } from "@ferrum/client";
 import { EmptyState, Icon, Markdown } from "@ferrum/kit";
 import { counts, dayKey, dayLabel, type EventItem, type FeedFilter, type FeedItem, fileSize, filterFeed, type MessageItem } from "./feed";
 import { initials } from "./inbox";
@@ -21,7 +21,7 @@ function Message({ m, address }: { m: MessageItem; address: string | null }) {
       <article className="hd-bubble">
         <header className="hd-bubble-head">
           <strong>{m.author}</strong>
-          {m.internal && <span className="hd-note-chip">Internal note</span>}
+          {m.internal && <span className="hd-note-chip">{t("Internal note")}</span>}
           <time dateTime={m.at} title={full(m.at)} className="faint">
             {when(m.at)}
           </time>
@@ -30,7 +30,7 @@ function Message({ m, address }: { m: MessageItem; address: string | null }) {
           <Markdown source={m.body} />
         </div>
         {m.attachments.length > 0 && (
-          <ul className="hd-files" aria-label="Files">
+          <ul className="hd-files" aria-label={t("Files")}>
             {m.attachments.map((f) => (
               <li key={f.id}>
                 <a className="hd-file" href={`/files/${f.id}`} download={f.file_name}>
@@ -96,9 +96,9 @@ export function Conversation({
   const shown = filterFeed(items, filter);
   const today = new Date();
   return (
-    <section className="hd-feed-wrap" aria-label="Conversation">
+    <section className="hd-feed-wrap" aria-label={t("Conversation")}>
       <div className="hd-feed-tools">
-        <div className="segmented" role="group" aria-label="Show">
+        <div className="segmented" role="group" aria-label={t("Show")}>
           {FILTERS.map((f) => (
             <button key={f.id} type="button" aria-pressed={filter === f.id} onClick={() => onFilter(f.id)}>
               {f.label}
@@ -108,8 +108,8 @@ export function Conversation({
         </div>
       </div>
       {shown.length === 0 && filter === "notes" ? (
-        <EmptyState title="No internal notes yet" icon="file">
-          <p className="muted">Switch the box below to Internal note to leave something only your team sees.</p>
+        <EmptyState title={t("No internal notes yet")} icon="file">
+          <p className="muted">{t("Switch the box below to Internal note to leave something only your team sees.")}</p>
         </EmptyState>
       ) : (
         <ol className="hd-feed">

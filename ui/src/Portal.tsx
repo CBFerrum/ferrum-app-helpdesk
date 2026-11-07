@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { api, errorMessage } from "@ferrum/client";
+import { api, errorMessage, t as tr } from "@ferrum/client";
 import { Badge, Button, EmptyState, ErrorState, Field, Icon, Markdown, PageLoading, statusTone, toast, useShellTitle } from "@ferrum/kit";
 import { fileSize } from "./feed";
 
@@ -60,11 +60,11 @@ export function PortalTickets() {
     <div className="stack hd-portal">
       <div className="page-head">
         <div>
-          <h1 className="page-title">Your tickets</h1>
-          <p className="page-sub">Ask for help, and follow what the team says.</p>
+          <h1 className="page-title">{tr("Your tickets")}</h1>
+          <p className="page-sub">{tr("Ask for help, and follow what the team says.")}</p>
         </div>
         <Link className="btn btn-primary btn-md" to="/new">
-          New ticket
+          {tr("New ticket")}
         </Link>
       </div>
       {q.error ? (
@@ -72,9 +72,9 @@ export function PortalTickets() {
       ) : !q.data ? (
         <PageLoading />
       ) : !tickets.length ? (
-        <EmptyState title="No tickets yet" icon="headset">
-          <p className="muted">When you ask for help, your request and the team's answers are here.</p>
-          <Link to="/new">Raise a ticket</Link>
+        <EmptyState title={tr("No tickets yet")} icon="headset">
+          <p className="muted">{tr("When you ask for help, your request and the team's answers are here.")}</p>
+          <Link to="/new">{tr("Raise a ticket")}</Link>
         </EmptyState>
       ) : (
         <ul className="hd-tickets" data-ferrum-nocard>
@@ -84,7 +84,7 @@ export function PortalTickets() {
                 <span className="hd-ticket-main">
                   <span className="hd-ticket-subject">{t.subject}</span>
                   <span className="faint">
-                    {t.number} · opened {day(t.opened_at)}
+                    {tr("{number} · opened", { number: t.number ?? "" })} {day(t.opened_at)}
                   </span>
                 </span>
                 <span className="hd-ticket-tags">
@@ -97,7 +97,7 @@ export function PortalTickets() {
       )}
       {q.hasNextPage && (
         <Button loading={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
-          Show older tickets
+          {tr("Show older tickets")}
         </Button>
       )}
     </div>
@@ -130,27 +130,27 @@ export function PortalNewTicket() {
   return (
     <form className="stack hd-portal" onSubmit={submit}>
       <p className="crumbs">
-        <Link to="/">Your tickets</Link>
+        <Link to="/">{tr("Your tickets")}</Link>
       </p>
-      <h1 className="page-title">New ticket</h1>
+      <h1 className="page-title">{tr("New ticket")}</h1>
       <div className="card">
         <div className="card-body stack">
-          <Field label="Subject" htmlFor="hd-subject">
+          <Field label={tr("Subject")} htmlFor="hd-subject">
             <input id="hd-subject" className="input" required maxLength={300} value={subject} onChange={(e) => setSubject(e.target.value)} />
           </Field>
-          <Field label="What happened?" htmlFor="hd-description">
+          <Field label={tr("What happened?")} htmlFor="hd-description">
             <textarea id="hd-description" className="input" required rows={7} maxLength={20000} value={description} onChange={(e) => setDescription(e.target.value)} />
           </Field>
-          <Field label="How urgent is it?" htmlFor="hd-priority">
+          <Field label={tr("How urgent is it?")} htmlFor="hd-priority">
             <select id="hd-priority" className="input" value={priority} onChange={(e) => setPriority(e.target.value)}>
-              <option>Low</option>
-              <option>Medium</option>
-              <option>High</option>
+              <option>{tr("Low")}</option>
+              <option>{tr("Medium")}</option>
+              <option>{tr("High")}</option>
             </select>
           </Field>
           <div className="row">
             <Button type="submit" variant="primary" loading={busy} disabled={!subject.trim() || !description.trim()}>
-              Send
+              {tr("Send")}
             </Button>
           </div>
         </div>
@@ -168,7 +168,7 @@ function Rating({ t, onSaved }: { t: PortalTicketDetail; onSaved: (t: PortalTick
     setBusy(true);
     try {
       onSaved(await api.post<PortalTicketDetail>(`${BASE}/${t.id}/rating`, { rating, feedback: feedback.trim() || null }));
-      toast("Thank you for rating the help");
+      toast(tr("Thank you for rating the help"));
     } catch (err) {
       toast(errorMessage(err), "error");
     } finally {
@@ -179,21 +179,21 @@ function Rating({ t, onSaved }: { t: PortalTicketDetail; onSaved: (t: PortalTick
     <form className="card" onSubmit={send}>
       <div className="card-body stack">
         <fieldset className="hd-stars">
-          <legend>How was the help?</legend>
+          <legend>{tr("How was the help?")}</legend>
           {[1, 2, 3, 4, 5].map((n) => (
             <label key={n} title={`${n} of 5`}>
               <input type="radio" name="rating" value={n} checked={rating === n} onChange={() => setRating(n)} />
               <span aria-hidden="true">{n <= rating ? "★" : "☆"}</span>
-              <span className="sr-only">{n} of 5</span>
+              <span className="sr-only">{tr("{n} of 5", { n })}</span>
             </label>
           ))}
         </fieldset>
-        <Field label="Anything to add? (optional)" htmlFor="hd-feedback">
+        <Field label={tr("Anything to add? (optional)")} htmlFor="hd-feedback">
           <textarea id="hd-feedback" className="input" rows={3} maxLength={2000} value={feedback} onChange={(e) => setFeedback(e.target.value)} />
         </Field>
         <div className="row">
           <Button type="submit" variant="primary" loading={busy} disabled={!rating}>
-            Send rating
+            {tr("Send rating")}
           </Button>
         </div>
       </div>
@@ -220,7 +220,7 @@ export function PortalTicket() {
     try {
       saved(await api.post<PortalTicketDetail>(`${BASE}/${id}/replies`, { body: body.trim() }));
       setBody("");
-      toast("Reply sent");
+      toast(tr("Reply sent"));
     } catch (err) {
       toast(errorMessage(err), "error");
     } finally {
@@ -233,21 +233,21 @@ export function PortalTicket() {
   return (
     <div className="stack hd-portal">
       <p className="crumbs">
-        <Link to="/">Your tickets</Link>
+        <Link to="/">{tr("Your tickets")}</Link>
       </p>
       <div className="page-head">
         <div>
           <h1 className="page-title">{t.subject}</h1>
           <p className="page-sub">
-            {t.number} · opened {when(t.opened_at)}
+            {tr("{number} · opened", { number: t.number ?? "" })} {when(t.opened_at)}
           </p>
         </div>
         <Badge tone={statusTone(t.status)}>{t.label ?? t.status}</Badge>
       </div>
-      <ol className="hd-thread" aria-label="Conversation">
+      <ol className="hd-thread" aria-label={tr("Conversation")}>
         <li className="hd-message hd-from-customer">
           <div className="hd-message-head">
-            <strong>You</strong>
+            <strong>{tr("You")}</strong>
             <span className="faint">{when(t.opened_at)}</span>
           </div>
           {t.description ? <Markdown source={t.description} /> : <p className="muted">{t.subject}</p>}
@@ -260,7 +260,7 @@ export function PortalTicket() {
             </div>
             <Markdown source={m.body ?? ""} />
             {m.files && m.files.length > 0 && (
-              <ul className="hd-files" aria-label="Files">
+              <ul className="hd-files" aria-label={tr("Files")}>
                 {m.files.map((f) => (
                   <li key={f.id}>
                     <a className="hd-file" href={`${BASE}/${t.id}/files/${f.id}`} download={f.file_name}>
@@ -278,7 +278,7 @@ export function PortalTicket() {
       {t.resolution && (
         <section className="card" aria-labelledby="hd-resolution">
           <div className="card-head">
-            <h2 id="hd-resolution">How it was resolved</h2>
+            <h2 id="hd-resolution">{tr("How it was resolved")}</h2>
           </div>
           <div className="card-body">
             <Markdown source={t.resolution} />
@@ -286,7 +286,7 @@ export function PortalTicket() {
         </section>
       )}
       {t.can_rate && <Rating t={t} onSaved={saved} />}
-      {t.rating ? <p className="muted">You rated the help {t.rating} of 5.</p> : null}
+      {t.rating ? <p className="muted">{tr("You rated the help {rating} of 5.", { rating: t.rating })}</p> : null}
       {t.can_reply ? (
         <form className="hd-composer card" onSubmit={send}>
           <div className="card-body stack">
@@ -295,13 +295,13 @@ export function PortalTicket() {
             </Field>
             <div className="row hd-composer-foot">
               <Button type="submit" variant="primary" loading={busy} disabled={!body.trim()}>
-                Send reply
+                {tr("Send reply")}
               </Button>
             </div>
           </div>
         </form>
       ) : (
-        <p className="muted">This ticket is closed. If you need more help, raise a new ticket.</p>
+        <p className="muted">{tr("This ticket is closed. If you need more help, raise a new ticket.")}</p>
       )}
     </div>
   );

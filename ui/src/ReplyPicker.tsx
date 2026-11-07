@@ -4,7 +4,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type KeyboardEvent, useId, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
-import { api, docPath, errorMessage } from "@ferrum/client";
+import { api, docPath, errorMessage, t } from "@ferrum/client";
 import { Alert, Button, Dialog, ErrorState, Field, Spinner, toast, useDismiss } from "@ferrum/kit";
 import { LinkInput, useMe } from "@ferrum/records";
 import { useRemembered } from "./hooks";
@@ -40,7 +40,7 @@ function SaveReply({ body, onClose }: { body: string; onClose: () => void }) {
     try {
       await api.post("/api/v1/SavedReply", { title: title.trim(), scope, team: scope === "Team" ? team : null, body });
       void qc.invalidateQueries({ queryKey: KEY });
-      toast("Saved as a reply");
+      toast(t("Saved as a reply"));
       onClose();
     } catch (err) {
       setProblem(errorMessage(err));
@@ -51,35 +51,35 @@ function SaveReply({ body, onClose }: { body: string; onClose: () => void }) {
     <Dialog
       open
       onClose={onClose}
-      title="Save as a saved reply"
+      title={t("Save as a saved reply")}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose}>{t("Cancel")}</Button>
           <Button variant="primary" type="submit" form="hd-save-reply" loading={busy} disabled={!ready}>
-            Save
+            {t("Save")}
           </Button>
         </>
       }
     >
       <form id="hd-save-reply" className="stack" onSubmit={submit}>
         {problem && <Alert tone="error">{problem}</Alert>}
-        <Field label="Name" htmlFor="hd-reply-title" required>
+        <Field label={t("Name")} htmlFor="hd-reply-title" required>
           <input id="hd-reply-title" className="input" maxLength={120} value={title} onChange={(e) => setTitle(e.target.value)} />
         </Field>
-        <Field label="Who can use it" htmlFor="hd-reply-scope">
+        <Field label={t("Who can use it")} htmlFor="hd-reply-scope">
           <select id="hd-reply-scope" className="select" value={scope} onChange={(e) => setScope(e.target.value as ReplyScope)}>
-            <option value="Personal">Only me</option>
-            <option value="Team">A team</option>
-            <option value="Everyone">Every agent</option>
+            <option value="Personal">{t("Only me")}</option>
+            <option value="Team">{t("A team")}</option>
+            <option value="Everyone">{t("Every agent")}</option>
           </select>
         </Field>
         {scope === "Team" && (
-          <Field label="Team" htmlFor="hd-reply-team" required>
+          <Field label={t("Team")} htmlFor="hd-reply-team" required>
             <LinkInput to="SupportTeam" id="hd-reply-team" value={team} onChange={setTeam} required />
           </Field>
         )}
         <p className="faint">
-          It is saved as typed. To have the customer's name filled in each time, write <code>{"{{customer.first_name}}"}</code> in its place.
+          {t("It is saved as typed. To have the customer's name filled in each time, write")} <code>{"{{customer.first_name}}"}</code> {t("in its place.")}
         </p>
       </form>
     </Dialog>
@@ -125,18 +125,18 @@ export function ReplyPicker({ about, draft, onPick, onClose }: { about: FillWith
   };
 
   return (
-    <div ref={box} className="hd-picker" role="dialog" aria-label="Saved replies">
+    <div ref={box} className="hd-picker" role="dialog" aria-label={t("Saved replies")}>
       <div className="hd-picker-top">
         <input
           className="input"
           type="search"
           role="combobox"
-          aria-label="Search saved replies"
+          aria-label={t("Search saved replies")}
           aria-expanded="true"
           aria-controls={`${id}-list`}
           aria-activedescendant={chosen ? `${id}-${chosen.id}` : undefined}
           aria-autocomplete="list"
-          placeholder="Find a saved reply…"
+          placeholder={t("Find a saved reply…")}
           autoFocus
           value={query}
           onChange={(e) => {
@@ -145,7 +145,7 @@ export function ReplyPicker({ about, draft, onPick, onClose }: { about: FillWith
           }}
           onKeyDown={onKey}
         />
-        <div className="segmented" role="group" aria-label="Whose replies">
+        <div className="segmented" role="group" aria-label={t("Whose replies")}>
           {SCOPE_FILTERS.map((f) => (
             <button
               key={f.id}
@@ -163,16 +163,16 @@ export function ReplyPicker({ about, draft, onPick, onClose }: { about: FillWith
       </div>
       <div className="hd-picker-body">
         {list.error ? (
-          <ErrorState error={list.error} onRetry={() => void list.refetch()} title="Saved replies did not load" />
+          <ErrorState error={list.error} onRetry={() => void list.refetch()} title={t("Saved replies did not load")} />
         ) : !list.data ? (
-          <Spinner label="Loading saved replies" />
+          <Spinner label={t("Loading saved replies")} />
         ) : !found.length ? (
           <p className="muted hd-picker-empty">
             {list.data.length ? (query ? `Nothing matches “${query}”.` : "None here yet. Try another group above.") : "No saved replies yet. Write one and save it with the button below."}
           </p>
         ) : (
           <>
-            <ul role="listbox" id={`${id}-list`} aria-label="Saved replies" className="hd-picker-list">
+            <ul role="listbox" id={`${id}-list`} aria-label={t("Saved replies")} className="hd-picker-list">
               {found.map((r, i) => (
                 <li
                   key={r.id}
@@ -191,11 +191,11 @@ export function ReplyPicker({ about, draft, onPick, onClose }: { about: FillWith
             </ul>
             {filled && (
               <div className="hd-picker-preview" aria-live="polite">
-                <h3>For this ticket</h3>
+                <h3>{t("For this ticket")}</h3>
                 <p className="hd-picker-text">{filled.text}</p>
                 {filled.missing.length > 0 && (
                   <p className="hd-warn">
-                    {filled.missing.map((m) => `{{${m}}}`).join(", ")} cannot be filled from this ticket. It stays in the text for you to write, and sending waits for it.
+                    {filled.missing.map((m) => `{{${m}}}`).join(", ")} {t("cannot be filled from this ticket. It stays in the text for you to write, and sending waits for it.")}
                   </p>
                 )}
               </div>
@@ -205,14 +205,14 @@ export function ReplyPicker({ about, draft, onPick, onClose }: { about: FillWith
       </div>
       <div className="hd-picker-foot">
         <Link to="/e/SavedReply" className="faint">
-          Manage saved replies
+          {t("Manage saved replies")}
         </Link>
         <span className="spacer" />
         <Button size="sm" disabled={!draft.trim()} onClick={() => setSaving(true)}>
-          Save what I have written
+          {t("Save what I have written")}
         </Button>
         <Button size="sm" variant="ghost" onClick={onClose}>
-          Close
+          {t("Close")}
         </Button>
       </div>
       {saving && <SaveReply body={draft} onClose={() => setSaving(false)} />}
