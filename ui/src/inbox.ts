@@ -78,7 +78,7 @@ export function byUrgency(a: Ticket, b: Ticket): number {
 /** "35 min", "3 h", "4 d": a stretch of time as a person says it. */
 export function span(ms: number): string {
   const mins = Math.max(0, Math.round(Math.abs(ms) / 60_000));
-  return mins < 60 ? `${mins} min` : mins < 48 * 60 ? `${Math.round(mins / 60)} h` : `${Math.round(mins / 1440)} d`;
+  return mins < 60 ? tr("{mins} min", { mins }) : mins < 48 * 60 ? `${Math.round(mins / 60)} h` : `${Math.round(mins / 1440)} d`;
 }
 
 /** "overdue by 2 h", "due in 35 min", "due in 3 d"; null without a due time. */
@@ -86,7 +86,7 @@ export function dueLabel(due: string | null | undefined, now = Date.now()): stri
   const at = due ? Date.parse(due) : Number.NaN;
   if (Number.isNaN(at)) return null;
   const ms = at - now;
-  return ms < 0 ? `overdue by ${span(ms)}` : `due in ${span(ms)}`;
+  return ms < 0 ? tr("overdue by {ms}", { ms: span(ms) }) : tr("due in {ms}", { ms: span(ms) });
 }
 
 /** Who a ticket is from, as an agent reads it. */
@@ -346,7 +346,7 @@ export function describeBulk(done: string, res: BulkResult, label: (id: string) 
     .slice(0, 3)
     .map((r) => `${label(r.id)}: ${r.error?.message ?? "not changed"}`)
     .join(". ");
-  const more = failed.length > 3 ? ` And ${failed.length - 3} more.` : "";
-  const lead = res.succeeded ? `${done}: ${res.succeeded} of ${res.succeeded + failed.length}. ` : "Nothing changed. ";
+  const more = failed.length > 3 ? tr(" And {value} more.", { value: failed.length - 3 }) : "";
+  const lead = res.succeeded ? tr("{done}: {succeeded} of {value}. ", { done, succeeded: res.succeeded, value: res.succeeded + failed.length }) : "Nothing changed. ";
   return { message: `${lead}${why}.${more}`, bad: true, left: failed.map((r) => r.id) };
 }

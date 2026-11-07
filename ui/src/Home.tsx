@@ -586,14 +586,14 @@ export function HelpdeskHome() {
               )}
               <Choose label={tr("Assign to…")}>
                 {people.map((p) => (
-                  <DropdownMenuItem key={p.id} onSelect={() => void bulk(chosen, { assigned_to: p.email.toLowerCase() }, `Assigned to ${p.full_name || p.email}`)}>
+                  <DropdownMenuItem key={p.id} onSelect={() => void bulk(chosen, { assigned_to: p.email.toLowerCase() }, tr("Assigned to {value}", { value: p.full_name || p.email }))}>
                     {p.full_name || p.email}
                   </DropdownMenuItem>
                 ))}
               </Choose>
               <Choose label={tr("Priority")}>
                 {[...PRIORITIES].reverse().map((p) => (
-                  <DropdownMenuItem key={p} onSelect={() => void bulk(chosen, { priority: p }, `Priority ${p}`)}>
+                  <DropdownMenuItem key={p} onSelect={() => void bulk(chosen, { priority: p }, tr("Priority {p}", { p }))}>
                     {isolate(p)}
                   </DropdownMenuItem>
                 ))}
@@ -619,7 +619,7 @@ export function HelpdeskHome() {
       <ResolveDialog
         open={!!resolving}
         status="Resolved"
-        what={resolving?.length === 1 ? (numbers.get(resolving[0]) ?? "the ticket") : `${resolving?.length ?? 0} tickets`}
+        what={resolving?.length === 1 ? (numbers.get(resolving[0]) ?? "the ticket") : tr("{value} tickets", { value: resolving?.length ?? 0 })}
         onClose={() => setResolving(null)}
         onSubmit={(r) => bulk(resolving ?? [], { status: "Resolved", resolution_details: r.resolution }, "Resolved")}
       />

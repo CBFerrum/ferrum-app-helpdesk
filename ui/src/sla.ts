@@ -2,7 +2,7 @@
 // grey ("Due in 3 h") and take a colour only when something has happened: met (green), missed (red),
 // paused (blue). Pure, so the wording is tested without a browser.
 
-import { formatMoment } from "@ferrum/client";
+import { formatMoment, t as tr } from "@ferrum/client";
 import { span } from "./inbox";
 
 export interface SlaTicket {
@@ -42,9 +42,9 @@ export function hoursText(hours: string | number | null | undefined): string | n
   const h = typeof hours === "number" ? hours : Number(hours);
   if (hours === null || hours === undefined || hours === "" || !Number.isFinite(h) || h < 0) return null;
   const mins = Math.round(h * 60);
-  if (mins < 60) return `${mins} min`;
+  if (mins < 60) return tr("{mins} min", { mins });
   const [hh, mm] = [Math.floor(mins / 60), mins % 60];
-  return mm ? `${hh} h ${mm} min` : `${hh} h`;
+  return mm ? tr("{hh} h {mm} min", { hh, mm }) : `${hh} h`;
 }
 
 const when = (t: number) => formatMoment(t, { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
@@ -59,11 +59,11 @@ function card(
   const due = at(o.due);
   if (done !== null) {
     if (o.breached) {
-      const late = due !== null && done > due ? `Failed by ${span(done - due)}` : "Failed";
-      return { id, title, state: "late", text: late, detail: `${o.doneWord} ${when(done)}${due !== null ? `, due ${when(due)}` : ""}` };
+      const late = due !== null && done > due ? tr("Failed by {value}", { value: span(done - due) }) : "Failed";
+      return { id, title, state: "late", text: late, detail: `${o.doneWord} ${when(done)}${due !== null ? tr(", due {due}", { due: when(due) }) : ""}` };
     }
     const took = hoursText(o.took);
-    return { id, title, state: "fulfilled", text: took ? `Fulfilled in ${took}` : "Fulfilled", detail: `${o.doneWord} ${when(done)}` };
+    return { id, title, state: "fulfilled", text: took ? tr("Fulfilled in {took}", { took }) : "Fulfilled", detail: `${o.doneWord} ${when(done)}` };
   }
   if (!o.sla) return { id, title, state: "none", text: "No target", detail: null };
   if (due === null) {
@@ -73,8 +73,8 @@ function card(
     return { id, title, state: "none", text: "No deadline", detail: null };
   }
   return due < now
-    ? { id, title, state: "overdue", text: `Overdue by ${span(now - due)}`, detail: `Was due ${when(due)}` }
-    : { id, title, state: "due", text: `Due in ${span(due - now)}`, detail: `Due ${when(due)}` };
+    ? { id, title, state: "overdue", text: tr("Overdue by {value}", { value: span(now - due) }), detail: tr("Was due {due}", { due: when(due) }) }
+    : { id, title, state: "due", text: tr("Due in {value}", { value: span(due - now) }), detail: tr("Due {due}", { due: when(due) }) };
 }
 
 /** The ticket's two cards as of `now`. */
@@ -83,6 +83,6 @@ export function slaCards(t: SlaTicket, now = Date.now()): SlaCard[] {
   const paused = hoursText(t.paused_hours);
   const resolution = card("resolution", "Resolution", { done: t.resolved_at, due: t.resolution_by, breached: t.resolution_breached, took: t.resolution_hours, sla, status: t.status, doneWord: "Resolved" }, now);
   // What the clock was stopped for is worth knowing once it is not running any more.
-  if (paused && Number(t.paused_hours) > 0 && resolution.state !== "paused") resolution.detail = [resolution.detail, `Stopped for ${paused} in all`].filter(Boolean).join(" · ");
+  if (paused && Number(t.paused_hours) > 0 && resolution.state !== "paused") resolution.detail = [resolution.detail, tr("Stopped for {paused} in all", { paused })].filter(Boolean).join(" · ");
   return [card("response", "First response", { done: t.first_responded_at, due: t.response_by, breached: t.response_breached, took: t.first_response_hours, sla, status: t.status, doneWord: "Answered" }, now), resolution];
 }
