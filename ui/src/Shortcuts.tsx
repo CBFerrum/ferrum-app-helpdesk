@@ -1,6 +1,7 @@
 // The keys a screen answers to, shown on `?`.
 
 import { Dialog } from "@ferrum/kit";
+import { t } from "@ferrum/client";
 
 export interface KeyRow {
   keys: string[];
@@ -24,7 +25,7 @@ export function Shortcuts({ open, onClose, title, rows }: { open: boolean; onClo
           </div>
         ))}
       </dl>
-      <p className="faint">Keys work when you are not typing in a field.</p>
+      <p className="faint">{t("Keys work when you are not typing in a field.")}</p>
     </Dialog>
   );
 }

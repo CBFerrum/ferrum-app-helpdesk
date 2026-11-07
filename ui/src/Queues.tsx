@@ -4,6 +4,7 @@
 import { Link } from "react-router";
 import { Icon } from "@ferrum/kit";
 import { initials, isFilter, type InboxState, type QueueId, type SavedFilter, START, writeState } from "./inbox";
+import { t } from "@ferrum/client";
 
 export interface QueueEntry {
   id: QueueId;
@@ -39,7 +40,7 @@ export function Queues({
   const most = Math.max(1, ...people.map((p) => p.count));
   return (
     <div className="hd-side">
-      <nav className="hd-queues" aria-label="Queues">
+      <nav className="hd-queues" aria-label={t("Queues")}>
         <ul>
           {queues.map((q, i) => (
             <li key={q.id}>
@@ -57,7 +58,7 @@ export function Queues({
       {showMore && saved.length > 0 && (
         <section aria-labelledby="hd-saved">
           <h2 id="hd-saved" className="hd-side-title">
-            Saved filters
+            {t("Saved filters")}
           </h2>
           <ul className="hd-saved">
             {saved.map((f) => (
@@ -76,7 +77,7 @@ export function Queues({
       {showMore && (
         <section aria-labelledby="hd-people">
           <h2 id="hd-people" className="hd-side-title">
-            Who has what
+            {t("Who has what")}
           </h2>
           {people.length ? (
             <ul className="hd-people">
@@ -94,7 +95,7 @@ export function Queues({
               ))}
             </ul>
           ) : (
-            <p className="faint">Nobody has an open ticket.</p>
+            <p className="faint">{t("Nobody has an open ticket.")}</p>
           )}
         </section>
       )}

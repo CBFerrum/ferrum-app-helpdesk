@@ -8,7 +8,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Link, Outlet, RouterProvider, useRouteError } from "react-router";
-import { bootstrap, routeBase, shell } from "@ferrum/client";
+import { bootstrap, routeBase, shell, t } from "@ferrum/client";
 import { ConfirmHost, EmptyState, ErrorState, Toaster } from "@ferrum/kit";
 import { RequireAuth, setFrameMode } from "@ferrum/records/frame";
 import { PortalNewTicket, PortalTicket, PortalTickets } from "./Portal";
@@ -31,7 +31,7 @@ function RouteError() {
 
 function NotFound({ back = "Go to the inbox" }: { back?: string }) {
   return (
-    <EmptyState title="Page not found">
+    <EmptyState title={t("Page not found")}>
       <Link to="/">{back}</Link>
     </EmptyState>
   );

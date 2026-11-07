@@ -3,6 +3,7 @@
 
 import { type FormEvent, useEffect, useState } from "react";
 import { Alert, Button, Dialog, Field } from "@ferrum/kit";
+import { t } from "@ferrum/client";
 
 export interface Resolution {
   resolution: string;
@@ -53,7 +54,7 @@ export function ResolveDialog({
       title={`${word} ${what}`}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose}>{t("Cancel")}</Button>
           <Button variant="primary" type="submit" form="hd-resolve-form" loading={busy} disabled={!text.trim()}>
             {word}
           </Button>
@@ -61,14 +62,14 @@ export function ResolveDialog({
       }
     >
       <form id="hd-resolve-form" className="stack" onSubmit={submit}>
-        {status === "Closed" && <Alert tone="warning">A closed ticket is final. It cannot be reopened, and nothing more can be written on it.</Alert>}
-        <Field label="How it was resolved" htmlFor="hd-resolution" required hint="Kept with the ticket, and shown to the customer once it is resolved.">
+        {status === "Closed" && <Alert tone="warning">{t("A closed ticket is final. It cannot be reopened, and nothing more can be written on it.")}</Alert>}
+        <Field label={t("How it was resolved")} htmlFor="hd-resolution" required hint={t("Kept with the ticket, and shown to the customer once it is resolved.")}>
           <textarea id="hd-resolution" className="textarea" rows={4} value={text} onChange={(e) => setText(e.target.value)} />
         </Field>
         {tell && (
           <label className="hd-check">
             <input type="checkbox" checked={reply} onChange={(e) => setReply(e.target.checked)} />
-            Also send this to {tell} as a reply
+            {t("Also send this to {tell} as a reply", { tell })}
           </label>
         )}
       </form>

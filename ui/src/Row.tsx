@@ -6,6 +6,7 @@ import { Link } from "react-router";
 import { Badge, Button, Icon, statusTone } from "@ferrum/kit";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@ferrum/kit/primitives";
 import { type Carried, dueAt, dueLabel, initials, lastSpeaker, requester, type Ticket, waitLabel } from "./inbox";
+import { t as tr } from "@ferrum/client";
 
 const PRIORITY: Record<string, "red" | "amber" | "neutral"> = { Urgent: "red", High: "amber", Low: "neutral" };
 const SLA: Record<string, "red" | "amber"> = { Breached: "red", "At Risk": "amber" };
@@ -41,7 +42,7 @@ export const Row = memo(function Row({ t, now, me, who, picked, current, writabl
         <span className="hd-row-meta">{[t.number, requester(t), t.channel && t.channel !== "Email" ? t.channel : null].filter(Boolean).join(" · ")}</span>
         {t.last_message_preview && (
           <span className="hd-row-preview">
-            {speaker === "Team" && <span className="faint">Team: </span>}
+            {speaker === "Team" && <span className="faint">{tr("Team:")} </span>}
             {t.last_message_preview}
           </span>
         )}
@@ -59,11 +60,11 @@ export const Row = memo(function Row({ t, now, me, who, picked, current, writabl
             {initials(owner)}
           </span>
         ) : writable ? (
-          <Button size="sm" onClick={() => onTake(t)} title="Assign it to me (a)">
-            Take
+          <Button size="sm" onClick={() => onTake(t)} title={tr("Assign it to me (a)")}>
+            {tr("Take")}
           </Button>
         ) : (
-          <span className="faint">Nobody</span>
+          <span className="faint">{tr("Nobody")}</span>
         )}
       </span>
       <DropdownMenu>
@@ -75,20 +76,20 @@ export const Row = memo(function Row({ t, now, me, who, picked, current, writabl
         <DropdownMenuContent align="end">
           <DropdownMenuItem asChild>
             <Link to={`/t/${t.id}`} state={carried}>
-              Open
+              {tr("Open")}
             </Link>
           </DropdownMenuItem>
           {writable && (
             <DropdownMenuItem asChild>
               <Link to={`/t/${t.id}?reply`} state={carried}>
-                Reply
+                {tr("Reply")}
               </Link>
             </DropdownMenuItem>
           )}
           {writable && <DropdownMenuSeparator />}
-          {writable && !mine && <DropdownMenuItem onSelect={() => onTake(t)}>Assign to me</DropdownMenuItem>}
-          {writable && t.status !== "On Hold" && <DropdownMenuItem onSelect={() => onHold(t)}>Put on hold</DropdownMenuItem>}
-          {writable && <DropdownMenuItem onSelect={() => onResolve(t)}>Resolve…</DropdownMenuItem>}
+          {writable && !mine && <DropdownMenuItem onSelect={() => onTake(t)}>{tr("Assign to me")}</DropdownMenuItem>}
+          {writable && t.status !== "On Hold" && <DropdownMenuItem onSelect={() => onHold(t)}>{tr("Put on hold")}</DropdownMenuItem>}
+          {writable && <DropdownMenuItem onSelect={() => onResolve(t)}>{tr("Resolve…")}</DropdownMenuItem>}
         </DropdownMenuContent>
       </DropdownMenu>
     </li>
