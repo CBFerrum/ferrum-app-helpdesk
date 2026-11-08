@@ -32,7 +32,7 @@ function RouteError() {
   return <ErrorState error={useRouteError()} onRetry={() => window.location.reload()} />;
 }
 
-function NotFound({ back = "Go to the inbox" }: { back?: string }) {
+function NotFound({ back = t("Go to the inbox") }: { back?: string }) {
   return (
     <EmptyState title={t("Page not found")}>
       <Link to="/">{isolate(back)}</Link>
@@ -66,7 +66,7 @@ const portalRoutes = [
       { index: true, element: <PortalTickets /> },
       { path: "new", element: <PortalNewTicket /> },
       { path: "t/:id", element: <PortalTicket /> },
-      { path: "*", element: <NotFound back="Go to your tickets" /> },
+      { path: "*", get element() { return <NotFound back={t("Go to your tickets")} />; } },
     ],
   },
 ];

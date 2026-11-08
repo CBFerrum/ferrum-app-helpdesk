@@ -38,7 +38,7 @@ export function ResolveDialog({
       setBusy(false);
     }
   }, [open]);
-  const word = status === "Closed" ? "Close" : "Resolve";
+  const word = status === "Closed" ? t("Close") : t("Resolve");
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!text.trim() || busy) return;

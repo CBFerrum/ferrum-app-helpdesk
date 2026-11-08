@@ -9,7 +9,7 @@ import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from "@tanstac
 import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { api, ApiError, docPath, errorMessage, newKey, t as tr, isolate } from "@ferrum/client";
-import { Alert, Button, confirmDialog, Dialog, EmptyState, ErrorState, Field, Icon, Spinner, toast, useDebounced, useLiveEntity, useShellTitle } from "@ferrum/kit";
+import { Alert, Button, confirmDialog, Dialog, EmptyState, ErrorState, Field, Icon, Spinner, toast, useDebounced, useLiveEntity, useShellTitle, placed } from "@ferrum/kit";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@ferrum/kit/primitives";
 import { can, useMe, useMetaIndex } from "@ferrum/records";
 import { useMedia, useNames, useNow, useQuiet } from "./hooks";
@@ -77,16 +77,16 @@ const KEYS = {
 } as const;
 
 const SHORTCUTS = [
-  { keys: ["j", "k"], says: "Move down and up the list" },
-  { keys: ["Enter"], says: "Open the ticket" },
-  { keys: ["r"], says: "Open it to reply" },
-  { keys: ["x"], says: "Select it (Shift + x: everything since the last one)" },
-  { keys: ["e"], says: "Resolve it, or all that are selected" },
-  { keys: ["a"], says: "Assign it to me, or all that are selected" },
-  { keys: ["1", "…", "5"], says: "Go to a queue" },
-  { keys: ["/"], says: "Search" },
-  { keys: ["Esc"], says: "Clear the selection" },
-  { keys: ["?"], says: "This list" },
+  { keys: ["j", "k"], get says() { return tr("Move down and up the list"); } },
+  { get keys() { return [tr("Enter")]; }, get says() { return tr("Open the ticket"); } },
+  { keys: ["r"], get says() { return tr("Open it to reply"); } },
+  { keys: ["x"], get says() { return tr("Select it (Shift + x: everything since the last one)"); } },
+  { keys: ["e"], get says() { return tr("Resolve it, or all that are selected"); } },
+  { keys: ["a"], get says() { return tr("Assign it to me, or all that are selected"); } },
+  { keys: ["1", "…", "5"], get says() { return tr("Go to a queue"); } },
+  { keys: ["/"], get says() { return tr("Search"); } },
+  { get keys() { return [tr("Esc")]; }, get says() { return tr("Clear the selection"); } },
+  { keys: ["?"], get says() { return tr("This list"); } },
 ];
 
 interface Page {
@@ -274,7 +274,7 @@ export function HelpdeskHome() {
   const shown = useMemo(() => sortTickets(loaded.map((t) => (overrides[t.id] ? { ...t, ...overrides[t.id] } : t)), state.sort), [loaded, overrides, state.sort]);
   const order = useMemo(() => shown.map((t) => t.id), [shown]);
   const carried = useMemo<Carried>(() => ({ order, search: sp.toString() }), [order, sp]);
-  const numbers = useMemo(() => new Map(loaded.map((t) => [t.id, t.number ?? "A ticket"])), [loaded]);
+  const numbers = useMemo(() => new Map(loaded.map((t) => [t.id, t.number ?? tr("A ticket")])), [loaded]);
   const writable = !!entity && can(entity.permissions, "write");
   const queue = QUEUES.find((q) => q.id === state.queue) ?? QUEUES[0];
   const refined = isRefined(state);
@@ -331,7 +331,7 @@ export function HelpdeskHome() {
   const bulk = async (ids: string[], values: Record<string, unknown>, done: string): Promise<boolean> => {
     try {
       const res = await api.post<BulkResult>(docPath("Ticket", "_bulk"), { ids, op: "update", values });
-      const told = describeBulk(done, res, (id) => numbers.get(id) ?? "A ticket");
+      const told = describeBulk(done, res, (id) => numbers.get(id) ?? tr("A ticket"));
       toast(told.message, told.bad ? "error" : "success");
       setPicked(new Set(told.left));
       void qc.invalidateQueries({ queryKey: ["helpdesk", "queue"] });
@@ -349,7 +349,7 @@ export function HelpdeskHome() {
     if (ids.length === 1) {
       const t = shown.find((x) => x.id === ids[0]);
       if (t) take(t);
-    } else void bulk(ids, { assigned_to: me.email.toLowerCase() }, "Assigned to you");
+    } else void bulk(ids, { assigned_to: me.email.toLowerCase() }, tr("Assigned to you"));
   };
 
   const saveView = async (viewName: string) => {
@@ -438,7 +438,7 @@ export function HelpdeskHome() {
   ) : !shown.length ? (
     refined ? (
       <EmptyState title={tr("No ticket matches")} icon="search">
-        <p className="muted">{tr("Nothing in")} {isolate(queue.label.toLowerCase())} {tr("fits these filters.")}</p>
+        <p className="muted">{placed(tr("Nothing in {p1} fits these filters."), { p1: isolate(queue.label.toLowerCase()) })}</p>
         <Button onClick={() => update({ q: "", priority: "", team: "", channel: "", assignee: "" })}>{tr("Clear the filters")}</Button>
       </EmptyState>
     ) : (
@@ -468,7 +468,7 @@ export function HelpdeskHome() {
       {list.hasNextPage && (
         <div className="load-more">
           <Button loading={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>
-            {tr("Show more (")}{total - loaded.length} {tr("left)")}
+            {placed(tr("Show more ({p1} left)"), { p1: total - loaded.length })}
           </Button>
         </div>
       )}
@@ -580,7 +580,7 @@ export function HelpdeskHome() {
             <div className="hd-bulk" role="region" aria-label={tr("Actions for the selected tickets")}>
               <strong>{tr("{size} selected", { size: picked.size })}</strong>
               {me && (
-                <Button size="sm" onClick={() => void bulk(chosen, { assigned_to: me.email.toLowerCase() }, "Assigned to you")}>
+                <Button size="sm" onClick={() => void bulk(chosen, { assigned_to: me.email.toLowerCase() }, tr("Assigned to you"))}>
                   {tr("Assign to me")}
                 </Button>
               )}
@@ -601,7 +601,7 @@ export function HelpdeskHome() {
               <Choose label={tr("Status")}>
                 <DropdownMenuLabel>{tr("Set the status")}</DropdownMenuLabel>
                 <DropdownMenuItem onSelect={() => void bulk(chosen, { status: "Open" }, "Opened")}>{tr("Open")}</DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => void bulk(chosen, { status: "On Hold" }, "Put on hold")}>{tr("On hold")}</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => void bulk(chosen, { status: "On Hold" }, tr("Put on hold"))}>{tr("On hold")}</DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => setResolving(chosen)}>{tr("Resolve…")}</DropdownMenuItem>
               </Choose>
@@ -619,7 +619,7 @@ export function HelpdeskHome() {
       <ResolveDialog
         open={!!resolving}
         status="Resolved"
-        what={resolving?.length === 1 ? (numbers.get(resolving[0]) ?? "the ticket") : tr("{value} tickets", { value: resolving?.length ?? 0 })}
+        what={resolving?.length === 1 ? (numbers.get(resolving[0]) ?? tr("the ticket")) : tr("{value} tickets", { value: resolving?.length ?? 0 })}
         onClose={() => setResolving(null)}
         onSubmit={(r) => bulk(resolving ?? [], { status: "Resolved", resolution_details: r.resolution }, "Resolved")}
       />

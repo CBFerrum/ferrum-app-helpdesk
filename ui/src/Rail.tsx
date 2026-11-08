@@ -24,10 +24,10 @@ export interface RailTicket extends Ticket, SlaTicket {
 }
 
 const ENTITLEMENT: Record<string, { tone: "green" | "amber" | "red" | "neutral"; text: string }> = {
-  Covered: { tone: "green", text: "Covered by a support contract" },
-  Expired: { tone: "red", text: "Support contract has ended" },
-  Exhausted: { tone: "amber", text: "Support contract has no tickets left" },
-  None: { tone: "neutral", text: "No support contract" },
+  Covered: { tone: "green", get text() { return tr("Covered by a support contract"); } },
+  Expired: { tone: "red", get text() { return tr("Support contract has ended"); } },
+  Exhausted: { tone: "amber", get text() { return tr("Support contract has no tickets left"); } },
+  None: { tone: "neutral", get text() { return tr("No support contract"); } },
 };
 
 function Others({ t }: { t: RailTicket }) {

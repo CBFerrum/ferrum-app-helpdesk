@@ -63,14 +63,14 @@ function card(
       return { id, title, state: "late", text: late, detail: `${o.doneWord} ${when(done)}${due !== null ? tr(", due {due}", { due: when(due) }) : ""}` };
     }
     const took = hoursText(o.took);
-    return { id, title, state: "fulfilled", text: took ? tr("Fulfilled in {took}", { took }) : "Fulfilled", detail: `${o.doneWord} ${when(done)}` };
+    return { id, title, state: "fulfilled", text: took ? tr("Fulfilled in {took}", { took }) : tr("Fulfilled"), detail: `${o.doneWord} ${when(done)}` };
   }
-  if (!o.sla) return { id, title, state: "none", text: "No target", detail: null };
+  if (!o.sla) return { id, title, state: "none", text: tr("No target"), detail: null };
   if (due === null) {
     // The clock stops while the ticket waits on the customer or is on hold, and its deadline with it.
-    if (o.status === "On Hold") return { id, title, state: "paused", text: "On hold", detail: "The clock is stopped" };
-    if (o.status === "Replied") return { id, title, state: "paused", text: "Waiting for the customer", detail: "The clock is stopped" };
-    return { id, title, state: "none", text: "No deadline", detail: null };
+    if (o.status === "On Hold") return { id, title, state: "paused", text: tr("On hold"), detail: tr("The clock is stopped") };
+    if (o.status === "Replied") return { id, title, state: "paused", text: tr("Waiting for the customer"), detail: tr("The clock is stopped") };
+    return { id, title, state: "none", text: tr("No deadline"), detail: null };
   }
   return due < now
     ? { id, title, state: "overdue", text: tr("Overdue by {value}", { value: span(now - due) }), detail: tr("Was due {due}", { due: when(due) }) }
