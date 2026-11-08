@@ -17,13 +17,13 @@ export interface SavedReply {
 
 /** What a reply may name, for the list that tells people. */
 export const VARIABLES: { name: string; says: string }[] = [
-  { name: "customer.first_name", says: "the first name of whoever wrote in" },
-  { name: "customer.name", says: "their full name" },
-  { name: "customer.company", says: "their company" },
-  { name: "ticket.number", says: "the ticket's number" },
-  { name: "ticket.subject", says: "its subject" },
-  { name: "agent.first_name", says: "your first name" },
-  { name: "agent.name", says: "your name" },
+  { name: "customer.first_name", get says() { return t("the first name of whoever wrote in"); } },
+  { name: "customer.name", get says() { return t("their full name"); } },
+  { name: "customer.company", get says() { return t("their company"); } },
+  { name: "ticket.number", get says() { return t("the ticket's number"); } },
+  { name: "ticket.subject", get says() { return t("its subject"); } },
+  { name: "agent.first_name", get says() { return t("your first name"); } },
+  { name: "agent.name", get says() { return t("your name"); } },
 ];
 
 export interface FillWith {

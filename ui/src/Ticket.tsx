@@ -29,16 +29,16 @@ interface TicketDoc extends RailTicket, Story {
 const KEYS = { r: "reply", n: "note", e: "resolve", a: "take", j: "next", k: "previous", d: "details", "?": "help" } as const;
 
 const SHORTCUTS = [
-  { keys: ["r"], says: "Reply to the customer" },
-  { keys: ["n"], says: "Write an internal note" },
-  { keys: ["e"], says: "Resolve the ticket" },
-  { keys: ["a"], says: "Assign it to me" },
-  { keys: ["j"], says: "Next ticket in the list you came from" },
-  { keys: ["k"], says: "Previous ticket" },
-  { keys: ["d"], says: "Show or hide the details" },
-  { keys: ["/"], says: "In a reply: find a saved reply" },
-  { keys: ["Ctrl or ⌘", "Enter"], says: "Send what you have written" },
-  { keys: ["?"], says: "This list" },
+  { keys: ["r"], get says() { return tr("Reply to the customer"); } },
+  { keys: ["n"], get says() { return tr("Write an internal note"); } },
+  { keys: ["e"], get says() { return tr("Resolve the ticket"); } },
+  { keys: ["a"], get says() { return tr("Assign it to me"); } },
+  { keys: ["j"], get says() { return tr("Next ticket in the list you came from"); } },
+  { keys: ["k"], get says() { return tr("Previous ticket"); } },
+  { keys: ["d"], get says() { return tr("Show or hide the details"); } },
+  { keys: ["/"], get says() { return tr("In a reply: find a saved reply"); } },
+  { get keys() { return [tr("Ctrl or ⌘"), tr("Enter")]; }, get says() { return tr("Send what you have written"); } },
+  { keys: ["?"], get says() { return tr("This list"); } },
 ];
 
 const key = (id: string) => ["peek", "Ticket", id];
@@ -46,8 +46,8 @@ const key = (id: string) => ["peek", "Ticket", id];
 /** What to tell the agent about a message just saved: whether it reached the customer by email. */
 function sentNote(saved: TicketDoc, internal: boolean): string {
   const last = saved.conversation?.[saved.conversation.length - 1];
-  if (internal) return "Note added";
-  return last?.emailed ? tr("Reply sent. Emailed to {contact_email}.", { contact_email: String(saved.contact_email) }) : "Reply added. No email went out, but the customer can read it in the portal.";
+  if (internal) return tr("Note added");
+  return last?.emailed ? tr("Reply sent. Emailed to {contact_email}.", { contact_email: String(saved.contact_email) }) : tr("Reply added. No email went out, but the customer can read it in the portal.");
 }
 
 /** The address of a ticket that works from anywhere, which takes a customer to the portal. */
@@ -166,7 +166,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
       return saved;
     } catch (err) {
       if (err instanceof ApiError && (err.status === 409 || err.status === 412)) {
-        setConflict("This ticket changed while you were writing. It shows the change now, and your words are kept. Read it, then send again if it still fits.");
+        setConflict(tr("This ticket changed while you were writing. It shows the change now, and your words are kept. Read it, then send again if it still fits."));
         refresh();
       } else {
         toast(errorMessage(err), "error");
@@ -339,7 +339,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
           <button type="button" className="btn btn-default btn-md" aria-pressed={showRail} onClick={() => setRailChoice(!showRail)} title={tr("Details (d)")}>
             {tr("Details")}
           </button>
-          <Menu ariaLabel="More actions" icon="chevronDown" buttonClass="btn btn-default btn-md">
+          <Menu ariaLabel={tr("More actions")} icon="chevronDown" buttonClass="btn btn-default btn-md">
             {(close) => (
               <>
                 {writable && status !== "On Hold" && !done && (
@@ -421,8 +421,8 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
               onMode={setMode}
               inputRef={input}
               rootRef={bottom}
-              to={{ name: t.contact_name || t.customer_name || "the customer", email: t.contact_email ?? null }}
-              assignee={owner ? tr("{owner} has this ticket.", { owner }) : t.assigned_to ? null : "Nobody has this ticket yet."}
+              to={{ name: t.contact_name || t.customer_name || tr("the customer"), email: t.contact_email ?? null }}
+              assignee={owner ? tr("{owner} has this ticket.", { owner }) : t.assigned_to ? null : tr("Nobody has this ticket yet.")}
               about={about}
               replies={hasReplies}
               conflict={conflict}
@@ -438,7 +438,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
       <ResolveDialog
         open={!!resolving}
         status={resolving ?? "Resolved"}
-        what={t.number ?? "the ticket"}
+        what={t.number ?? tr("the ticket")}
         tell={t.contact_email ? (t.contact_name ?? t.contact_email) : null}
         onClose={() => setResolving(null)}
         onSubmit={finish}

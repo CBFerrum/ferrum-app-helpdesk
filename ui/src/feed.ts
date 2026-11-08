@@ -226,7 +226,7 @@ export function buildFeed(t: Story, events: AuditEvent[], name: (email: string) 
         at: e.at,
         tone: "warn",
         icon: "alert",
-        text: typeof level === "number" ? tr("Escalated to level {level}", { level }) : "Escalated",
+        text: typeof level === "number" ? tr("Escalated to level {level}", { level }) : tr("Escalated"),
         who: null,
         detail: null,
       });
@@ -238,10 +238,10 @@ export function buildFeed(t: Story, events: AuditEvent[], name: (email: string) 
     items.push({ kind: "event", key: "escalated", at: t.escalated_at, tone: "warn", icon: "alert", text: tr("Escalated to level {value}", { value: t.escalation_level ?? 1 }), who: null, detail: null });
   }
   if (t.response_breached && t.response_by) {
-    items.push({ kind: "event", key: "response-missed", at: t.response_by, tone: "bad", icon: "clock", text: "The first response target was missed", who: null, detail: null });
+    items.push({ kind: "event", key: "response-missed", at: t.response_by, tone: "bad", icon: "clock", text: tr("The first response target was missed"), who: null, detail: null });
   }
   if (t.resolution_breached && t.resolution_by) {
-    items.push({ kind: "event", key: "resolution-missed", at: t.resolution_by, tone: "bad", icon: "clock", text: "The resolution target was missed", who: null, detail: null });
+    items.push({ kind: "event", key: "resolution-missed", at: t.resolution_by, tone: "bad", icon: "clock", text: tr("The resolution target was missed"), who: null, detail: null });
   }
 
   // Equal times keep the order things were added in: messages, then what happened around them.
@@ -270,8 +270,8 @@ export function dayLabel(at: string, now = new Date()): string {
   if (t === null) return "";
   const [day, today] = [calendarDay(t), calendarDay(now)];
   const diff = Math.round((Date.parse(today) - Date.parse(day)) / 86_400_000);
-  if (diff === 0) return "Today";
-  if (diff === 1) return "Yesterday";
+  if (diff === 0) return tr("Today");
+  if (diff === 1) return tr("Yesterday");
   return formatMoment(t, { weekday: "short", day: "numeric", month: "short", ...(day.slice(0, 4) === today.slice(0, 4) ? {} : { year: "numeric" }) });
 }
 
@@ -305,11 +305,11 @@ export function whatChanged(before: Snapshot, after: Snapshot, name: (email: str
   const parts: string[] = [];
   const last = fresh[fresh.length - 1];
   if (last) {
-    const who = last.author_kind === "Customer" ? "The customer" : last.author ? name(last.author) : "A colleague";
-    const what = last.is_internal ? "added a note" : "replied";
+    const who = last.author_kind === "Customer" ? tr("The customer") : last.author ? name(last.author) : tr("A colleague");
+    const what = last.is_internal ? tr("added a note") : "replied";
     parts.push(fresh.length > 1 ? tr("{length} new messages, the latest from {who}", { length: fresh.length, who }) : `${who} ${what}`);
   }
-  if ((before.assigned_to ?? null) !== (after.assigned_to ?? null)) parts.push(after.assigned_to ? tr("Now with {value}", { value: name(after.assigned_to) }) : "No one has it now");
+  if ((before.assigned_to ?? null) !== (after.assigned_to ?? null)) parts.push(after.assigned_to ? tr("Now with {value}", { value: name(after.assigned_to) }) : tr("No one has it now"));
   if (before.status !== after.status && after.status) parts.push(tr("Status is now {status}", { status: after.status }));
   if (before.priority !== after.priority && after.priority) parts.push(tr("Priority is now {priority}", { priority: after.priority }));
   return parts.length ? parts.join(". ") : null;

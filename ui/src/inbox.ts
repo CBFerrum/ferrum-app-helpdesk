@@ -291,9 +291,9 @@ export interface SavedFilter {
 /** What is wrong with a name for a saved filter, in words a person can act on; null when it is fine. */
 export function filterNameError(name: string, saved: SavedFilter[], except?: string): string | null {
   const n = name.trim();
-  if (!n) return "Give it a name.";
-  if (n.length > 60) return "Keep the name to 60 characters.";
-  if (saved.some((f) => f.id !== except && f.name.toLowerCase() === n.toLowerCase())) return "You have a saved filter with that name.";
+  if (!n) return tr("Give it a name.");
+  if (n.length > 60) return tr("Keep the name to 60 characters.");
+  if (saved.some((f) => f.id !== except && f.name.toLowerCase() === n.toLowerCase())) return tr("You have a saved filter with that name.");
   return null;
 }
 
@@ -347,6 +347,6 @@ export function describeBulk(done: string, res: BulkResult, label: (id: string) 
     .map((r) => `${label(r.id)}: ${r.error?.message ?? "not changed"}`)
     .join(". ");
   const more = failed.length > 3 ? tr(" And {value} more.", { value: failed.length - 3 }) : "";
-  const lead = res.succeeded ? tr("{done}: {succeeded} of {value}. ", { done, succeeded: res.succeeded, value: res.succeeded + failed.length }) : "Nothing changed. ";
+  const lead = res.succeeded ? tr("{done}: {succeeded} of {value}. ", { done, succeeded: res.succeeded, value: res.succeeded + failed.length }) : tr("Nothing changed. ");
   return { message: `${lead}${why}.${more}`, bad: true, left: failed.map((r) => r.id) };
 }

@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type KeyboardEvent, useId, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { api, docPath, errorMessage, t, isolate } from "@ferrum/client";
-import { Alert, Button, Dialog, ErrorState, Field, Spinner, toast, useDismiss } from "@ferrum/kit";
+import { Alert, Button, Dialog, ErrorState, Field, Spinner, toast, useDismiss, placed } from "@ferrum/kit";
 import { LinkInput, useMe } from "@ferrum/records";
 import { useRemembered } from "./hooks";
 import { fill, type FillWith, pick, SCOPE_FILTERS, type ReplyScope, type SavedReply, type ScopeFilter } from "./replies";
@@ -79,7 +79,7 @@ function SaveReply({ body, onClose }: { body: string; onClose: () => void }) {
           </Field>
         )}
         <p className="faint">
-          {t("It is saved as typed. To have the customer's name filled in each time, write")} <code>{isolate("{{customer.first_name}}")}</code> {t("in its place.")}
+          {placed(t("It is saved as typed. To have the customer's name filled in each time, write {p1} in its place."), { p1: <code>{isolate("{{customer.first_name}}")}</code> })}
         </p>
       </form>
     </Dialog>

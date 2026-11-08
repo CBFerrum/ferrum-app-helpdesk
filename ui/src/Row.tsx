@@ -69,7 +69,7 @@ export const Row = memo(function Row({ t, now, me, who, picked, current, writabl
       </span>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button type="button" className="icon-btn" aria-label={tr("Actions for {value}", { value: t.number ?? "this ticket" })}>
+          <button type="button" className="icon-btn" aria-label={tr("Actions for {value}", { value: t.number ?? tr("this ticket") })}>
             <Icon name="chevronDown" size={14} />
           </button>
         </DropdownMenuTrigger>
