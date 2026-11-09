@@ -4,6 +4,8 @@
   module: support
   fields:
     - {name: auto_close_days, type: int, label: Close Resolved Tickets After (Days), default: 7, min: 0, max: 3650, description: "Resolved tickets without a customer reply close automatically after this many days; 0 = never"}
+    - {name: outside_entitlement, type: select, options: [Inform, Hold for Approval], default: Inform, required: true, label: Tickets Outside Entitlement,
+       description: "A ticket from a customer whose contract has ended or run out of tickets, or who has none. Inform: it is worked as any other, marked so. Hold for Approval: it waits On Hold, with no reply to the customer, until a Support Manager approves the work or declines it, saying why"}
 
 - name: TicketType
   label: Ticket Type
@@ -183,6 +185,10 @@
     - {name: support_contract, type: link, to: SupportContract, read_only: true, no_copy: true, in_filter: true}
     - {name: contract_sla, type: link, to: ServiceLevelAgreement, read_only: true, hidden: true, no_copy: true}
     - {name: entitlement, type: select, options: [Covered, Expired, Exhausted, None], read_only: true, no_copy: true, in_filter: true, description: "Whether a support contract covers this ticket, as of when it was opened"}
+    - {name: entitlement_approval, type: select, options: [Waiting, Approved, Declined], read_only: true, no_copy: true, in_filter: true, label: Work Outside Entitlement,
+       description: "Under Hold for Approval: whether a Support Manager has approved working this ticket"}
+    - {name: entitlement_decided_by, type: email, read_only: true, no_copy: true, label: Decided By}
+    - {name: entitlement_reason, type: data, read_only: true, no_copy: true, max_length: 500, label: Why}
     - {name: escalation_level, type: int, default: 0, read_only: true, no_copy: true, in_filter: true}
     - {name: escalated_at, type: datetime, read_only: true, no_copy: true}
     - {name: service_level_agreement, type: link, to: ServiceLevelAgreement, label: SLA, read_only: true, no_copy: true, in_filter: true}
@@ -201,11 +207,15 @@
     - {label: Assignment, fields: [team, assigned_to]}
     - {label: Conversation, fields: [conversation]}
     - {label: Resolution, fields: [resolution_details, satisfaction_rating, feedback]}
-    - {label: Entitlement, collapsible: true, fields: [support_contract, entitlement]}
+    - {label: Entitlement, collapsible: true, fields: [support_contract, entitlement, entitlement_approval, entitlement_decided_by, entitlement_reason]}
     - {label: Service Level, collapsible: true, fields: [escalation_level, escalated_at, service_level_agreement, sla_status, response_by, resolution_by, response_breached, resolution_breached, opened_at, first_responded_at, resolved_at, closed_at, first_response_hours, resolution_hours, paused_hours]}
     - {label: Product, collapsible: true, fields: [item, serial_no, sales_invoice]}
   actions:
     - {name: make_warranty_claim, label: Create Warranty Claim, permission: write, condition: "doc.item != null && doc.customer != null"}
+    - {name: approve_outside_entitlement, label: Approve Work Outside Entitlement, permission: write, condition: "doc.entitlement_approval == 'Waiting'",
+       params: [{name: reason, label: Why, type: data, required: true, description: "Why this customer's ticket is worked though their contract does not cover it"}]}
+    - {name: decline_outside_entitlement, label: Decline Work Outside Entitlement, permission: write, condition: "doc.entitlement_approval == 'Waiting'",
+       params: [{name: reason, label: Why, type: data, required: true, description: "Why it is not worked: the customer is told once someone replies"}]}
   list: {columns: [number, subject, customer_name, priority, status, assigned_to, sla_status], sort: opened_at desc}
 
 - name: SavedReply
