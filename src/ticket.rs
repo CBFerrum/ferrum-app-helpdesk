@@ -447,6 +447,43 @@ async fn entitlement(hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
     Ok(())
 }
 
+/// Whether the workspace holds tickets outside entitlement for a Support Manager's approval.
+async fn holds_outside_entitlement(hc: &mut HookCtx<'_>) -> Result<bool> {
+    let policy: Option<Option<String>> = sqlx::query_scalar("select outside_entitlement from e_support_settings where tenant_id = $1 limit 1")
+        .bind(hc.ctx.tenant)
+        .fetch_optional(&mut **hc.tx)
+        .await?;
+    Ok(policy.flatten().as_deref() == Some("Hold for Approval"))
+}
+
+/// A Support Manager approves working a ticket outside the customer's entitlement, or declines it,
+/// saying why: it opens again, or is resolved with that reason. The decision is the action's audit entry.
+async fn decide_outside_entitlement(hc: &mut HookCtx<'_>, doc: &Doc, approve: bool, params: &Value) -> Result<Value> {
+    if !hc.ctx.is_admin && !hc.ctx.roles.iter().any(|r| r == "Support Manager") {
+        return Err(Error::Forbidden("a Support Manager decides work outside a customer's entitlement".into()));
+    }
+    if s(doc, "entitlement_approval") != Some("Waiting") {
+        return Err(Error::invalid("this ticket is not waiting for that decision"));
+    }
+    let reason = params.get("reason").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+    if reason.is_empty() || reason.chars().count() > 500 {
+        return Err(Error::field("reason", "say why, in at most 500 characters"));
+    }
+    let ticket = id(doc, "id").ok_or_else(|| Error::internal("a ticket without an id"))?;
+    let mut patch = Doc::new();
+    patch.insert("entitlement_approval".into(), json!(if approve { "Approved" } else { "Declined" }));
+    patch.insert("entitlement_decided_by".into(), json!(hc.ctx.email));
+    patch.insert("entitlement_reason".into(), json!(reason));
+    patch.insert("status".into(), json!(if approve { "Open" } else { "Resolved" }));
+    if !approve {
+        patch.insert("resolution_details".into(), json!(format!("Not worked: outside the customer's entitlement. {reason}")));
+    }
+    // Saved as the engine (these fields are no one's to type); the action's audit entry names who decided.
+    let engine = ferrum_kernel::Ctx::system(hc.ctx.tenant, hc.ctx.schema.clone());
+    let saved = hc.kernel.update_tx(&engine, hc.tx, "Ticket", ticket, patch, None).await?;
+    Ok(json!({"status": saved.get("status"), "entitlement_approval": saved.get("entitlement_approval")}))
+}
+
 /// The start of a message on one line, for the inbox's list.
 fn preview(text: &str) -> String {
     let flat: String = text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
@@ -505,6 +542,11 @@ impl DocHook for TicketHook {
                 (Some(wanted), Some(t)) => outgoing::check_files(hc, t, wanted).await?,
             };
             set(m, "attachments", Value::Array(files));
+            if kind == "Agent" && !b(m, "is_internal") && s(doc, "entitlement_approval") == Some("Waiting") {
+                return Err(Error::invalid(
+                    "this ticket is outside the customer's entitlement and waits for a Support Manager's approval: no reply goes to them until then (an internal note can)",
+                ));
+            }
             if kind == "Agent" && !b(m, "is_internal") {
                 if emailed.is_none() {
                     emailed = Some(outgoing::goes_by_email(hc, old.is_some(), contact.as_deref(), &number, &title).await?);
@@ -530,7 +572,12 @@ impl DocHook for TicketHook {
         // The status follows the conversation unless this save sets it: a customer reply reopens,
         // the first public agent reply on an open ticket marks it replied.
         let explicit = old.as_ref().is_some_and(|o| s(o, "status") != s(doc, "status"));
-        if !explicit && let Some((from_customer, internal)) = last_new {
+        // Waiting for approval outside entitlement, it stays On Hold whatever is said meanwhile.
+        let waiting = s(doc, "entitlement_approval") == Some("Waiting");
+        if !explicit
+            && !waiting
+            && let Some((from_customer, internal)) = last_new
+        {
             let current = s(doc, "status").unwrap_or("Open").to_string();
             match (from_customer, internal, current.as_str()) {
                 (true, _, "Replied" | "Resolved" | "On Hold") => set(doc, "status", "Open"),
@@ -541,6 +588,11 @@ impl DocHook for TicketHook {
 
         if old.is_none() {
             entitlement(hc, doc).await?;
+            // Held for a Support Manager's approval, where the workspace says so (FEO-030).
+            if id(doc, "customer").is_some() && s(doc, "entitlement") != Some("Covered") && holds_outside_entitlement(hc).await? {
+                set(doc, "status", "On Hold");
+                set(doc, "entitlement_approval", "Waiting");
+            }
         }
         let status = s(doc, "status").unwrap_or("Open").to_string();
         let opened = ts(doc, "opened_at").unwrap_or(now);
@@ -648,6 +700,14 @@ impl DocHook for TicketHook {
                 errors.push(FieldError::new("sent_at", "is before the ticket was opened").in_row("conversation", i));
             }
         }
+        // While it waits for approval outside entitlement, only that decision moves it (FEO-030).
+        if let Some(o) = &old
+            && s(o, "entitlement_approval") == Some("Waiting")
+            && s(doc, "entitlement_approval") == Some("Waiting")
+            && s(o, "status") != s(doc, "status")
+        {
+            errors.push(FieldError::new("status", "waits On Hold until a Support Manager approves or declines working it outside the customer's entitlement"));
+        }
         let rating = doc.get("satisfaction_rating").filter(|v| !v.is_null());
         let rated = rating.is_some() && old.as_ref().is_none_or(|o| o.get("satisfaction_rating") != doc.get("satisfaction_rating"));
         if rated && !matches!(s(doc, "status"), Some("Resolved" | "Closed")) {
@@ -656,7 +716,14 @@ impl DocHook for TicketHook {
         if errors.is_empty() { Ok(()) } else { Err(Error::Validation(errors)) }
     }
 
-    async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, _params: &Value) -> Result<Option<Value>> {
+    async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
+        if let Some(approve) = match name {
+            "approve_outside_entitlement" => Some(true),
+            "decline_outside_entitlement" => Some(false),
+            _ => None,
+        } {
+            return decide_outside_entitlement(hc, doc, approve, params).await.map(Some);
+        }
         if name != "make_warranty_claim" {
             return Ok(None);
         }

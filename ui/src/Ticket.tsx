@@ -18,11 +18,13 @@ import { type Carried, inboxLink, initials, requester } from "./inbox";
 import { command, isTyping } from "./keys";
 import { Rail, type RailTicket } from "./Rail";
 import { ResolveDialog, type Resolution } from "./Resolve";
+import { DecisionDialog, type Decision } from "./Entitlement";
 import { Shortcuts } from "./Shortcuts";
 
 interface TicketDoc extends RailTicket, Story {
   conversation?: Message[];
   resolution_details?: string | null;
+  entitlement_approval?: string | null;
   updated_by?: string | null;
 }
 
@@ -82,6 +84,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
   const [filter, setFilter] = useState<FeedFilter>("all");
   const [mode, setMode] = useState<Mode>("reply");
   const [resolving, setResolving] = useState<"Resolved" | "Closed" | null>(null);
+  const [deciding, setDeciding] = useState<Decision | null>(null);
   const [help, setHelp] = useState(false);
   const [conflict, setConflict] = useState<string | null>(null);
   const wide = useMedia("(min-width: 1000px)");
@@ -292,6 +295,19 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
     agent: { name: me.full_name, email: me.email },
   };
   const canWarranty = !!t.item && !!t.customer && meta.actions.some((a) => a.name === "make_warranty_claim");
+  // Held outside the customer's entitlement: a Support Manager decides (Support Settings).
+  const waiting = t.entitlement_approval === "Waiting";
+  const decides = waiting && writable && (me.is_admin || me.roles.includes("Support Manager"));
+  const decide = async (reason: string) => {
+    try {
+      await api.post(docPath("Ticket", id, "actions", `${deciding}_outside_entitlement`), { reason });
+      toast(deciding === "approve" ? tr("Approved: it can be worked now") : tr("Declined, and resolved"));
+      setDeciding(null);
+      refresh();
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    }
+  };
 
   return (
     <div className="hd-ws">
@@ -352,7 +368,27 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
                     {tr("Put on hold")}
                   </MenuItem>
                 )}
-                {writable && status === "On Hold" && (
+                {decides && (
+                  <MenuItem
+                    onSelect={() => {
+                      close();
+                      setDeciding("approve");
+                    }}
+                  >
+                    {tr("Approve work outside the entitlement…")}
+                  </MenuItem>
+                )}
+                {decides && (
+                  <MenuItem
+                    onSelect={() => {
+                      close();
+                      setDeciding("decline");
+                    }}
+                  >
+                    {tr("Decline work outside the entitlement…")}
+                  </MenuItem>
+                )}
+                {writable && status === "On Hold" && !waiting && (
                   <MenuItem
                     onSelect={() => {
                       close();
@@ -409,6 +445,11 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
       </header>
 
       {closed && <Alert tone="info">{tr("This ticket is closed for good. You can still read everything on it.")}</Alert>}
+      {waiting && (
+        <Alert tone="warning">
+          {tr("Outside the customer's entitlement: it waits for a Support Manager to approve the work. Nothing goes to the customer until then; internal notes can be written.")}
+        </Alert>
+      )}
 
       <div className="hd-ws-body" data-rail={showRail || undefined}>
         <div className="hd-ws-main">
@@ -443,6 +484,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
         onClose={() => setResolving(null)}
         onSubmit={finish}
       />
+      <DecisionDialog decision={deciding} onClose={() => setDeciding(null)} onSubmit={decide} />
       <Shortcuts open={help} onClose={() => setHelp(false)} title={tr("Keyboard shortcuts")} rows={SHORTCUTS} />
     </div>
   );

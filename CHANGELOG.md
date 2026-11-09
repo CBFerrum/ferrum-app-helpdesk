@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.0
+
+Work outside a customer's entitlement follows the policy the workspace chooses (Ferrum's closure review, FEO-030). Support Settings' Tickets Outside Entitlement is Inform (as before: the ticket is worked, marked Expired, Exhausted or None) or Hold for Approval: a ticket from a customer whose contract has ended or run out of tickets, or who has none, then waits On Hold. No reply goes to the customer and only the decision moves it, though internal notes can be written. A Support Manager approves the work (it opens again) or declines it (it is resolved, saying why), from the ticket's menu; the decision, who made it and why are kept on the ticket and in its history. A save race between two agents already kept the loser's words.
+
 ## 0.7.13
 
 The reports it defines in code (their titles and parameters) have names in Arabic and Hindi too, with its models' and manifest's (304 each in ui/src/locales/names). Translated by the model, to be reviewed by native speakers.
