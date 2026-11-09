@@ -916,6 +916,38 @@ async fn portal(k: &Arc<Kernel>) {
     let third = t.insert("Ticket", open_ticket("One too many", now)).await;
     assert_eq!(third["entitlement"], json!("Exhausted"), "said, not refused: an agent decides");
 
+    // ───────────── work outside entitlement waits for approval, where the workspace says so (FEO-030) ─────────────
+    let settings = t.insert("SupportSettings", json!({"outside_entitlement": "Hold for Approval"})).await;
+    let helper = t.user("helper@sd.test", &["Support Agent"], &[]).await;
+    let approver = t.user("approver@sd.test", &["Support Manager"], &[]).await;
+    let held = t.insert("Ticket", open_ticket("Past the contract", now)).await;
+    assert_eq!(
+        (held["status"].as_str(), held["entitlement"].as_str(), held["entitlement_approval"].as_str()),
+        (Some("On Hold"), Some("Exhausted"), Some("Waiting")),
+        "{held:?}"
+    );
+    let held_id = uid(&held);
+    let quiet = helper.say(held_id, json!({"author_kind": "Agent", "body": "On it", "is_internal": false})).await.unwrap_err();
+    assert!(quiet.to_string().contains("waits for a Support Manager's approval"), "no reply to the customer meanwhile: {quiet}");
+    helper.say(held_id, json!({"author_kind": "Agent", "body": "Asking the manager", "is_internal": true})).await.expect("a note can");
+    assert!(helper.try_update("Ticket", held_id, json!({"status": "Open"})).await.is_err(), "only the decision moves it");
+    let not_theirs = helper.k.run_action(&helper.ctx, "Ticket", held_id, "approve_outside_entitlement", json!({"reason": "Goodwill"})).await;
+    assert!(matches!(not_theirs, Err(Error::Forbidden(_))), "an agent does not decide it: {not_theirs:?}");
+    assert!(approver.k.run_action(&approver.ctx, "Ticket", held_id, "approve_outside_entitlement", json!({"reason": " "})).await.is_err(), "saying why");
+    approver.action("Ticket", held_id, "approve_outside_entitlement", json!({"reason": "Their renewal is being signed"})).await;
+    let approved = t.get("Ticket", held_id).await;
+    assert_eq!(
+        (approved["status"].as_str(), approved["entitlement_approval"].as_str(), approved["entitlement_decided_by"].as_str()),
+        (Some("Open"), Some("Approved"), Some("approver@sd.test"))
+    );
+    helper.say(held_id, json!({"author_kind": "Agent", "body": "On it", "is_internal": false})).await.expect("now the customer hears from us");
+    let declined = uid(&t.insert("Ticket", open_ticket("Another past the contract", now)).await);
+    approver.action("Ticket", declined, "decline_outside_entitlement", json!({"reason": "No renewal is coming"})).await;
+    let no = t.get("Ticket", declined).await;
+    assert_eq!((no["status"].as_str(), no["entitlement_approval"].as_str()), (Some("Resolved"), Some("Declined")));
+    assert!(no["resolution_details"].as_str().unwrap().contains("No renewal is coming"), "{no:?}");
+    t.update("SupportSettings", uid(&settings), json!({"outside_entitlement": "Inform"})).await;
+
     // ───────────── escalations ─────────────
     let lead = t.user("lead@sd.test", &["Support Agent"], &[]).await;
     t.insert("EscalationRule", json!({"rule_name": "Tell the lead", "level": 1, "trigger": "Breached", "notify": "lead@sd.test"})).await;
