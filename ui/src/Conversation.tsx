@@ -3,7 +3,7 @@
 
 import { Fragment, type Ref } from "react";
 import { formatMoment, t, isolate } from "@ferrum/client";
-import { EmptyState, Icon, Markdown } from "@ferrum/kit";
+import { Icon, Markdown, StatePanel } from "@ferrum/kit";
 import { counts, dayKey, dayLabel, type EventItem, type FeedFilter, type FeedItem, fileSize, filterFeed, type MessageItem } from "./feed";
 import { initials } from "./inbox";
 
@@ -108,9 +108,9 @@ export function Conversation({
         </div>
       </div>
       {shown.length === 0 && filter === "notes" ? (
-        <EmptyState title={t("No internal notes yet")} icon="file">
-          <p className="muted">{t("Switch the box below to Internal note to leave something only your team sees.")}</p>
-        </EmptyState>
+        <StatePanel kind="empty" title={t("No internal notes yet")}>
+          {t("Switch the box below to Internal note to leave something only your team sees.")}
+        </StatePanel>
       ) : (
         <ol className="hd-feed">
           {shown.map((item, i) => (

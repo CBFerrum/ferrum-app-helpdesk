@@ -8,7 +8,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { api, ApiError, bootstrap, docPath, errorMessage, t as tr, isolate } from "@ferrum/client";
-import { Alert, Badge, Button, confirmDialog, EmptyState, ErrorState, Icon, Menu, MenuItem, PageLoading, statusTone, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
+import { Alert, Badge, Button, confirmDialog, Icon, Menu, MenuItem, ReaderSkeleton, StatePanel, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
 import { can, type Doc, type EntityMeta, useEntityMeta, useMe, useMetaIndex, useRecord } from "@ferrum/records";
 import { Composer, type Mode, type Outgoing } from "./Composer";
 import { Conversation } from "./Conversation";
@@ -20,6 +20,8 @@ import { Rail, type RailTicket } from "./Rail";
 import { ResolveDialog, type Resolution } from "./Resolve";
 import { DecisionDialog, type Decision } from "./Entitlement";
 import { Shortcuts } from "./Shortcuts";
+import { LoadFailed } from "./states";
+import { PRIORITY_TONES, STATUS_TONES } from "./tones";
 
 interface TicketDoc extends RailTicket, Story {
   conversation?: Message[];
@@ -66,8 +68,8 @@ async function copyLink(id: string) {
 export function TicketRoute() {
   const { id = "" } = useParams();
   const meta = useEntityMeta("Ticket");
-  if (meta.error) return <ErrorState error={meta.error} onRetry={() => void meta.refetch()} />;
-  if (!meta.data) return <PageLoading label={tr("Loading the ticket")} />;
+  if (meta.error) return <LoadFailed error={meta.error} onRetry={() => void meta.refetch()} />;
+  if (!meta.data) return <ReaderSkeleton paragraphs={3} />;
   return <Workspace key={id} meta={meta.data} id={id} />;
 }
 
@@ -276,14 +278,12 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
   if (record.error) {
     if (record.error instanceof ApiError && record.error.status === 404) {
       return (
-        <EmptyState title={tr("This ticket no longer exists")}>
-          <Link to="/">{tr("Back to the inbox")}</Link>
-        </EmptyState>
+        <StatePanel kind="empty" title={tr("This ticket no longer exists")} action={<Link to="/">{tr("Back to the inbox")}</Link>} />
       );
     }
-    return <ErrorState error={record.error} onRetry={() => void record.refetch()} />;
+    return <LoadFailed error={record.error} onRetry={() => void record.refetch()} />;
   }
-  if (!t || !me) return <PageLoading label={tr("Loading the ticket")} />;
+  if (!t || !me) return <ReaderSkeleton paragraphs={3} />;
 
   const showRail = railChoice ?? wide;
   const hasReplies = !!index?.entities.some((e) => e.name === "SavedReply");
@@ -320,8 +320,8 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
           </p>
           <h1 className="page-title">{t.subject || tr("No subject")}</h1>
           <p className="row">
-            <Badge tone={statusTone(status)}>{isolate(status)}</Badge>
-            {t.priority && t.priority !== "Medium" && <Badge tone={t.priority === "Urgent" ? "red" : t.priority === "High" ? "amber" : "neutral"}>{isolate(t.priority)}</Badge>}
+            <Badge tone={STATUS_TONES[status] ?? "neutral"}>{isolate(status)}</Badge>
+            {t.priority && t.priority !== "Medium" && <Badge tone={PRIORITY_TONES[t.priority] ?? "neutral"}>{isolate(t.priority)}</Badge>}
             {t.assigned_to ? (
               <span className="hd-owner" title={t.assigned_to}>
                 <span className="hd-avatar hd-avatar-sm" aria-hidden="true">

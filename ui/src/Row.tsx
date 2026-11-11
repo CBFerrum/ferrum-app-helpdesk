@@ -3,13 +3,14 @@
 
 import { memo } from "react";
 import { Link } from "react-router";
-import { Badge, Button, Icon, statusTone } from "@ferrum/kit";
+import { Badge, Button, Icon } from "@ferrum/kit";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@ferrum/kit/primitives";
 import { type Carried, dueAt, dueLabel, initials, lastSpeaker, requester, type Ticket, waitLabel } from "./inbox";
 import { t as tr, isolate } from "@ferrum/client";
+import { PRIORITY_TONES, SLA_TONES, STATUS_TONES } from "./tones";
 
-const PRIORITY: Record<string, "red" | "amber" | "neutral"> = { Urgent: "red", High: "amber", Low: "neutral" };
-const SLA: Record<string, "red" | "amber"> = { Breached: "red", "At Risk": "amber" };
+/** Only the service-level states that need an agent's eye show on a row. */
+const SLA_SHOWN = ["Breached", "At Risk"];
 
 export interface RowProps {
   t: Ticket;
@@ -48,9 +49,9 @@ export const Row = memo(function Row({ t, now, me, who, picked, current, writabl
         )}
       </Link>
       <span className="hd-row-chips">
-        {t.priority && PRIORITY[t.priority] && <Badge tone={PRIORITY[t.priority]}>{isolate(t.priority)}</Badge>}
-        {t.status && t.status !== "Open" && <Badge tone={statusTone(t.status)}>{isolate(t.status)}</Badge>}
-        {t.sla_status && SLA[t.sla_status] && <Badge tone={SLA[t.sla_status]}>{isolate(t.sla_status)}</Badge>}
+        {t.priority && PRIORITY_TONES[t.priority] && <Badge tone={PRIORITY_TONES[t.priority]}>{isolate(t.priority)}</Badge>}
+        {t.status && t.status !== "Open" && <Badge tone={STATUS_TONES[t.status] ?? "neutral"}>{isolate(t.status)}</Badge>}
+        {t.sla_status && SLA_SHOWN.includes(t.sla_status) && <Badge tone={SLA_TONES[t.sla_status]}>{isolate(t.sla_status)}</Badge>}
         {due && <span className={due.startsWith("overdue") ? "hd-overdue" : "faint"}>{isolate(due)}</span>}
         {wait && <span className="faint">{isolate(wait)}</span>}
       </span>
