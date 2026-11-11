@@ -9,7 +9,7 @@ import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from "@tanstac
 import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { api, ApiError, docPath, errorMessage, newKey, t as tr, isolate } from "@ferrum/client";
-import { Alert, Button, confirmDialog, Dialog, EmptyState, ErrorState, Field, Icon, Spinner, toast, useDebounced, useLiveEntity, useShellTitle, placed } from "@ferrum/kit";
+import { Alert, Button, confirmDialog, Dialog, Field, Icon, ListSkeleton, StatePanel, toast, useDebounced, useLiveEntity, useShellTitle, placed } from "@ferrum/kit";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@ferrum/kit/primitives";
 import { can, useMe, useMetaIndex } from "@ferrum/records";
 import { useMedia, useNames, useNow, useQuiet } from "./hooks";
@@ -43,6 +43,7 @@ import {
 } from "./inbox";
 import { command, isTyping } from "./keys";
 import { Queues } from "./Queues";
+import { LoadFailed } from "./states";
 import { ResolveDialog } from "./Resolve";
 import { Row } from "./Row";
 import { Shortcuts } from "./Shortcuts";
@@ -420,9 +421,9 @@ export function HelpdeskHome() {
 
   if (index && !(entity && can(entity.permissions, "read"))) {
     return (
-      <EmptyState title={tr("No tickets for you")} icon="alert">
-        <p className="muted">{tr("Ask an administrator for a Support role.")}</p>
-      </EmptyState>
+      <StatePanel kind="denied" title={tr("No tickets for you")}>
+        {tr("Ask an administrator for a Support role.")}
+      </StatePanel>
     );
   }
 
@@ -432,17 +433,16 @@ export function HelpdeskHome() {
     setCursor(id);
   };
   const body = list.error ? (
-    <ErrorState error={list.error} onRetry={() => void list.refetch()} />
+    <LoadFailed error={list.error} onRetry={() => void list.refetch()} />
   ) : !ready || list.isLoading ? (
-    <Spinner label={tr("Loading tickets")} />
+    <ListSkeleton rows={8} />
   ) : !shown.length ? (
     refined ? (
-      <EmptyState title={tr("No ticket matches")} icon="search">
-        <p className="muted">{placed(tr("Nothing in {p1} fits these filters."), { p1: isolate(queue.label.toLowerCase()) })}</p>
-        <Button onClick={() => update({ q: "", priority: "", team: "", channel: "", assignee: "" })}>{tr("Clear the filters")}</Button>
-      </EmptyState>
+      <StatePanel kind="no-matches" title={tr("No ticket matches")} clearLabel={tr("Clear the filters")} onClear={() => update({ q: "", priority: "", team: "", channel: "", assignee: "" })}>
+        {placed(tr("Nothing in {p1} fits these filters."), { p1: isolate(queue.label.toLowerCase()) })}
+      </StatePanel>
     ) : (
-      <EmptyState title={queue.empty} icon="check" />
+      <StatePanel kind="empty" title={queue.empty} />
     )
   ) : (
     <>

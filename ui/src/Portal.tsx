@@ -7,7 +7,9 @@ import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-quer
 import { type FormEvent, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, errorMessage, t as tr, isolate } from "@ferrum/client";
-import { Badge, Button, EmptyState, ErrorState, Field, Icon, Markdown, PageLoading, statusTone, toast, useShellTitle } from "@ferrum/kit";
+import { Badge, Button, Field, Icon, ListSkeleton, Markdown, ReaderSkeleton, StatePanel, toast, useShellTitle } from "@ferrum/kit";
+import { LoadFailed } from "./states";
+import { STATUS_TONES } from "./tones";
 import { fileSize } from "./feed";
 
 const BASE = "/api/app/helpdesk/portal/tickets";
@@ -68,14 +70,13 @@ export function PortalTickets() {
         </Link>
       </div>
       {q.error ? (
-        <ErrorState error={q.error} onRetry={() => void q.refetch()} />
+        <LoadFailed error={q.error} onRetry={() => void q.refetch()} />
       ) : !q.data ? (
-        <PageLoading />
+        <ListSkeleton rows={4} />
       ) : !tickets.length ? (
-        <EmptyState title={tr("No tickets yet")} icon="headset">
-          <p className="muted">{tr("When you ask for help, your request and the team's answers are here.")}</p>
-          <Link to="/new">{tr("Raise a ticket")}</Link>
-        </EmptyState>
+        <StatePanel kind="empty" title={tr("No tickets yet")} action={<Link to="/new">{tr("Raise a ticket")}</Link>}>
+          {tr("When you ask for help, your request and the team's answers are here.")}
+        </StatePanel>
       ) : (
         <ul className="hd-tickets" data-ferrum-nocard>
           {tickets.map((t) => (
@@ -88,7 +89,7 @@ export function PortalTickets() {
                   </span>
                 </span>
                 <span className="hd-ticket-tags">
-                  <Badge tone={statusTone(t.status)}>{t.label ?? t.status}</Badge>
+                  <Badge tone={STATUS_TONES[t.status ?? ""] ?? "neutral"}>{t.label ?? t.status}</Badge>
                 </span>
               </Link>
             </li>
@@ -227,8 +228,8 @@ export function PortalTicket() {
       setBusy(false);
     }
   };
-  if (q.error) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
-  if (!q.data) return <PageLoading />;
+  if (q.error) return <LoadFailed error={q.error} onRetry={() => void q.refetch()} />;
+  if (!q.data) return <ReaderSkeleton paragraphs={3} />;
   const t = q.data;
   return (
     <div className="stack hd-portal">
@@ -242,7 +243,7 @@ export function PortalTicket() {
             {tr("{number} · opened", { number: t.number ?? "" })} {isolate(when(t.opened_at))}
           </p>
         </div>
-        <Badge tone={statusTone(t.status)}>{t.label ?? t.status}</Badge>
+        <Badge tone={STATUS_TONES[t.status ?? ""] ?? "neutral"}>{t.label ?? t.status}</Badge>
       </div>
       <ol className="hd-thread" aria-label={tr("Conversation")}>
         <li className="hd-message hd-from-customer">
