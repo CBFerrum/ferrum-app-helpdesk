@@ -5,7 +5,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
 import { api, docPath, t as tr, isolate } from "@ferrum/client";
-import { Badge, Button, Spinner, statusTone } from "@ferrum/kit";
+import { Badge, Button, Spinner } from "@ferrum/kit";
+import { STATUS_TONES } from "./tones";
 import { type EntityMeta, LinkInput, LinkTitle, type Person, Related } from "@ferrum/records";
 import { fileSize } from "./feed";
 import { PRIORITIES, requester, type Ticket } from "./inbox";
@@ -56,7 +57,7 @@ function Others({ t }: { t: RailTicket }) {
               <Link to={`/t/${o.id}`}>
                 <span className="hd-others-subject">{o.subject || o.number}</span>
               </Link>
-              <Badge tone={statusTone(o.status)}>{isolate(o.status ?? "")}</Badge>
+              <Badge tone={STATUS_TONES[o.status ?? ""] ?? "neutral"}>{isolate(o.status ?? "")}</Badge>
             </li>
           ))}
         </ul>
