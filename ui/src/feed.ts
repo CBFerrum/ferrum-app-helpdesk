@@ -21,6 +21,8 @@ export interface Message {
   attachments?: Attachment[] | null;
   /** A reply that went out by email to the ticket's contact. */
   emailed?: boolean | null;
+  /** The number of the ticket this message came from, when that ticket was merged into this one. */
+  merged_from?: string | null;
 }
 
 export interface AuditEvent {
@@ -66,6 +68,8 @@ export interface MessageItem {
   body: string;
   attachments: Attachment[];
   emailed: boolean;
+  /** The ticket it came from, when it was merged into this one. */
+  mergedFrom: string | null;
 }
 
 export interface EventItem {
@@ -134,6 +138,7 @@ export function buildFeed(t: Story, events: AuditEvent[], name: (email: string) 
     body: t.description || t.subject || "",
     attachments: [],
     emailed: false,
+    mergedFrom: null,
   });
   messages.forEach((m, i) => {
     const customer = m.author_kind === "Customer";
@@ -148,6 +153,7 @@ export function buildFeed(t: Story, events: AuditEvent[], name: (email: string) 
       body: m.body ?? "",
       attachments: m.attachments ?? [],
       emailed: !!m.emailed,
+      mergedFrom: m.merged_from || null,
     });
   });
 

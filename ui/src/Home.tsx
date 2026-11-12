@@ -42,6 +42,7 @@ import {
   writeState,
 } from "./inbox";
 import { command, isTyping } from "./keys";
+import { MergeDialog } from "./Merge";
 import { Queues } from "./Queues";
 import { LoadFailed } from "./states";
 import { ResolveDialog } from "./Resolve";
@@ -167,6 +168,7 @@ export function HelpdeskHome() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [overrides, setOverrides] = useState<Record<string, Partial<Ticket>>>({});
   const [resolving, setResolving] = useState<string[] | null>(null);
+  const [merging, setMerging] = useState(false);
   const [saving, setSaving] = useState(false);
   const [help, setHelp] = useState(false);
   const [text, setText] = useState(state.q);
@@ -605,6 +607,11 @@ export function HelpdeskHome() {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => setResolving(chosen)}>{tr("Resolve…")}</DropdownMenuItem>
               </Choose>
+              {writable && (
+                <Button size="sm" disabled={picked.size < 2} title={picked.size < 2 ? tr("Select two or more tickets of one customer") : undefined} onClick={() => setMerging(true)}>
+                  {tr("Merge…")}
+                </Button>
+              )}
               <span className="spacer" />
               <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>
                 {tr("Clear")}
@@ -622,6 +629,16 @@ export function HelpdeskHome() {
         what={resolving?.length === 1 ? (numbers.get(resolving[0]) ?? tr("the ticket")) : tr("{value} tickets", { value: resolving?.length ?? 0 })}
         onClose={() => setResolving(null)}
         onSubmit={(r) => bulk(resolving ?? [], { status: "Resolved", resolution_details: r.resolution }, "Resolved")}
+      />
+      <MergeDialog
+        open={merging}
+        tickets={shown.filter((x) => picked.has(x.id))}
+        onClose={() => setMerging(false)}
+        onDone={(r) => {
+          toast(r.message ?? tr("Merged"));
+          setPicked(new Set());
+          void qc.invalidateQueries({ queryKey: ["helpdesk", "queue"] });
+        }}
       />
       {saving && <SaveView saved={saved} onSave={saveView} onClose={() => setSaving(false)} />}
       <Shortcuts open={help} onClose={() => setHelp(false)} title={tr("Keyboard shortcuts")} rows={SHORTCUTS} />

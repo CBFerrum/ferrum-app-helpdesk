@@ -1193,3 +1193,24 @@ a.hd-file:focus-visible {
     transition: none;
   }
 }
+
+.hd-merge-set {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.hd-merge-set legend {
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.hd-from-chip {
+  padding: 0 0.4375rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  font-size: var(--text-xs);
+}

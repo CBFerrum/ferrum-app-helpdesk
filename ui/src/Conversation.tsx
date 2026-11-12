@@ -22,6 +22,7 @@ function Message({ m, address }: { m: MessageItem; address: string | null }) {
         <header className="hd-bubble-head">
           <strong>{isolate(m.author)}</strong>
           {m.internal && <span className="hd-note-chip">{t("Internal note")}</span>}
+          {m.mergedFrom && <span className="hd-from-chip">{t("From {n}, merged", { n: m.mergedFrom })}</span>}
           <time dateTime={m.at} title={full(m.at)} className="faint">
             {isolate(when(m.at))}
           </time>

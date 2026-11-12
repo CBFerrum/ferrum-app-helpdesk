@@ -114,6 +114,22 @@ describe("a ticket's workspace", () => {
     expect(html).not.toContain(">Resolve<");
   });
 
+  it("says a merged ticket was merged, links the one that stayed, and has no box to reply in", () => {
+    const html = draw({ doc: { status: "Closed", merged_into: "t9", merged_at: "2026-11-10T09:00:00Z", _titles: { merged_into: "TKT-2026-000099" } } });
+    expect(html).toContain("Merged into");
+    expect(html).toContain('href="/t/t9"');
+    expect(html).toContain("TKT-2026-000099");
+    expect(html).toContain("cannot be replied to");
+    expect(html).not.toContain("closed for good");
+    expect(html).not.toContain("Write to the ticket");
+  });
+
+  it("marks the messages that came from a merged ticket with where they came from", () => {
+    const html = draw({ doc: { conversation: [{ id: "m9", author_kind: "Customer", body: "Still jammed.", sent_at: "2026-11-02T09:00:00Z", merged_from: "TKT-2026-000100" }] } });
+    expect(html).toContain("Still jammed.");
+    expect(html).toContain("From TKT-2026-000100, merged");
+  });
+
   it("leaves a ticket to be read by someone who may not change it", () => {
     const html = draw({ write: false });
     expect(html).toContain("You can read this ticket but not answer it.");
