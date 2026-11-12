@@ -138,7 +138,7 @@ messages:
       en:
         email:
           subject: "How did we do? {{ doc.number }}"
-          body: "<p>Hello{% if doc.contact_name %} {{ doc.contact_name }}{% endif %},</p><p>Your request <b>{{ doc.number }}</b> ({{ doc.subject }}) was marked solved. <a href=\"{{ values.url }}\">Tell us how we did</a>: it takes a moment, and the link works once.</p><p>Thank you.</p>"
+          body: "<p>Hello{% if doc.contact_name %} {{ doc.contact_name }}{% endif %},</p><p>Your request <b>{{ doc.number }}</b> ({{ doc.subject }}) was marked solved. <a href=\"{{ values.url|safe }}\">Tell us how we did</a>: it takes a moment, and the link works once.</p><p>Thank you.</p>"
   - key: helpdesk.survey_alert
     label: A low rating, to the lead
     entity: Ticket
