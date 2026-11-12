@@ -1588,3 +1588,25 @@ a.hd-file:focus-visible {
   padding: 0;
   list-style: none;
 }
+
+/* A held mail's text, kept as typed; and a reply drawn in a brand's wrapping. */
+
+.hd-held-body pre {
+  margin: 0.25rem 0 0;
+  padding: 0.5rem 0.75rem;
+  max-height: 16rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.hd-brand-mail {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}

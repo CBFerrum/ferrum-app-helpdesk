@@ -23,11 +23,15 @@ describe("the support report views", () => {
     expect(viewLink(backlog, "Status", "7", today)).toBe("/r/support_backlog?run=1&group_by=Status");
   });
 
-  it("cover the six questions, each on one of the server's report sources, groupable as it says", () => {
-    expect(VIEWS.map((v) => v.report)).toEqual(["support_sla_compliance", "support_response_times", "support_backlog", "support_volume", "support_reopens", "support_customer_satisfaction"]);
+  it("open the article report with no grouping, since it has none", () => {
+    expect(viewLink(VIEWS.find((v) => v.id === "articles")!, "", "30", today)).toBe("/r/support_articles?run=1");
+  });
+
+  it("cover the six questions and the help centre's articles, each on one of the server's report sources, groupable as it says", () => {
+    expect(VIEWS.map((v) => v.report)).toEqual(["support_sla_compliance", "support_response_times", "support_backlog", "support_volume", "support_reopens", "support_customer_satisfaction", "support_articles"]);
     // The values the server's Group By takes (Helpdesk reports.rs GROUPS, and Tag for the volume report).
     const known = ["Status", "Priority", "Team", "Agent", "Ticket Type", "Channel", "Customer", "SLA", "Month", "Tag"];
-    for (const v of VIEWS) for (const g of [v.group, ...v.also]) expect(known).toContain(g);
+    for (const v of VIEWS) for (const g of [v.group, ...v.also].filter(Boolean)) expect(known).toContain(g);
     expect(VIEWS.find((v) => v.id === "volume")!.also).toContain("Tag");
   });
 });

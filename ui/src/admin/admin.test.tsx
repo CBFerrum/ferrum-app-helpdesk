@@ -7,8 +7,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AdminRoute } from "./Admin";
+import { BrandPreview } from "./Brands";
 
-const ENTITIES = ["SupportAddress", "InboundLog", "AgentProfile", "TicketTag", "TagRule", "TicketAssignmentRule", "SupportMacro", "SupportSettings", "SupportTeam", "TicketType"];
+const ENTITIES = ["SupportBrand", "ServiceLevelAgreement", "SupportAddress", "InboundLog", "AgentProfile", "TicketTag", "TagRule", "TicketAssignmentRule", "SupportMacro", "SupportSettings", "SupportTeam", "TicketType"];
 const ALL = { read: "all", write: "all", create: "all", delete: "all" };
 
 function draw(path: string, seed: (qc: QueryClient) => void = () => {}, perms: Record<string, string> = ALL) {
@@ -40,7 +41,7 @@ afterEach(() => {
 describe("administration", () => {
   it("lists its sections and says how much mail waits for review", () => {
     const html = draw("/admin");
-    for (const s of ["Support addresses", "Inbound mail", "Agent profiles", "Tags and tag rules", "Assignment rules", "Macros", "Satisfaction survey"]) expect(html).toContain(s);
+    for (const s of ["Support addresses", "Brands", "Service agreements", "Inbound mail", "Agent profiles", "Tags and tag rules", "Assignment rules", "Macros", "Satisfaction survey"]) expect(html).toContain(s);
     expect(html).toContain(">2<");
     expect(html).toContain('aria-current="page"');
   });
@@ -53,12 +54,11 @@ describe("administration", () => {
 describe("support addresses", () => {
   const seed = (qc: QueryClient) => {
     rows("SupportAddress", "address asc", [{ address: "support@acme.test", label: "Acme", team: "t1", default_priority: "High", enabled: true, _titles: { team: "Front line" } }, { address: "billing@acme.test", enabled: false }])(qc);
-    qc.setQueryData(["helpdesk", "settings"], { id: "s1", version: 2, unknown_senders: "Hold for Review", inbound_per_hour: 20, inbound_log_days: 90 });
+    qc.setQueryData(["helpdesk", "settings"], { id: "s1", version: 2, unknown_senders: "Hold for Review", unverified_senders: "Hold Failed", inbound_per_hour: 20, inbound_log_days: 90 });
   };
   it("shows the address, its brand, its team and what to do with unknown senders", () => {
     const html = draw("/admin/addresses", seed);
     expect(html).toContain("support@acme.test");
-    expect(html).toContain("Acme");
     expect(html).toContain("Front line");
     expect(html).toContain("Add support address");
     expect(html).toContain("Hold it in the inbound log for staff to open or discard");
@@ -66,8 +66,75 @@ describe("support addresses", () => {
     expect(html).toContain("Off");
   });
 
+  it("shows the brand, and whether Mail took the address and why not", () => {
+    const html = draw("/admin/addresses", (qc) => {
+      rows("SupportAddress", "address asc", [
+        { address: "support@acme.test", brand: "b1", enabled: true, mail_registered: true, _titles: { brand: "Acme Support" } },
+        { address: "sales@acme.test", enabled: true, mail_registered: false, registration_note: "That address belongs to another app." },
+        { address: "old@acme.test", enabled: false, mail_registered: false },
+      ])(qc);
+    });
+    expect(html).toContain("Acme Support");
+    expect(html).toContain("Registered with Mail");
+    expect(html.match(/>Registered</g)).toHaveLength(1);
+    expect(html).toContain("That address belongs to another app.");
+    expect(html).toContain("Not needed while it is off");
+  });
+
+  it("offers the three ways to treat mail that was not verified, each in one sentence", () => {
+    const html = draw("/admin/addresses", seed);
+    expect(html).toContain("Hold mail whose checks failed for staff to read first; take mail with no result and mark it");
+    expect(html).toContain("Hold every mail that was not verified, including mail with no result");
+    expect(html).toContain("Take every mail, and mark the ones that were not verified");
+  });
+
   it("tells a person with no right to the addresses, instead of an empty table", () => {
     expect(draw("/admin/addresses", seed, { read: "none", write: "none", create: "none", delete: "none" })).toContain("denied");
+  });
+});
+
+describe("brands", () => {
+  it("lists each brand with what it adds to a reply", () => {
+    const html = draw("/admin/brands", rows("SupportBrand", "brand_name asc", [{ brand_name: "Acme", display_name: "Acme Support", signature: "Warmly", footer: "Acme Ltd" }, { brand_name: "Bare" }]));
+    expect(html).toContain("Acme Support");
+    expect(html).toContain("Signature, Footer");
+    expect(html).toContain("Add brand");
+  });
+
+  it("previews a reply in the wrapping typed, header first and footer last", () => {
+    const html = renderToStaticMarkup(<BrandPreview draft={{ brand_name: "Acme", display_name: "Acme Support", header: "HEAD-TEXT", signature: "SIG-TEXT", footer: "FOOT-TEXT" }} />);
+    expect(html).toContain("Acme Support");
+    expect(html.indexOf("HEAD-TEXT")).toBeLessThan(html.indexOf("The printer is fixed"));
+    expect(html.indexOf("The agent&#x27;s own signature")).toBeLessThan(html.indexOf("SIG-TEXT"));
+    expect(html.indexOf("SIG-TEXT")).toBeLessThan(html.indexOf("FOOT-TEXT"));
+  });
+
+  it("falls back to the brand's name when there is no display name", () => {
+    expect(renderToStaticMarkup(<BrandPreview draft={{ brand_name: "Acme" }} />)).toContain("Acme");
+  });
+});
+
+describe("service agreements", () => {
+  const seed = (qc: QueryClient) => {
+    rows("ServiceLevelAgreement", "sla_name asc", [
+      { sla_name: "Gold", calendar: "sla_gold", enabled: true, customer: "c1", _titles: { customer: "Acme Ltd" } },
+      { sla_name: "Standard", enabled: true },
+      { sla_name: "Old hours", calendar: "deleted_one", enabled: false },
+    ])(qc);
+    qc.setQueryData(["helpdesk", "calendars"], ["helpdesk_hours", "sla_gold"]);
+  };
+  it("names each agreement's calendar and says the workspace's counts when it has none", () => {
+    const html = draw("/admin/agreements", seed);
+    expect(html).toContain("sla_gold");
+    expect(html).toContain("Acme Ltd");
+    expect(html).toContain("The workspace&#x27;s calendar (helpdesk_hours)");
+    expect(html).toContain("Targets and criteria");
+    expect(html).toContain('href="/e/ServiceLevelAgreement/r0"');
+    expect(html).not.toContain("Add agreement");
+  });
+
+  it("tells a person with no right to agreements, instead of an empty table", () => {
+    expect(draw("/admin/agreements", seed, { read: "none", write: "none", create: "none", delete: "none" })).toContain("denied");
   });
 });
 
@@ -86,6 +153,22 @@ describe("the inbound log", () => {
     expect(html).toContain('href="/t/t1"');
     expect(html).toContain("TKT-2026-000001");
     expect(html).toContain("Unknown sender");
+  });
+
+  it("shows the held mail's text to those who may read it, as text, with why it is held", () => {
+    const held = { id: "l3", from_address: "ada@acme.test", subject: "Refund", outcome: "Held", reason: "Unverified sender", body: "Please <b>refund</b> me" };
+    const html = draw("/admin/inbound", (qc) => qc.setQueryData(["helpdesk", "inbound", "Held"], { pages: [{ rows: [held], total: 1 }], pageParams: [0] }));
+    expect(html).toContain("Read the mail");
+    expect(html).toContain("Please &lt;b&gt;refund&lt;/b&gt; me");
+    expect(html).toContain("Unverified sender");
+    expect(html).toContain("did not vouch for this mail");
+    expect(html).toContain("never released by itself");
+  });
+
+  it("says the text is not theirs to read when the server leaves it out", () => {
+    const html = draw("/admin/inbound", seed);
+    expect(html).toContain("What the mail said is shown only to people given access to held mail.");
+    expect(html).not.toContain("Read the mail");
   });
 
   it("offers neither to someone who may only read", () => {
