@@ -42,6 +42,7 @@ export function Composer({
   inputRef,
   rootRef,
   to,
+  cc,
   assignee,
   about,
   replies,
@@ -56,6 +57,8 @@ export function Composer({
   rootRef: Ref<HTMLElement>;
   /** Who a reply is for; no address means it stays in the conversation and the portal. */
   to: { name: string; email: string | null };
+  /** The addresses copied on a reply (the ticket's CC). */
+  cc: string[];
   /** Who has the ticket, as a sentence ("Priya has this ticket"), or null when it is the agent's own or nobody's. */
   assignee: string | null;
   about: FillWith;
@@ -180,23 +183,39 @@ export function Composer({
     >
       <div className="hd-write-tabs" role="tablist" aria-label={tr("What to write")}>
         <button type="button" role="tab" aria-selected={mode === "reply"} onClick={() => onMode("reply")}>
-          {tr("Reply")}
+          {tr("Public reply")}
         </button>
         <button type="button" role="tab" aria-selected={mode === "note"} onClick={() => onMode("note")}>
           {tr("Internal note")}
         </button>
-        <span className="spacer" />
-        <span className="faint hd-write-to">
-          {mode === "note" ? tr("Only your team sees this") : to.email ? `To ${to.name} <${to.email}>` : tr("No email address on this ticket")}
-        </span>
       </div>
+      {/* The kind is said in words and not only by the tint: what this will do, and who will read it. */}
+      <p className="hd-write-kind" data-mode={mode} role="status">
+        <Icon name={mode === "note" ? "info" : "mail"} size={14} />
+        {mode === "note" ? (
+          <span>{tr("Internal note. Only your team sees it. It is never emailed, copied or shown to the customer.")}</span>
+        ) : to.email ? (
+          <span>
+            {tr("Public reply. The customer reads it: it is emailed to {name}", { name: to.name })} <bdi>{isolate(`<${to.email}>`)}</bdi>
+            {cc.length > 0 && (
+              <>
+                {" "}
+                {tr("and copied to")} <bdi>{isolate(cc.join(", "))}</bdi>
+              </>
+            )}
+            .
+          </span>
+        ) : (
+          <span>{tr("Public reply. The customer reads it in the portal. This ticket has no email address, so nothing is emailed.")}</span>
+        )}
+      </p>
       {conflict && <Alert tone="warning">{isolate(conflict)}</Alert>}
       <textarea
         ref={inputRef}
         id="hd-write-text"
         className="textarea hd-write-text"
         rows={4}
-        aria-label={mode === "reply" ? tr("Reply to the customer") : tr("Internal note")}
+        aria-label={mode === "reply" ? tr("Public reply to the customer") : tr("Internal note, not sent")}
         aria-describedby="hd-write-help"
         placeholder={mode === "reply" ? (replies ? tr("Write a reply. Press / for a saved reply.") : tr("Write a reply")) : tr("Write a note for your team")}
         value={body}
@@ -206,7 +225,6 @@ export function Composer({
         onPaste={onPaste}
       />
       <div id="hd-write-help" className="hd-write-help faint">
-        {mode === "reply" && !to.email && tr("The reply is kept in the conversation, and the customer can read it in the portal. ")}
         {mode === "reply" && assignee && tr("{assignee} Sending takes it over. ", { assignee })}
         {tr("Markdown works. Drop or paste files here.")}
       </div>
@@ -256,8 +274,8 @@ export function Composer({
         </label>
         <span className="spacer" />
         <span className="faint hd-hint">{tr("Ctrl or ⌘ + Enter")}</span>
-        <Button variant="primary" loading={busy} disabled={!ready} onClick={() => void send()}>
-          {mode === "reply" ? tr("Send reply") : tr("Add note")}
+        <Button variant={mode === "note" ? "default" : "primary"} loading={busy} disabled={!ready} onClick={() => void send()}>
+          {mode === "note" ? tr("Add internal note, not sent") : to.email ? tr("Send reply by email") : tr("Add reply to the portal")}
         </Button>
       </div>
       {picker && <ReplyPicker about={about} draft={body} onPick={pasted} onClose={() => setPicker(false)} />}
