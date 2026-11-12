@@ -217,7 +217,9 @@ pub async fn reroute_reopened(hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()>
     Ok(())
 }
 
-/// Open tickets nobody has answered for `hours` go to the next agent their rule picks, up to `max` times each. Returns how many moved.
+/// Open tickets nobody has answered for `hours` go to the next agent their rule picks, up to `max` times each. The hours
+/// are working hours: counted on the calendar of the ticket's agreement (else `helpdesk_hours`, else the clock), so a
+/// ticket that came in on Friday evening is not given away on Saturday. Returns how many moved.
 pub async fn reassign_unanswered(k: &Kernel, ctx: &Ctx) -> Result<usize> {
     let (hours, max): (i64, i64) = {
         let mut tx = k.db.tenant_tx(ctx.tenant).await?;
@@ -233,16 +235,35 @@ pub async fn reassign_unanswered(k: &Kernel, ctx: &Ctx) -> Result<usize> {
         return Ok(0);
     }
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-    let due: Vec<Uuid> = sqlx::query_scalar(
-        "select id from e_ticket where tenant_id = $1 and status = 'Open' and assigned_to is not null and coalesce(reassigned_count, 0) < $3 \
-         and (last_agent_message_at is null or last_customer_message_at > last_agent_message_at) \
-         and coalesce(last_customer_message_at, opened_at) < now() - make_interval(hours => $2) order by opened_at limit 200",
+    // Waiting no longer than the clock says is a first cut: working time is never more than the clock's.
+    let waiting: Vec<(Uuid, Option<String>, chrono::DateTime<Utc>)> = sqlx::query_as(
+        "select id, sla_calendar, coalesce(last_customer_message_at, opened_at) from e_ticket where tenant_id = $1 and status = 'Open' and assigned_to is not null \
+         and coalesce(reassigned_count, 0) < $3 and (last_agent_message_at is null or last_customer_message_at > last_agent_message_at) \
+         and coalesce(last_customer_message_at, opened_at) < now() - make_interval(hours => $2) order by opened_at limit 1000",
     )
     .bind(ctx.tenant)
     .bind(hours as i32)
     .bind(max)
     .fetch_all(&mut *tx)
     .await?;
+    let now = Utc::now();
+    let mut calendars: HashMap<String, Option<ferrum_kernel::Calendar>> = HashMap::new();
+    let mut due: Vec<Uuid> = Vec::new();
+    for (ticket, calendar, since) in waiting {
+        let name = calendar.filter(|c| !c.is_empty()).unwrap_or_else(|| crate::hours::CALENDAR.to_string());
+        if !calendars.contains_key(&name) {
+            let loaded = ferrum_kernel::load_calendar(&mut tx, ctx.tenant, &name).await?;
+            calendars.insert(name.clone(), loaded);
+        }
+        let waited = match calendars.get(&name).and_then(Option::as_ref) {
+            // A calendar the workspace lacks, or a wait too long to count in hours, is the clock's.
+            Some(c) => c.working_between(since, now, &[]).map_or((now - since).num_seconds(), |d| d.num_seconds()),
+            None => (now - since).num_seconds(),
+        };
+        if waited >= hours * 3600 && due.len() < 200 {
+            due.push(ticket);
+        }
+    }
     tx.commit().await?;
     let sctx = sys(ctx);
     let ent = k.entity(ctx, "Ticket")?;

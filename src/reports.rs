@@ -407,6 +407,46 @@ async fn reopens(ctx: &Ctx, p: &Params<'_>, tx: &mut Tx) -> Result<Value> {
     }))
 }
 
+type ArticleRow = (String, String, Option<String>, Option<String>, i64, i64, i64);
+
+/// The help centre by article: how often each was read and what readers said of it, from the signed-in portal and the
+/// public pages together, as many as the caller's record scopes on articles reach.
+async fn articles(ctx: &Ctx, p: &Params<'_>, tx: &mut Tx) -> Result<Value> {
+    let ent = ctx.schema.entity("KbArticle").ok_or_else(|| Error::NotFound("KbArticle".into()))?;
+    let scope = row_scope(ctx, ent, Action::Read)?;
+    let mut qb = QueryBuilder::new(
+        "select a.title, coalesce(c.category_name, 'No Category'), a.visibility, a.status, coalesce(a.views, 0)::bigint, \
+         coalesce(a.helpful_count, 0)::bigint, coalesce(a.not_helpful_count, 0)::bigint from e_kb_article a \
+         left join e_kb_category c on c.tenant_id = a.tenant_id and c.id = a.category where a.tenant_id = ",
+    );
+    qb.push_bind(ctx.tenant);
+    for (param, column) in [("status", "a.status"), ("visibility", "a.visibility")] {
+        if let Some(v) = p.str(param).filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("all")) {
+            qb.push(format!(" and {column} = ")).push_bind(v.to_string());
+        }
+    }
+    scope.push_sql(&mut qb, "a");
+    qb.push(" order by 5 desc, 6 desc, 1 limit 500");
+    let data: Vec<ArticleRow> = qb.build_query_as().fetch_all(&mut **tx).await?;
+    let mut totals = (0, 0, 0);
+    let rows: Vec<Value> = data
+        .into_iter()
+        .map(|(title, category, visibility, status, views, helpful, not_helpful)| {
+            totals = (totals.0 + views, totals.1 + helpful, totals.2 + not_helpful);
+            json!({"title": title, "category": category, "visibility": visibility, "status": status, "views": views, "helpful": helpful,
+                "not_helpful": not_helpful, "votes": helpful + not_helpful, "helpful_pct": pct(helpful, helpful + not_helpful)})
+        })
+        .collect();
+    Ok(json!({
+        "columns": [col("title", "Article", "data"), col("category", "Category", "data"), col("visibility", "Visibility", "data"), col("status", "Status", "data"),
+            col("views", "Views", "int"), col("helpful", "Helpful", "int"), col("not_helpful", "Not Helpful", "int"), col("votes", "Votes", "int"),
+            col("helpful_pct", "Helpful %", "decimal")],
+        "rows": rows,
+        "totals": {"views": totals.0, "helpful": totals.1, "not_helpful": totals.2, "votes": totals.1 + totals.2, "helpful_pct": pct(totals.1, totals.1 + totals.2)},
+        "meta": {"status": p.str("status").unwrap_or("All"), "visibility": p.str("visibility").unwrap_or("All")},
+    }))
+}
+
 #[async_trait]
 impl ReportSource for SupportReports {
     fn catalog(&self) -> Vec<Value> {
@@ -426,6 +466,9 @@ impl ReportSource for SupportReports {
                 [span(), vec![json!({"name": "group_by", "label": "Group By", "type": "select", "options": volume_groups(), "default": "Channel"})]].concat(),
             ),
             entry("support_reopens", "Reopen Rate", [span(), vec![group_param("Agent")]].concat()),
+            json!({"name": "support_articles", "label": "Help Centre by Article", "module": "support", "entity": "KbArticle", "params": [
+                {"name": "status", "label": "Status", "type": "select", "options": ["All", "Draft", "Published", "Archived"], "default": "All"},
+                {"name": "visibility", "label": "Visibility", "type": "select", "options": ["All", "Internal", "Customers Only", "Public"], "default": "All"}]}),
         ]
     }
 
@@ -441,6 +484,7 @@ impl ReportSource for SupportReports {
             "support_backlog" => backlog(ctx, &p, &mut tx).await,
             "support_volume" => volume(ctx, &p, &mut tx).await,
             "support_reopens" => reopens(ctx, &p, &mut tx).await,
+            "support_articles" => articles(ctx, &p, &mut tx).await,
             _ => Err(Error::NotFound(format!("report {name}"))),
         };
         tx.rollback().await?;

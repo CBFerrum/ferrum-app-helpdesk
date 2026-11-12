@@ -1,3 +1,17 @@
+- name: SupportBrand
+  label: Brand
+  kind: master
+  module: support
+  title_field: brand_name
+  description: "What a customer knows a support address by: a name, the words that end every public reply sent under it, and what goes before and after the reply. A support address names its brand; replies to its tickets carry them."
+  fields:
+    - {name: brand_name, type: data, required: true, unique: true, in_list: true, max_length: 80}
+    - {name: display_name, type: data, max_length: 80, in_list: true, description: "The name the customer sees on the reply address (Acme Support <support@acme.test>) and in the message template as values.brand; empty: the brand's name"}
+    - {name: signature, type: markdown, max_length: 2000, description: "Ends each public reply sent under this brand, after the agent's own signature"}
+    - {name: header, type: markdown, max_length: 4000, description: "Placed before each public reply sent under this brand, outside the message template's own wording"}
+    - {name: footer, type: markdown, max_length: 4000, description: "Placed after each public reply sent under this brand, outside the message template's own wording"}
+  list: {columns: [brand_name, display_name], sort: brand_name asc}
+
 - name: SupportAddress
   label: Support Address
   kind: master
@@ -6,13 +20,16 @@
   description: "An address customers write to: support@ for everyone, or one per team or brand. Mail the Mail app receives for it becomes a new ticket of its team, or a message on the ticket it answers."
   fields:
     - {name: address, type: email, required: true, unique: true, in_list: true}
-    - {name: label, type: data, in_list: true, label: Brand, description: "What the customer knows this address by, for the mail's wording"}
+    - {name: label, type: data, in_list: true, label: Label, description: "What this address was called before brands: the upkeep made a brand of it and linked the address to it. A label of its own for people"}
+    - {name: brand, type: link, to: SupportBrand, in_list: true, in_filter: true, description: "Whose name, signature and wrapping replies to this address's tickets carry"}
     - {name: team, type: link, to: SupportTeam, in_list: true, in_filter: true, description: "New tickets from this address go to this team (its assignment rules then pick the agent)"}
     - {name: default_priority, type: select, options: [Low, Medium, High, Urgent], default: Medium}
     - {name: ticket_type, type: link, to: TicketType}
     - {name: mail_account, type: data, label: Mail Account, description: "The name of the Mail account replies to tickets of this address go out from, so the customer's reply comes back to the address they wrote to; empty: Mail's default outgoing account"}
     - {name: enabled, type: check, default: true, in_list: true, in_filter: true}
-  list: {columns: [address, label, team, enabled], sort: address asc}
+    - {name: mail_registered, type: check, read_only: true, no_copy: true, in_list: true, in_filter: true, label: Registered With Mail, description: "Whether Mail hands mail for this address to Helpdesk: made when the address is saved enabled, taken back when it is disabled or deleted, and checked by the upkeep"}
+    - {name: registration_note, type: data, max_length: 500, read_only: true, no_copy: true, label: Registration Problem, description: "Why Mail would not take the address, when it would not: another app holds it, it is a person's mailbox, or its domain is none of the workspace's mail domains"}
+  list: {columns: [address, label, team, enabled, mail_registered], sort: address asc}
 
 - name: InboundLog
   label: Inbound Mail Log
@@ -29,9 +46,10 @@
     - {name: subject, type: data, read_only: true, max_length: 300, in_list: true}
     - {name: message_id, type: data, read_only: true, index: true, max_length: 500}
     - {name: outcome, type: select, options: [Ticket Created, Added to Ticket, Held, Ignored, Failed], read_only: true, required: true, in_list: true, in_filter: true}
-    - {name: reason, type: select, options: [Automatic reply, Bounce, Mailing list, Own address, Rate limit, Unknown sender, Duplicate, Discarded by staff, Error], read_only: true, in_list: true, in_filter: true}
+    - {name: reason, type: select, options: [Automatic reply, Bounce, Mailing list, Own address, Rate limit, Unknown sender, Unverified sender, Duplicate, Discarded by staff, Error], read_only: true, in_list: true, in_filter: true}
     - {name: detail, type: data, read_only: true, max_length: 500, description: "The header or error that decided it"}
     - {name: ticket, type: link, to: Ticket, read_only: true, in_list: true}
+    - {name: body, type: text, read_only: true, no_copy: true, perm_group: held_mail, max_length: 20000, label: Held Mail, description: "What the held mail said, for an administrator to read before opening a ticket from it or discarding it. Only roles given the field group held_mail read it; it goes with the mail when the sender is erased"}
     - {name: payload, type: json, read_only: true, hidden: true, no_copy: true, description: "The held mail, kept until staff release or discard it"}
   actions:
     - {name: release, label: Open a Ticket From It, permission: write, condition: "doc.outcome == 'Held'"}

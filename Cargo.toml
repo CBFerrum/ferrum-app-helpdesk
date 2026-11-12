@@ -11,6 +11,8 @@ build = "build.rs"
 ferrum-kernel = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
 ferrum-meta = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
 ferrum-domain = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
+# Mail receives and sends: Helpdesk registers its support addresses with it and sends replies through it.
+ferrum-app-comms = { git = "https://github.com/CBFerrum/ferrum-app-comms", branch = "main" }
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 minijinja = "2"
