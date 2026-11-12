@@ -304,6 +304,7 @@ CHANGELOG.md  what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.10.1** | The screens for 0.9 and 0.10: the ticket page reads the platform's target states and tells public replies from internal notes, with tags, copies, rating and the ticket it follows up; saved replies filled in by the server, macros previewed before they are applied, the agent's signature; queues by tag and by target state with bulk tag and macro; Administration (support addresses, inbound log, agent profiles, tags, assignment rules, macros, satisfaction survey); the help centre's editor and the portal's article search; reports as the questions a desk asks. |
 | **0.10.0** | Customers write to support addresses and it lands in the ticket (new ticket or a reply matched by headers or the subject's secret, copies and files kept, loops and noise logged), targets on the platform's clock, tags and private notes, routing by skill, language and shift, macros and filled-in replies, ratings by a signed link, a help centre, and backlog, volume and reopen reports. |
 | **0.9.1** | Screens for merging tickets: select tickets in the inbox or tick a customer's other tickets on one, choose the one that stays, and read what moves; a merged ticket links to the survivor and its messages say where they came from. |
 | **0.9.0** | Merge duplicate tickets: the conversation, files, watchers and tags move to the surviving ticket, the duplicate closes as merged and a customer's reply to it lands on the survivor. |
