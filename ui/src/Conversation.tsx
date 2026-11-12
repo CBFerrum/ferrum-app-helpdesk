@@ -23,6 +23,11 @@ function Message({ m, address }: { m: MessageItem; address: string | null }) {
           <strong>{isolate(m.author)}</strong>
           {m.internal ? <span className="hd-note-chip">{t("Internal note")}</span> : m.side === "agent" && <span className="hd-public-chip">{t("Public reply")}</span>}
           {m.mergedFrom && <span className="hd-from-chip">{t("From {n}, merged", { n: m.mergedFrom })}</span>}
+          {m.unverified && (
+            <span className="hd-from-chip" title={t("The mail server did not verify who sent this. That is not proof it is forged.")}>
+              {t("Sender not verified")}
+            </span>
+          )}
           <time dateTime={m.at} title={full(m.at)} className="faint">
             {isolate(when(m.at))}
           </time>

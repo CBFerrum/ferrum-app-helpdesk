@@ -133,6 +133,11 @@ describe("a ticket's workspace", () => {
     expect(html).toContain("From TKT-2026-000100, merged");
   });
 
+  it("marks a message whose sender the mail server did not verify, and no other", () => {
+    const html = draw({ doc: { conversation: [{ id: "m8", author_kind: "Customer", body: "Pay me.", sent_at: "2026-11-02T09:00:00Z", sender_unverified: true }, { id: "m7", author_kind: "Customer", body: "Fine.", sent_at: "2026-11-02T10:00:00Z" }] } });
+    expect(html.match(/Sender not verified/g)).toHaveLength(1);
+  });
+
   it("tells public replies from internal notes in the conversation", () => {
     const html = draw();
     expect(html).toContain("Emailed to the customer");

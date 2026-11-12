@@ -1,20 +1,15 @@
 // Agent profiles: the skills and languages an agent covers, the shift calendar they are on duty by, and the
 // signature their replies end with. Assignment rules read the skills and the shift; replies read the signature.
 
-import { useQuery } from "@tanstack/react-query";
-import { api, isolate, t } from "@ferrum/client";
+import { isolate, t } from "@ferrum/client";
 import { Badge } from "@ferrum/kit";
 import { AdminTable, type Column } from "./Parts";
+import { useCalendarNames } from "./calendars";
 import type { FieldSpec } from "./form";
 
 export function Agents() {
   // The shift calendar is named from the workspace's calendars; a person who may not list them types the name.
-  const calendars = useQuery({
-    queryKey: ["helpdesk", "calendars"],
-    staleTime: 5 * 60_000,
-    retry: false,
-    queryFn: ({ signal }) => api.get<{ calendars: { name: string }[] }>("/api/admin/calendars", undefined, signal).then((r) => r.calendars.map((c) => c.name)),
-  });
+  const calendars = { data: useCalendarNames() };
   const spec: FieldSpec[] = [
     { name: "agent", label: t("Agent's address"), kind: "email", required: true, hint: t("The address they sign in with.") },
     { name: "display_name", label: t("Name shown"), kind: "text", max: 140 },

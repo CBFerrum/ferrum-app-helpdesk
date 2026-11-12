@@ -23,6 +23,8 @@ export interface Message {
   emailed?: boolean | null;
   /** The number of the ticket this message came from, when that ticket was merged into this one. */
   merged_from?: string | null;
+  /** The mail server did not verify the sender (a failed check, or no result): not proof of forgery. */
+  sender_unverified?: boolean | null;
   /** The addresses copied on the message, a text of addresses the server read from the mail or put on the reply. */
   cc?: string | null;
 }
@@ -72,6 +74,8 @@ export interface MessageItem {
   emailed: boolean;
   /** The ticket it came from, when it was merged into this one. */
   mergedFrom: string | null;
+  /** The mail server did not verify who sent it. */
+  unverified: boolean;
   /** The addresses copied on it, if any. */
   cc: string | null;
 }
@@ -143,6 +147,7 @@ export function buildFeed(t: Story, events: AuditEvent[], name: (email: string) 
     attachments: [],
     emailed: false,
     mergedFrom: null,
+    unverified: false,
     cc: null,
   });
   messages.forEach((m, i) => {
@@ -159,6 +164,7 @@ export function buildFeed(t: Story, events: AuditEvent[], name: (email: string) 
       attachments: m.attachments ?? [],
       emailed: !!m.emailed,
       mergedFrom: m.merged_from || null,
+      unverified: !!m.sender_unverified,
       cc: m.cc?.trim() || null,
     });
   });

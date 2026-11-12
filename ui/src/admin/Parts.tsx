@@ -30,7 +30,7 @@ export function Control({ f, draft, set, id, error, disabled, title }: { f: Fiel
       case "select":
         return (
           <select {...common} className="select" value={text} onChange={(e) => set(f.name, e.target.value)}>
-            {!f.required && <option value="">{t("None")}</option>}
+            {!f.required && <option value="">{f.noneLabel ?? t("None")}</option>}
             {(f.options ?? []).map((o) => (
               <option key={o} value={o}>
                 {isolate(f.optionLabels?.[o] ?? o)}

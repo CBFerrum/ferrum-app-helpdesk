@@ -4,6 +4,7 @@
 // missed (red), paused (blue). Pure, so the wording is tested without a browser.
 
 import { formatMoment, t as tr } from "@ferrum/client";
+import { WORKSPACE_CALENDAR } from "./admin/calendars";
 import { span, type TargetState } from "./inbox";
 
 export type { TargetState };
@@ -20,6 +21,8 @@ export interface SlaTicket {
   /** The target, in working seconds, at the ticket's priority. */
   response_secs?: number | null;
   resolution_secs?: number | null;
+  /** The working calendar both targets count on: the agreement's own; empty: the workspace's (`helpdesk_hours`). */
+  sla_calendar?: string | null;
   /** Working hours the first response and the resolution took, as the platform counted them. */
   first_response_hours?: string | number | null;
   resolution_hours?: string | number | null;
@@ -60,6 +63,7 @@ interface Target {
   due: string | null | undefined;
   took: string | number | null | undefined;
   secs: number | null | undefined;
+  calendar: string;
   doneWord: string;
   status: string | null | undefined;
 }
@@ -68,7 +72,7 @@ function card(id: SlaCard["id"], title: string, o: Target, sla: boolean, now: nu
   const done = at(o.done);
   const due = at(o.due);
   const size = o.secs ? hoursText(o.secs / 3600) : null;
-  const goal = size ? tr("Target {size} of working time", { size }) : null;
+  const goal = size ? tr("Target {size} of working time on {calendar}", { size, calendar: o.calendar }) : null;
   const lines = (...l: (string | null)[]) => l.filter(Boolean).join(" · ") || null;
   switch (o.state) {
     case "met": {
@@ -109,8 +113,9 @@ function card(id: SlaCard["id"], title: string, o: Target, sla: boolean, now: nu
 /** The ticket's two cards as of `now`. */
 export function slaCards(t: SlaTicket, now = Date.now()): SlaCard[] {
   const sla = !!t.service_level_agreement;
+  const calendar = t.sla_calendar || WORKSPACE_CALENDAR;
   return [
-    card("response", "First response", { state: t.response_state, done: t.first_responded_at, due: t.response_by, took: t.first_response_hours, secs: t.response_secs, doneWord: "Answered", status: t.status }, sla, now),
-    card("resolution", "Resolution", { state: t.resolution_state, done: t.resolved_at, due: t.resolution_by, took: t.resolution_hours, secs: t.resolution_secs, doneWord: "Resolved", status: t.status }, sla, now),
+    card("response", "First response", { state: t.response_state, done: t.first_responded_at, due: t.response_by, took: t.first_response_hours, secs: t.response_secs, calendar, doneWord: "Answered", status: t.status }, sla, now),
+    card("resolution", "Resolution", { state: t.resolution_state, done: t.resolved_at, due: t.resolution_by, took: t.resolution_hours, secs: t.resolution_secs, calendar, doneWord: "Resolved", status: t.status }, sla, now),
   ];
 }
