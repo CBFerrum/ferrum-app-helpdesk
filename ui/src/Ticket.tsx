@@ -7,9 +7,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
-import { api, ApiError, bootstrap, docPath, errorMessage, t as tr, isolate } from "@ferrum/client";
-import { Alert, Badge, Button, confirmDialog, Icon, Menu, MenuItem, ReaderSkeleton, StatePanel, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
+import { api, ApiError, bootstrap, docPath, errorMessage, formatMoment, t as tr, isolate } from "@ferrum/client";
+import { Alert, Badge, Button, confirmDialog, Icon, Menu, MenuItem, placed, ReaderSkeleton, StatePanel, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
 import { can, type Doc, type EntityMeta, useEntityMeta, useMe, useMetaIndex, useRecord } from "@ferrum/records";
+import { MergeDialog, type Merged } from "./Merge";
+import type { MergeTicket } from "./duplicates";
 import { Composer, type Mode, type Outgoing } from "./Composer";
 import { Conversation } from "./Conversation";
 import { type AuditEvent, buildFeed, type FeedFilter, type Message, type Story, whatChanged } from "./feed";
@@ -28,6 +30,9 @@ interface TicketDoc extends RailTicket, Story {
   resolution_details?: string | null;
   entitlement_approval?: string | null;
   updated_by?: string | null;
+  /** Closed as a duplicate of this ticket, whose conversation holds its words now. */
+  merged_into?: string | null;
+  merged_at?: string | null;
 }
 
 const KEYS = { r: "reply", n: "note", e: "resolve", a: "take", j: "next", k: "previous", d: "details", "?": "help" } as const;
@@ -87,6 +92,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
   const [mode, setMode] = useState<Mode>("reply");
   const [resolving, setResolving] = useState<"Resolved" | "Closed" | null>(null);
   const [deciding, setDeciding] = useState<Decision | null>(null);
+  const [merging, setMerging] = useState(false);
   const [help, setHelp] = useState(false);
   const [conflict, setConflict] = useState<string | null>(null);
   const wide = useMedia("(min-width: 1000px)");
@@ -107,6 +113,15 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
         if (e instanceof ApiError && e.status === 403) return { events: [] as AuditEvent[] };
         throw e;
       }),
+  });
+  // The customer's other tickets, for merging into this one, asked for only when the dialog opens.
+  const by: unknown[] | null = t?.customer ? [["customer", "=", t.customer]] : t?.contact_email ? [["contact_email", "=", t.contact_email]] : null;
+  const others = useQuery({
+    queryKey: ["helpdesk", "merge-candidates", id, t?.customer, t?.contact_email],
+    enabled: merging && !!by,
+    staleTime: 0,
+    queryFn: ({ signal }) =>
+      api.get<{ rows: MergeTicket[] }>(docPath("Ticket"), { filters: JSON.stringify(by), fields: "number,subject,status,customer_name,contact_email,opened_at", sort: "opened_at desc", limit: 50 }, signal).then((r) => r.rows),
   });
   const feed = useMemo(() => (t ? buildFeed(t, audit.data?.events ?? [], name) : []), [t, audit.data, name]);
 
@@ -294,6 +309,14 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
     contact: { name: t.contact_name, company: t.customer_name, email: t.contact_email },
     agent: { name: me.full_name, email: me.email },
   };
+  const canMerge = !!meta.actions.some((a) => a.name === "merge_tickets") && writable;
+  const mergedInto = t.merged_into ? { id: t.merged_into, title: t._titles?.merged_into ?? tr("another ticket") } : null;
+  const thisOne: MergeTicket = { id, number: t.number, subject: t.subject, status: t.status, customer_name: t.customer_name, contact_email: t.contact_email, opened_at: t.opened_at };
+  const afterMerge = (r: Merged) => {
+    toast(r.message ?? tr("Merged"));
+    refresh();
+    void qc.invalidateQueries({ queryKey: ["helpdesk", "merge-candidates"] });
+  };
   const canWarranty = !!t.item && !!t.customer && meta.actions.some((a) => a.name === "make_warranty_claim");
   // Held outside the customer's entitlement: a Support Manager decides (Support Settings).
   const waiting = t.entitlement_approval === "Waiting";
@@ -409,6 +432,16 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
                     {tr("Close for good…")}
                   </MenuItem>
                 )}
+                {canMerge && (
+                  <MenuItem
+                    onSelect={() => {
+                      close();
+                      setMerging(true);
+                    }}
+                  >
+                    {tr("Merge other tickets into this one…")}
+                  </MenuItem>
+                )}
                 {canWarranty && writable && (
                   <MenuItem
                     onSelect={() => {
@@ -444,7 +477,14 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
         </div>
       </header>
 
-      {closed && <Alert tone="info">{tr("This ticket is closed for good. You can still read everything on it.")}</Alert>}
+      {mergedInto ? (
+        <Alert tone="info">
+          {placed(tr("Merged into {p1}."), { p1: <Link to={`/t/${mergedInto.id}`}>{isolate(mergedInto.title)}</Link> })}
+          {t.merged_at ? ` ${formatMoment(t.merged_at, { dateStyle: "medium" })}.` : ""} {tr("Its conversation moved there, and it cannot be replied to. Carry on in the ticket it was merged into.")}
+        </Alert>
+      ) : (
+        closed && <Alert tone="info">{tr("This ticket is closed for good. You can still read everything on it.")}</Alert>
+      )}
       {waiting && (
         <Alert tone="warning">
           {tr("Outside the customer's entitlement: it waits for a Support Manager to approve the work. Nothing goes to the customer until then; internal notes can be written.")}
@@ -483,6 +523,15 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
         tell={t.contact_email ? (t.contact_name ?? t.contact_email) : null}
         onClose={() => setResolving(null)}
         onSubmit={finish}
+      />
+      <MergeDialog
+        open={merging}
+        keep={id}
+        loading={others.isLoading}
+        failed={!!others.error}
+        tickets={[thisOne, ...(others.data ?? []).filter((x) => x.id !== id)]}
+        onClose={() => setMerging(false)}
+        onDone={afterMerge}
       />
       <DecisionDialog decision={deciding} onClose={() => setDeciding(null)} onSubmit={decide} />
       <Shortcuts open={help} onClose={() => setHelp(false)} title={tr("Keyboard shortcuts")} rows={SHORTCUTS} />

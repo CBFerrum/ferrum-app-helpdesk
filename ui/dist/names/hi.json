@@ -317,5 +317,11 @@
   "Works tickets, writes knowledge base articles, logs warranty claims and maintenance visits. Give the user Support Team scopes to limit them to their teams' tickets.": "टिकट संभालता है, ज्ञानकोश लेख लिखता है, वारंटी दावे और रखरखाव विज़िट दर्ज करता है। उपयोगकर्ता को उसकी टीमों के टिकटों तक सीमित करने के लिए सहायता टीम दायरे दें।",
   "Writes and publishes knowledge base articles and organizes their categories.": "ज्ञानकोश लेख लिखता और प्रकाशित करता है और उनकी श्रेणियाँ व्यवस्थित करता है।",
   "Yearly": "वार्षिक",
-  "Your tickets": "आपके टिकट"
+  "Your tickets": "आपके टिकट",
+  "Merge Tickets Into This One": "टिकट इसमें मर्ज करें",
+  "Merged From": "जहाँ से मर्ज हुआ",
+  "Merged Into": "जिसमें मर्ज हुआ",
+  "Merged At": "मर्ज का समय",
+  "Merged By": "मर्ज करने वाला",
+  "Tickets to merge": "मर्ज करने वाले टिकट"
 }
