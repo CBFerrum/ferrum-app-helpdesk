@@ -3,7 +3,7 @@
 //! A rule only ever adds a tag; taking one off is a person's.
 
 use async_trait::async_trait;
-use ferrum_domain::util::s;
+use ferrum_domain::util::{s, sys};
 use ferrum_kernel::{Doc, DocHook, Error, HookCtx, Result};
 use ferrum_meta::{Expr, Scope};
 use serde_json::{Value, json};
@@ -63,19 +63,29 @@ pub async fn apply(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid) -> Result<()> 
     }
     let view = hc.entity.cel_view(&Value::Object(doc.clone()), &hc.ctx.schema);
     let user = hc.ctx.user_value();
+    let mut add: Vec<String> = Vec::new();
     for (rule, condition, tag) in rules {
         match Expr::compile(&condition).and_then(|e| e.eval_bool(&Scope { doc: &view, old: None, parent: None, user: &user })) {
-            Ok(true) => {
-                sqlx::query("insert into record_tag (tenant_id, entity, record_id, tag) values ($1, 'Ticket', $2, $3) on conflict do nothing")
-                    .bind(hc.ctx.tenant)
-                    .bind(ticket)
-                    .bind(tag)
-                    .execute(&mut **hc.tx)
-                    .await?;
-            }
+            Ok(true) => add.push(tag),
             Ok(false) => {}
             Err(e) => tracing::warn!(%rule, "a tag rule's condition failed: {e}"),
         }
+    }
+    // Only the tags the ticket lacks (a read), so a save that changes nothing about its tags raises no event.
+    let have: Vec<String> = sqlx::query_scalar("select tag from record_tag where tenant_id = $1 and entity = 'Ticket' and record_id = $2")
+        .bind(hc.ctx.tenant)
+        .bind(ticket)
+        .fetch_all(&mut **hc.tx)
+        .await?;
+    add.retain(|t| !have.iter().any(|h| h.eq_ignore_ascii_case(t)));
+    add.dedup();
+    if add.is_empty() {
+        return Ok(());
+    }
+    // The rule is the system's, whoever saved the ticket (a customer in the portal may). The platform's call keeps the
+    // limit on tags per record: a rule that would pass it adds nothing and says so, the save stands.
+    if let Err(e) = hc.kernel.tag_tx(&sys(hc.ctx), hc.tx, "Ticket", ticket, &add, &[]).await {
+        tracing::warn!(%ticket, "tag rules could not tag the ticket: {e}");
     }
     Ok(())
 }

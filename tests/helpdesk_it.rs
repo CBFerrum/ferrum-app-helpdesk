@@ -456,8 +456,8 @@ async fn scenario() {
     assert_eq!(t2["service_level_agreement"], json!(group_sla.to_string()), "the customer group's agreement");
     assert_eq!(
         (t2["response_by"].clone(), t2["resolution_by"].clone()),
-        (json!("2026-10-27T06:30:00.000Z"), json!("2026-10-29T08:30:00.000Z")),
-        "the group's 4 and 24 hours, on the one calendar (a group's own hours are not a thing any more)"
+        (json!("2026-10-26T03:30:00.000Z"), json!("2026-10-27T11:30:00.000Z")),
+        "the group's 4 and 24 hours, on the group's own hours (08:00-20:00 in Kolkata, no holiday of its own): the upkeep made its calendar from them"
     );
     k.pin_clock(Some(friday));
     let t2 = t.update("Ticket", t2id, json!({"priority": "Low"})).await;

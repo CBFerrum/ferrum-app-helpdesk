@@ -6,8 +6,10 @@
 //! upkeep and the workspace's own to change or take down. Customers in the portal can search articles, read them
 //! (a view is counted), be offered the ones that fit what they are about to ask, and say whether one helped.
 //!
-//! What the platform's public pages do not offer is a way to count a view or a vote from a visitor who is not signed
-//! in: counts here are the portal's.
+//! The published list counts a visitor's views and "was this helpful" answers itself (`count_views`, `votes`: the
+//! platform's own, once a visitor, from the page's own origin), into the same fields the portal counts into, so the
+//! article's `views`, `helpful_count` and `not_helpful_count` are the sum of both ways in. A workspace whose list was
+//! made before that has it added once by the upkeep (`ensure_counts`).
 
 use ferrum_domain::util::{b, id, s, set, sys};
 use ferrum_kernel::{Ctx, Doc, Error, Kernel, Result, Tx};
@@ -48,7 +50,41 @@ fn list() -> Value {
     json!({"op": "publish_list", "list": {
         "name": "help-centre", "label": "Help centre", "description": "Answers to common questions",
         "fields": ["title", "summary", "category", "published_at"], "detail": ["content"], "slug": "slug", "summary": "summary",
+        "count_views": "views", "votes": {"up": "helpful_count", "down": "not_helpful_count"},
         "filter": [["status", "=", "Published"], ["visibility", "=", "Public"]], "sort": ["published_at", "desc"], "limit": 100}})
+}
+
+/// The name the help centre's list goes by.
+const LIST: &str = "help-centre";
+
+/// Once for a workspace updated from a release that made the help centre without counting: the same list, as it now is
+/// (an administrator's changes to it kept), counting views and votes into the article's own fields. A list that was taken
+/// down, or whose administrator already set counters, is left as it is.
+pub async fn ensure_counts(k: &Kernel, ctx: &Ctx) -> Result<()> {
+    if ctx.schema.entity("KbArticle").is_none_or(|e| e.field("views").is_none()) {
+        return Ok(());
+    }
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let finished = crate::done(k, ctx, &mut tx, "counts").await?;
+    tx.commit().await?;
+    if finished {
+        return Ok(());
+    }
+    let sctx = sys(ctx);
+    if let Some(l) = ctx.schema.published_list(LIST).filter(|l| l.list.count_views.is_none() && l.list.votes.is_none() && l.list.slug.is_some()) {
+        let mut def = serde_json::to_value(&l.list).map_err(|e| Error::internal(format!("the help centre's list: {e}")))?;
+        def["count_views"] = json!("views");
+        def["votes"] = json!({"up": "helpful_count", "down": "not_helpful_count"});
+        let op = serde_json::from_value(json!({"op": "publish_list", "list": def})).map_err(|e| Error::internal(format!("the help centre's list: {e}")))?;
+        if let Err(e) = k.add_customization(&sctx, "KbArticle", op, Some("The help centre counts its visitors' views and votes".into())).await {
+            tracing::warn!(tenant = %ctx.tenant, "the help centre's counting could not be added: {e}");
+            return Ok(());
+        }
+    }
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    crate::mark(k, ctx, &mut tx, "counts").await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /// Once for a workspace: the help centre's published list, and the flag in the settings that says it was made (so one
@@ -112,7 +148,7 @@ pub async fn find(tx: &mut Tx, tenant: Uuid, text: Option<&str>, limit: i64) -> 
     Ok(found.into_iter().map(|(i, title, summary, slug, visibility, category)| json!({"id": i, "title": title, "summary": summary, "slug": slug, "visibility": visibility, "category": category})).collect())
 }
 
-/// One article for a customer, counting the view.
+/// One article for a customer, counting the view (a signed-in customer's: the public page counts its visitors itself).
 pub async fn read(tx: &mut Tx, tenant: Uuid, article: Uuid) -> Result<Value> {
     type Row = (Uuid, String, Option<String>, String, Option<String>, i64);
     let row: Option<Row> = sqlx::query_as(

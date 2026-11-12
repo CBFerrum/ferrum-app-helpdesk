@@ -18,15 +18,15 @@ modules:
     icon: life-buoy
     order: 45
     items: [Ticket, SavedReply, SupportMacro, WarrantyClaim, MaintenanceSchedule, MaintenanceVisit, KbArticle, KbCategory, ServiceLevelAgreement, SupportContract, EscalationRule,
-            SupportTeam, TicketAssignmentRule, AgentProfile, TicketTag, TagRule, TicketType, SupportAddress, InboundLog, SupportSettings, report:support_ticket_summary,
+            SupportTeam, TicketAssignmentRule, AgentProfile, TicketTag, TagRule, TicketType, SupportAddress, SupportBrand, InboundLog, SupportSettings, report:support_ticket_summary,
             report:support_sla_compliance, report:support_response_times, report:support_agent_workload, report:support_customer_satisfaction, report:support_backlog,
-            report:support_volume, report:support_reopens]
+            report:support_volume, report:support_reopens, report:support_articles]
 
 # What a personal-data request exports and erases for the person who raised tickets (their email):
 # their name and address on the ticket; the conversation stays with the ticket.
 personal_data:
   - {entity: Ticket, match: contact_email, erase: [contact_name, contact_email, cc]}
-  - {entity: InboundLog, match: from_address, erase: [from_address, subject, payload]}
+  - {entity: InboundLog, match: from_address, erase: [from_address, subject, payload, body]}
 roles:
   - name: Support Agent
     description: Works tickets, writes knowledge base articles, logs warranty claims and maintenance visits. Give the user Support Team scopes to limit them to their teams' tickets.
@@ -38,6 +38,7 @@ roles:
       - {entity: SupportContract, read: true}
       - {entity: SupportSettings, read: true}
       - {entity: SupportAddress, read: true}
+      - {entity: SupportBrand, read: true}
       - {entity: TicketTag, read: true}
       - {entity: AgentProfile, read: true}
       - {entity: AgentProfile, read: true, write: true, create: true, if_owner: true}
@@ -67,6 +68,7 @@ roles:
       - {entity: EscalationRule, read: true, write: true, create: true, delete: true}
       - {entity: SupportSettings, read: true, write: true, create: true}
       - {entity: SupportAddress, read: true, write: true, create: true, delete: true}
+      - {entity: SupportBrand, read: true, write: true, create: true, delete: true}
       - {entity: InboundLog, read: true, write: true, delete: true}
       - {entity: AgentProfile, read: true, write: true, create: true, delete: true}
       - {entity: TicketTag, read: true, write: true, create: true, delete: true}
@@ -122,7 +124,7 @@ messages:
     entity: Ticket
     category: operational
     channels: [email]
-    values: [body, signature, link, files, attached]
+    values: [body, signature, link, files, attached, brand]
     languages:
       en:
         email:

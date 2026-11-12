@@ -1,15 +1,19 @@
 //! Customers writing to support: what becomes of a mail addressed to a support address.
 //!
-//! The Mail app receives the message and stores it as a `Communication` (`mailhook.rs` hands it here);
-//! this module decides what it means. Nothing here reads Mail's tables: a mail comes in as [`Inbound`],
-//! a plain description of the message, whatever brought it.
+//! The Mail app receives the message and hands it over through the registration of the support address it was
+//! written to (`mail.rs`); this module decides what it means. Nothing here reads Mail's tables: a mail comes in as
+//! [`Inbound`], a plain description of the message, whatever brought it.
 //!
 //! * A mail for no support address is not ours and is not logged.
 //! * Auto-replies, bounces, mailing-list mail, mail from a support address itself and mail over a sender's
 //!   hourly limit are recognised by their headers and addresses, never turned into tickets or answered, and
 //!   kept in the Inbound Mail Log for an administrator.
-//! * A reply is matched to its ticket by the Message-ID it answers (In-Reply-To, References) or by the
-//!   ticket's number and secret in the subject tag the app puts in outgoing mail. Never by subject text alone.
+//! * A reply is matched to its ticket by the Message-ID it answers (In-Reply-To, References), then by the ticket's
+//!   secret in the address it was written to (`support+<secret>@…`, the Reply-To of what Helpdesk sends), and
+//!   last by the ticket's number and secret in the subject tag the app puts in outgoing mail. Never by subject text alone.
+//! * Mail the mail server could not verify (`x-ferrum-auth: unverified`) from a known customer, or from the requester
+//!   or a copy of the ticket it answers, is held for review when Support Settings say (the default): a forged
+//!   sender must not read or steer a ticket.
 //! * Anything else is a new ticket of the address's team. The sender is matched to a customer by exact address
 //!   (the customer's, or a contact's); an unknown sender is handled as Support Settings say.
 //! * Mail on a closed ticket (final) opens a new ticket that says which it follows up.
@@ -51,6 +55,12 @@ pub struct Inbound {
     pub communication: Option<Uuid>,
     /// A ticket Mail already threaded it onto.
     pub reference: Option<Uuid>,
+    /// The address on the message the registration matched, with its `+tag`.
+    #[serde(default)]
+    pub recipient: Option<String>,
+    /// What follows the `+` of that address, or what the `*` of the registered pattern matched.
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,6 +161,12 @@ pub fn noise(mail: &Inbound, own: &HashSet<String>) -> Option<(&'static str, Str
     if matches!(local, "mailer-daemon" | "postmaster") || h.contains_key("x-failed-recipients") {
         return Some(("Bounce", if h.contains_key("x-failed-recipients") { "x-failed-recipients".into() } else { from }));
     }
+    if h.get("return-path").is_some_and(|r| r.trim_matches(['<', '>', ' ']).is_empty()) {
+        return Some(("Bounce", "return-path: <>".into()));
+    }
+    if h.get("content-type").is_some_and(|c| c.contains("report-type=delivery-status")) {
+        return Some(("Bounce", "content-type: delivery-status report".into()));
+    }
     if h.contains_key("list-id") || h.contains_key("list-unsubscribe") || h.get("precedence").is_some_and(|p| p == "list") {
         return Some(("Mailing list", h.keys().find(|k| k.starts_with("list-")).cloned().unwrap_or_else(|| "precedence: list".into())));
     }
@@ -180,6 +196,8 @@ fn one_line(text: &str, max: usize) -> String {
 struct Policy {
     unknown: String,
     per_hour: i64,
+    /// Whether mail that fails authentication from a known sender is held (the default) or taken.
+    hold_unverified: bool,
 }
 
 async fn policy(k: &Kernel, sctx: &Ctx, tx: &mut Tx) -> Result<Policy> {
@@ -188,14 +206,33 @@ async fn policy(k: &Kernel, sctx: &Ctx, tx: &mut Tx) -> Result<Policy> {
     Ok(Policy {
         unknown: st.and_then(|d| s(d, "unknown_senders")).unwrap_or("Open Ticket").to_string(),
         per_hour: st.and_then(|d| d.get("inbound_per_hour")).and_then(Value::as_i64).unwrap_or(20),
+        hold_unverified: st.and_then(|d| s(d, "unverified_senders")) != Some("Accept"),
     })
 }
 
-/// The ticket a mail answers: by the number and secret in its subject, else by the Message-ID it answers,
-/// else by a ticket Mail already put it on. A merged ticket leads to the one that stayed.
+/// The ticket a mail answers, by the strongest key it carries: the Message-ID it answers (of mail we sent, or of
+/// what the customer sent before), the ticket Mail already threaded it onto, the secret in the address it was written
+/// to, and last the number and secret in its subject. A merged ticket leads to the one that stayed.
 async fn matching_ticket(tx: &mut Tx, tenant: Uuid, mail: &Inbound) -> Result<Option<Uuid>> {
     let mut found = None;
-    if let Some((number, token)) = tag(&mail.subject) {
+    let wanted: Vec<String> = mail.in_reply_to.iter().chain(mail.references.iter()).map(|m| m.trim().trim_matches(['<', '>']).to_string()).collect();
+    if !wanted.is_empty() {
+        found = sqlx::query_scalar("select parent_id from e_ticket__conversation where tenant_id = $1 and message_id = any($2) order by sent_at desc limit 1")
+            .bind(tenant)
+            .bind(&wanted)
+            .fetch_optional(&mut **tx)
+            .await?;
+    }
+    found = found.or(mail.reference);
+    if found.is_none()
+        && let Some(token) = mail.token.as_deref().filter(|t| (8..=64).contains(&t.len()) && t.chars().all(|c| c.is_ascii_alphanumeric()))
+    {
+        found =
+            sqlx::query_scalar("select id from e_ticket where tenant_id = $1 and mail_token = $2").bind(tenant).bind(token).fetch_optional(&mut **tx).await?;
+    }
+    if found.is_none()
+        && let Some((number, token)) = tag(&mail.subject)
+    {
         let row: Option<(Uuid, Option<String>)> = sqlx::query_as("select id, mail_token from e_ticket where tenant_id = $1 and number = $2")
             .bind(tenant)
             .bind(number)
@@ -203,18 +240,6 @@ async fn matching_ticket(tx: &mut Tx, tenant: Uuid, mail: &Inbound) -> Result<Op
             .await?;
         found = row.filter(|(_, stored)| stored.as_deref().is_some_and(|t| same(t, &token))).map(|(i, _)| i);
     }
-    if found.is_none() {
-        let wanted: Vec<String> = mail.in_reply_to.iter().chain(mail.references.iter()).map(|m| m.trim().trim_matches(['<', '>']).to_string()).collect();
-        if !wanted.is_empty() {
-            found =
-                sqlx::query_scalar("select parent_id from e_ticket__conversation where tenant_id = $1 and message_id = any($2) order by sent_at desc limit 1")
-                    .bind(tenant)
-                    .bind(&wanted)
-                    .fetch_optional(&mut **tx)
-                    .await?;
-        }
-    }
-    found = found.or(mail.reference);
     for _ in 0..10 {
         let Some(t) = found else { break };
         match sqlx::query_scalar::<_, Option<Uuid>>("select merged_into from e_ticket where tenant_id = $1 and id = $2")
@@ -255,6 +280,8 @@ async fn log(
         ("detail", json!(detail.map(|d| one_line(d, 500)))),
         ("ticket", json!(ticket.map(|t| t.to_string()))),
         ("payload", if outcome == "Held" { serde_json::to_value(mail).unwrap_or(Value::Null) } else { Value::Null }),
+        // What the held mail said, for an administrator to read before deciding (its own field group; erased with the sender).
+        ("body", if outcome == "Held" { json!(cut(mail.text.trim(), MAX_TEXT)) } else { Value::Null }),
     ] {
         row.insert(f.into(), v);
     }
@@ -280,7 +307,8 @@ async fn run(k: &Kernel, ctx: &Ctx, tx: &mut Tx, mail: &Inbound, held: Option<Uu
     let tenant = ctx.tenant;
     let addresses_all = k.find_tx(&sctx, tx, "SupportAddress", &[], Some("address asc"), 1000).await?;
     let own: HashSet<String> = addresses_all.iter().filter_map(|a| s(a, "address")).map(|a| without_tag(&norm(a))).collect();
-    let recipients: HashSet<String> = mail.to.iter().chain(mail.cc.iter()).map(|a| without_tag(&norm(a))).collect();
+    // Where it was written to: To and Cc, and the recipient Mail matched (which finds a Bcc).
+    let recipients: HashSet<String> = mail.to.iter().chain(mail.cc.iter()).chain(mail.recipient.iter()).map(|a| without_tag(&norm(a))).collect();
     let Some(target) = addresses_all.iter().find(|a| b(a, "enabled") && s(a, "address").is_some_and(|x| recipients.contains(&without_tag(&norm(x))))) else {
         return Ok(Outcome::NotForSupport);
     };
@@ -333,6 +361,29 @@ async fn run(k: &Kernel, ctx: &Ctx, tx: &mut Tx, mail: &Inbound, held: Option<Uu
         Some((_, false)) => None,
         _ => customer_of(k, &sctx, tx, &from).await?,
     };
+    // Mail the server could not verify, from someone we know: held, so a forged sender neither adds to their ticket nor opens one
+    // in their name. Known: a customer's address or contact, or the requester or a copy of the ticket it answers.
+    let unverified = mail.headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("x-ferrum-auth") && v.trim().eq_ignore_ascii_case("unverified"));
+    if held.is_none() && unverified && pol.hold_unverified {
+        let known = match (customer, existing) {
+            (Some(_), _) => true,
+            (None, Some((t, _))) => {
+                let (contact, cc): (Option<String>, Option<String>) =
+                    sqlx::query_as("select contact_email::text, cc from e_ticket where tenant_id = $1 and id = $2")
+                        .bind(tenant)
+                        .bind(t)
+                        .fetch_one(&mut **tx)
+                        .await?;
+                contact.is_some_and(|c| norm(&c) == from) || addresses(cc.as_deref()).contains(&from) || customer_of(k, &sctx, tx, &from).await?.is_some()
+            }
+            (None, None) => false,
+        };
+        if known {
+            let row =
+                log(k, &sctx, tx, mail, &to, "Held", Some("Unverified sender"), Some("x-ferrum-auth: unverified"), existing.map(|(t, _)| t), None).await?;
+            return Ok(Outcome::Held(row));
+        }
+    }
     if existing.is_none() && customer.is_none() && held.is_none() {
         match pol.unknown.as_str() {
             "Ignore" => {
@@ -362,14 +413,33 @@ async fn run(k: &Kernel, ctx: &Ctx, tx: &mut Tx, mail: &Inbound, held: Option<Uu
     Ok(if created { Outcome::Created(ticket) } else { Outcome::Added(ticket) })
 }
 
-fn files(mail: &Inbound) -> Vec<Value> {
-    mail.attachments.iter().filter_map(|a| a.get("id").cloned()).map(|i| json!({"id": i})).collect()
+/// The files a mail carried, as copies of the ticket's own: Mail keeps its attachments on its message, so each is copied
+/// (loose, for the platform to attach to the ticket with the message). A file that cannot be copied is left out and said so
+/// in the log, the mail is not lost for it.
+async fn copy_attachments(k: &Kernel, sctx: &Ctx, mail: &Inbound) -> Vec<Value> {
+    let mut out = Vec::new();
+    for file in mail.attachments.iter().filter_map(|a| a.get("id")?.as_str()?.parse::<Uuid>().ok()) {
+        match k.copy_file(sctx, file, None).await {
+            Ok(copy) => out.push(json!({"id": copy["id"]})),
+            Err(e) => tracing::warn!(%file, "a mail's attachment was not copied to the ticket: {e}"),
+        }
+    }
+    out
 }
 
-fn message(mail: &Inbound, from: &str, body: &str, copied: &[String]) -> Value {
+/// Takes the copies of a mail's files out of storage again when the ticket did not get them.
+async fn drop_copies(k: &Kernel, sctx: &Ctx, files: &[Value]) {
+    for f in files.iter().filter_map(|f| f.get("id")?.as_str()?.parse::<Uuid>().ok()) {
+        if let Err(e) = k.remove_file(sctx, f).await {
+            tracing::warn!(file = %f, "a copy of a mail's file was not removed: {e}");
+        }
+    }
+}
+
+fn message(mail: &Inbound, files: &[Value], from: &str, body: &str, copied: &[String]) -> Value {
     json!({
         "author_kind": "Customer", "author": from, "body": body, "is_internal": false,
-        "attachments": files(mail), "message_id": mail.message_id.as_deref().map(|m| cut(m, 500)),
+        "attachments": files, "message_id": mail.message_id.as_deref().map(|m| cut(m, 500)),
         "communication": mail.communication.map(|c| c.to_string()), "cc": if copied.is_empty() { Value::Null } else { json!(copied.join(", ")) },
     })
 }
@@ -395,9 +465,19 @@ fn new_copies(ticket: &Doc, copied: &[String], from: &str) -> Option<String> {
 /// A customer's message on an open ticket, with its copies and files, as the system.
 #[allow(clippy::too_many_arguments)]
 async fn append(k: &Kernel, sctx: &Ctx, tx: &mut Tx, ticket: Uuid, mail: &Inbound, from: &str, _name: &str, copied: &[String]) -> Result<()> {
+    let files = copy_attachments(k, sctx, mail).await;
+    let done = append_with(k, sctx, tx, ticket, mail, &files, from, copied).await;
+    if done.is_err() {
+        drop_copies(k, sctx, &files).await;
+    }
+    done
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn append_with(k: &Kernel, sctx: &Ctx, tx: &mut Tx, ticket: Uuid, mail: &Inbound, files: &[Value], from: &str, copied: &[String]) -> Result<()> {
     let t = k.get_tx(sctx, tx, "Ticket", ticket, true).await?;
     let mut conversation: Vec<Value> = rows(&t, "conversation").into_iter().map(Value::Object).collect();
-    conversation.push(message(mail, from, &body_of(mail), copied));
+    conversation.push(message(mail, files, from, &body_of(mail), copied));
     let mut patch = Doc::new();
     patch.insert("conversation".into(), Value::Array(conversation));
     if let Some(cc) = new_copies(&t, copied, from) {
@@ -413,6 +493,28 @@ async fn create(
     sctx: &Ctx,
     tx: &mut Tx,
     mail: &Inbound,
+    target: &Doc,
+    from: &str,
+    name: &str,
+    customer: Option<Uuid>,
+    copied: &[String],
+    related: Option<Uuid>,
+) -> Result<Uuid> {
+    let files = copy_attachments(k, sctx, mail).await;
+    let done = create_with(k, sctx, tx, mail, &files, target, from, name, customer, copied, related).await;
+    if done.is_err() {
+        drop_copies(k, sctx, &files).await;
+    }
+    done
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn create_with(
+    k: &Kernel,
+    sctx: &Ctx,
+    tx: &mut Tx,
+    mail: &Inbound,
+    files: &[Value],
     target: &Doc,
     from: &str,
     name: &str,
@@ -441,9 +543,9 @@ async fn create(
     let saved = k.insert_tx(sctx, tx, "Ticket", t).await?;
     let ticket = id(&saved, "id").ok_or_else(|| Error::internal("a ticket without an id"))?;
     // The mail's own words are the description; a message carries what the mail brought (files, its id).
-    if !mail.attachments.is_empty() || mail.message_id.is_some() || mail.communication.is_some() {
+    if !files.is_empty() || mail.message_id.is_some() || mail.communication.is_some() {
         let mut patch = Doc::new();
-        patch.insert("conversation".into(), json!([message(mail, from, &body, copied)]));
+        patch.insert("conversation".into(), json!([message(mail, files, from, &body, copied)]));
         k.update_tx(sctx, tx, "Ticket", ticket, patch, None).await?;
     }
     Ok(ticket)
@@ -468,15 +570,11 @@ impl DocHook for LogHook {
             .map_err(|e| Error::invalid(format!("the held mail cannot be read: {e}")))?;
         if name == "discard" {
             let mut v = Doc::new();
-            for (f, x) in [("outcome", json!("Ignored")), ("reason", json!("Discarded by staff")), ("payload", Value::Null)] {
+            for (f, x) in [("outcome", json!("Ignored")), ("reason", json!("Discarded by staff")), ("payload", Value::Null), ("body", Value::Null)] {
                 v.insert(f.into(), x);
             }
             hc.kernel.set_values_tx(&sctx, hc.tx, "InboundLog", log, v).await?;
-            for f in mail.attachments.iter().filter_map(|a| a.get("id")?.as_str()?.parse::<Uuid>().ok()) {
-                if let Err(e) = hc.kernel.remove_file(&sctx, f).await {
-                    tracing::warn!(file = %f, "a discarded mail's file was not removed: {e}");
-                }
-            }
+            // Its files stay with Mail's message, which Mail keeps.
             return Ok(Some(json!({"outcome": "Ignored"})));
         }
         let outcome = run(hc.kernel, hc.ctx, hc.tx, &mail, Some(log)).await?;
@@ -485,13 +583,55 @@ impl DocHook for LogHook {
             other => return Err(Error::invalid(format!("the mail is not for a support address any more ({other:?})"))),
         };
         if let Some(c) = mail.communication {
-            crate::mailhook::link(hc.kernel, &sctx, hc.tx, c, ticket).await?;
+            crate::mail::link(hc.kernel, &sctx, hc.tx, c, ticket).await?;
         }
         Ok(Some(json!({"ticket": ticket, "outcome": "Ticket Created"})))
     }
 }
 
-/// An address is stored as written in lower case.
+/// Once for a workspace updated from a release where an address's brand was only a label: each distinct label becomes a
+/// brand (its name and what customers see it as), and the addresses that carried it are linked to it. Nothing is
+/// changed of the addresses otherwise; a brand an administrator made since is used, not made twice.
+pub async fn ensure_brands(k: &Kernel, ctx: &Ctx) -> Result<usize> {
+    if ctx.schema.entity("SupportBrand").is_none_or(|e| e.field("brand_name").is_none())
+        || ctx.schema.entity("SupportAddress").is_none_or(|e| e.field("brand").is_none())
+    {
+        return Ok(0);
+    }
+    let sctx = sys(ctx);
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    sqlx::query("select pg_advisory_xact_lock(hashtext($1))").bind(format!("helpdesk-upkeep|brands|{}", ctx.tenant)).execute(&mut *tx).await?;
+    if crate::done(k, ctx, &mut tx, "brands").await? {
+        tx.commit().await?;
+        return Ok(0);
+    }
+    let mut linked = 0;
+    for a in k.find_tx(&sctx, &mut tx, "SupportAddress", &[], Some("address asc"), 1000).await? {
+        let (Some(row), Some(label)) = (id(&a, "id"), s(&a, "label").map(|l| cut(l.trim(), 80)).filter(|l| !l.is_empty())) else { continue };
+        if a.get("brand").is_some_and(|b| !b.is_null()) {
+            continue;
+        }
+        let existing = k.find_tx(&sctx, &mut tx, "SupportBrand", &[ferrum_kernel::Filter::eq("brand_name", label.clone())], None, 1).await?;
+        let brand = match existing.first().and_then(|b| id(b, "id")) {
+            Some(b) => b,
+            None => {
+                let mut v = Doc::new();
+                v.insert("brand_name".into(), json!(label));
+                v.insert("display_name".into(), json!(label));
+                id(&k.insert_tx(&sctx, &mut tx, "SupportBrand", v).await?, "id").ok_or_else(|| Error::internal("a brand without an id"))?
+            }
+        };
+        let mut v = Doc::new();
+        v.insert("brand".into(), json!(brand.to_string()));
+        k.set_values_tx(&sctx, &mut tx, "SupportAddress", row, v).await?;
+        linked += 1;
+    }
+    crate::mark(k, ctx, &mut tx, "brands").await?;
+    tx.commit().await?;
+    Ok(linked)
+}
+
+/// An address is stored as written in lower case, and Mail's registration of it follows it (`mail.rs`).
 pub struct AddressHook;
 
 #[async_trait]
@@ -502,40 +642,14 @@ impl DocHook for AddressHook {
         }
         Ok(())
     }
-}
 
-/// An `Inbound` from a Mail `Communication` as Mail stores received mail (docs of the comms package): `None` unless it is
-/// received email. Header names Mail keeps in `headers` are read when it keeps them.
-pub fn from_communication(doc: &Doc) -> Option<Inbound> {
-    if s(doc, "channel") != Some("Email") || s(doc, "direction") != Some("Received") {
-        return None;
+    async fn after_save(&self, hc: &mut HookCtx<'_>, doc: &Doc, old: Option<&Doc>) -> Result<()> {
+        crate::mail::sync(hc.kernel, hc.ctx, hc.tx, old, Some(doc)).await
     }
-    let headers = doc
-        .get("headers")
-        .and_then(Value::as_object)
-        .map(|h| h.iter().filter_map(|(k, v)| Some((k.to_lowercase(), v.as_str()?.to_string()))).collect())
-        .unwrap_or_default();
-    let list = |f: &str| {
-        s(doc, f).map(|v| v.split_whitespace().map(|m| m.trim_matches(['<', '>']).to_string()).filter(|m| !m.is_empty()).collect()).unwrap_or_default()
-    };
-    Some(Inbound {
-        message_id: s(doc, "message_id").map(str::to_string),
-        in_reply_to: s(doc, "in_reply_to").map(|m| vec![m.to_string()]).unwrap_or_default(),
-        references: list("mail_references"),
-        from_name: s(doc, "sender_name").map(str::to_string),
-        from: s(doc, "sender")?.to_string(),
-        to: addresses(s(doc, "recipients")),
-        cc: addresses(s(doc, "cc")),
-        subject: s(doc, "subject").unwrap_or_default().to_string(),
-        text: s(doc, "text_content").unwrap_or_default().to_string(),
-        attachments: doc.get("attachments").and_then(Value::as_array).cloned().unwrap_or_default(),
-        headers,
-        communication: id(doc, "id"),
-        reference: match (s(doc, "reference_entity"), id(doc, "reference_id")) {
-            (Some("Ticket"), Some(t)) => Some(t),
-            _ => None,
-        },
-    })
+
+    async fn before_delete(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+        crate::mail::sync(hc.kernel, hc.ctx, hc.tx, Some(doc), None).await
+    }
 }
 
 #[cfg(test)]
@@ -580,22 +694,22 @@ mod tests {
         assert_eq!(why(&mail(&[("List-Id", "<news.x.test>")], "ada@cust.test")), Some("Mailing list"));
         assert_eq!(why(&mail(&[("List-Unsubscribe", "<mailto:u@x.test>")], "ada@cust.test")), Some("Mailing list"));
         assert_eq!(why(&mail(&[], "no-reply@shop.test")), Some("Automatic reply"));
+        assert_eq!(why(&mail(&[("return-path", "<>")], "ada@cust.test")), Some("Bounce"), "a null return path is a bounce");
+        assert_eq!(why(&mail(&[("content-type", "multipart/report; report-type=delivery-status; boundary=\"x\"")], "ada@cust.test")), Some("Bounce"));
+        assert_eq!(
+            why(&mail(&[("return-path", "<ada@cust.test>"), ("content-type", "text/plain")], "ada@cust.test")),
+            None,
+            "a person's mail has a return path"
+        );
     }
 
     #[test]
-    fn a_communication_becomes_a_mail() {
-        let doc = json!({"id": Uuid::nil().to_string(), "channel": "Email", "direction": "Received", "sender": "ada@cust.test", "sender_name": "Ada",
-            "recipients": "\"Support\" <support@acme.test>", "cc": "bob@cust.test", "subject": "Hi", "text_content": "Hello", "message_id": "m1@cust.test",
-            "in_reply_to": "p0@acme.test", "mail_references": "<r1@x> <p0@acme.test>", "headers": {"Auto-Submitted": "no"},
-            "reference_entity": "Ticket", "reference_id": Uuid::nil().to_string()});
-        let m = from_communication(doc.as_object().unwrap()).unwrap();
-        assert_eq!(
-            (m.to, m.cc, m.references, m.reference.is_some()),
-            (vec!["support@acme.test".into()], vec!["bob@cust.test".into()], vec!["r1@x".into(), "p0@acme.test".into()], true)
-        );
-        assert_eq!(m.headers.get("auto-submitted").map(String::as_str), Some("no"));
-        assert!(from_communication(json!({"channel": "Email", "direction": "Sent"}).as_object().unwrap()).is_none());
-        assert!(from_communication(json!({"channel": "SMS", "direction": "Received", "sender": "x"}).as_object().unwrap()).is_none());
+    fn mail_held_before_this_release_can_still_be_released() {
+        // What 0.10.x kept in the log's payload: no recipient and no secret.
+        let old = json!({"message_id": "m1@x.test", "in_reply_to": [], "references": [], "from_name": null, "from": "ada@cust.test", "to": ["support@acme.test"], "cc": [],
+            "subject": "Hi", "text": "Hello", "attachments": [], "headers": {"auto-submitted": "no"}, "communication": null, "reference": null});
+        let m: Inbound = serde_json::from_value(old).unwrap();
+        assert_eq!((m.recipient, m.token, m.subject.as_str()), (None, None, "Hi"));
     }
 
     #[test]

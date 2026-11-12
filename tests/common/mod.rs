@@ -1,12 +1,12 @@
 //! What the helpdesk's integration suites share: a kernel on a freshly reset database, a workspace with the
-//! Helpdesk package and, when asked, a stand-in for the Mail app's records (the real Mail is a different
-//! repository), and small helpers. Each suite resets the database, as the others do; they run one after another.
+//! Helpdesk package and, when asked, the real Mail app (the `ferrum-app-comms` crate, with an account for the
+//! workspace's mail domain and its inbound webhook), and small helpers. Each suite resets the database, as the others do; they run one after another.
 #![allow(dead_code)]
 
 use async_trait::async_trait;
 use ferrum_kernel::secret::SecretKey;
 use ferrum_kernel::tenant::NewTenant;
-use ferrum_kernel::{Ctx, Db, DbConfig, Doc, DocHook, Error, HookCtx, HookRegistry, Kernel, KernelSettings, ListQuery, Result};
+use ferrum_kernel::{Ctx, Db, DbConfig, Doc, Error, HookRegistry, Kernel, KernelSettings, ListQuery, Result};
 use ferrum_meta::Catalog;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -20,59 +20,6 @@ pub fn obj(v: Value) -> Doc {
 
 pub fn uid(d: &Doc) -> Uuid {
     d["id"].as_str().unwrap().parse().unwrap()
-}
-
-/// Mail's records as far as Helpdesk meets them (the comms package's `Communication` and `EmailAccount`).
-const MAIL_PACKAGE: &str = "package: mailstub\nversion: 0.1.0\nlabel: Mail stand-in\ndescription: Test stand-in for the Mail app's records\ndepends: [core]\nmodules:\n  - {name: mailstub, label: Mail, icon: mail, order: 90, items: [Communication, EmailAccount]}\n";
-const MAIL_ENTITIES: &str = r#"
-- name: EmailAccount
-  label: Email Account
-  kind: master
-  module: mailstub
-  title_field: account_name
-  fields:
-    - {name: account_name, type: data, required: true, unique: true}
-    - {name: email_address, type: email, required: true}
-- name: Communication
-  label: Communication
-  kind: master
-  module: mailstub
-  title_field: subject
-  fields:
-    - {name: subject, type: data, max_length: 998}
-    - {name: channel, type: select, options: [Email, SMS, Chat, Phone, Note, Meeting], default: Email, required: true}
-    - {name: direction, type: select, options: [Sent, Received], default: Sent, required: true}
-    - {name: status, type: select, options: [Queued, Sending, Sent, Failed, Received, Withheld]}
-    - {name: email_account, type: link, to: EmailAccount}
-    - {name: sender, type: data}
-    - {name: sender_name, type: data}
-    - {name: recipients, type: text}
-    - {name: cc, type: text}
-    - {name: content, type: text}
-    - {name: text_content, type: text}
-    - {name: attachments, type: json}
-    - {name: reference_entity, type: data}
-    - {name: reference_id, type: data}
-    - {name: reply_to, type: link, to: Communication}
-    - {name: message_id, type: data, unique: true}
-    - {name: in_reply_to, type: data}
-    - {name: mail_references, type: text}
-    - {name: headers, type: json}
-    - {name: seen, type: check}
-"#;
-
-/// What Mail's own hook does to a message it sends: a Message-ID, and Queued.
-struct MailStub;
-
-#[async_trait]
-impl DocHook for MailStub {
-    async fn before_validate(&self, _hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
-        if doc.get("direction").and_then(Value::as_str) == Some("Sent") && doc.get("message_id").is_none_or(Value::is_null) {
-            doc.insert("message_id".into(), json!(format!("{}@acme.test", Uuid::now_v7().simple())));
-            doc.insert("status".into(), json!("Queued"));
-        }
-        Ok(())
-    }
 }
 
 /// Mail the server sent through its own mailer, in order: (to, subject, html).
@@ -101,6 +48,8 @@ pub struct Env {
     pub k: Arc<Kernel>,
     pub admin: Ctx,
     pub tenant: Uuid,
+    /// The secret of Mail's inbound webhook for the support account (with `mail`).
+    pub webhook: String,
 }
 
 /// A kernel on a reset database and a workspace `slug` with Helpdesk (and, with `mail`, the Mail stand-in).
@@ -113,10 +62,7 @@ pub async fn boot(slug: &str, mail: bool, extra: Vec<ferrum_meta::Package>) -> E
     packages.extend(ferrum_app_helpdesk::packages().expect("app packages"));
     packages.extend(extra);
     if mail {
-        packages.extend(
-            ferrum_meta::catalog::load_embedded(&[("mailstub", "package.yaml", MAIL_PACKAGE), ("mailstub", "entities/mail.yaml", MAIL_ENTITIES)])
-                .expect("the mail stand-in"),
-        );
+        packages.extend(ferrum_app_comms::packages().expect("Mail's packages"));
     }
     let catalog = Catalog::from_packages(packages).expect("catalog");
     let mut hooks = HookRegistry::default();
@@ -130,7 +76,7 @@ pub async fn boot(slug: &str, mail: bool, extra: Vec<ferrum_meta::Package>) -> E
         ferrum_domain::reports::add_source(source);
     }
     if mail {
-        hooks.register("Communication", Arc::new(MailStub));
+        ferrum_app_comms::register(&mut hooks);
     }
     let settings = KernelSettings { secret_key: Some(SecretKey::new([7u8; 32])), public_url: Some("https://help.example.test".into()), ..Default::default() };
     let k = Kernel::boot(db, catalog, hooks, settings, Some(Arc::new(Captured))).await.expect("boot");
@@ -138,7 +84,7 @@ pub async fn boot(slug: &str, mail: bool, extra: Vec<ferrum_meta::Package>) -> E
     k.set_file_store(Arc::new(MemFiles::default()));
     let mut packages = vec!["helpdesk".to_string()];
     if mail {
-        packages.push("mailstub".into());
+        packages.push("comms".into());
     }
     let tenant = k
         .create_tenant(NewTenant {
@@ -154,7 +100,23 @@ pub async fn boot(slug: &str, mail: bool, extra: Vec<ferrum_meta::Package>) -> E
         .expect("tenant");
     let session = k.login(slug, &format!("admin@{slug}.test"), PASSWORD).await.expect("login");
     let admin = k.load_ctx(tenant, session.user, Some(session.token_version), "it".into()).await.expect("ctx");
-    Env { k, admin, tenant }
+    let mut webhook = String::new();
+    if mail {
+        // The workspace's mail domain is the support account's: acme.test. Mail receives through its webhook.
+        let account = k
+            .insert(
+                &admin,
+                "EmailAccount",
+                obj(json!({"account_name": "Support", "email_address": "support@acme.test", "default_outgoing": true, "smtp_host": "127.0.0.1", "smtp_security": "None"})),
+            )
+            .await
+            .expect("Mail's account");
+        webhook = k.run_action(&admin, "EmailAccount", uid(&account), "rotate_inbound_token", json!({})).await.expect("a webhook")["token"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    }
+    Env { k, admin, tenant, webhook }
 }
 
 /// An in-memory object store standing in for S3.
@@ -177,6 +139,11 @@ impl ferrum_kernel::files::FileStore for MemFiles {
 }
 
 impl Env {
+    /// A mail arriving at Mail's webhook as a mail server hands it over: raw, as RFC 822. Mail's answer (`status`, `id`).
+    pub async fn post_mail(&self, raw: &str) -> Value {
+        ferrum_app_comms::inbound::webhook(&self.k, self.tenant, &self.webhook, Some("message/rfc822"), raw.as_bytes()).await.expect("Mail takes it")
+    }
+
     pub async fn insert(&self, entity: &str, v: Value) -> Doc {
         self.k.insert(&self.admin, entity, obj(v)).await.unwrap_or_else(|e| panic!("insert {entity}: {e:?}"))
     }
