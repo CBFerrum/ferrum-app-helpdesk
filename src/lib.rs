@@ -2,6 +2,7 @@
 //!
 //! Hooks are registered per entity, so a tenant without the `support` package never runs them.
 
+mod hours;
 pub mod inbound;
 mod kb;
 mod mailhook;
@@ -10,7 +11,6 @@ mod outgoing;
 mod replies;
 mod reports;
 mod site;
-mod sla;
 mod ticket;
 mod visits;
 mod warranty;
@@ -62,7 +62,8 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
                 return Ok(());
             }
             let ctx = Ctx::system(tenant, schema);
-            let refreshed = ticket::refresh_slas(k, &ctx).await?;
+            hours::ensure_for_tenant(k, &ctx).await?;
+            let refreshed = ticket::refresh_slas(k, &ctx).await? + ticket::refresh_verdicts(k, &ctx).await?;
             let escalated = ticket::escalate(k, &ctx).await?;
             let closed = ticket::auto_close(k, &ctx).await?;
             if refreshed + escalated + closed > 0 {

@@ -262,6 +262,11 @@
        params: [{name: reason, label: Why, type: data, required: true, description: "Why this customer's ticket is worked though their contract does not cover it"}]}
     - {name: decline_outside_entitlement, label: Decline Work Outside Entitlement, permission: write, condition: "doc.entitlement_approval == 'Waiting'",
        params: [{name: reason, label: Why, type: data, required: true, description: "Why it is not worked: the customer is told once someone replies"}]}
+  targets:
+    - {name: respond, label: First Response, calendar: helpdesk_hours, within: "doc.response_secs > 0 ? 'PT' + string(doc.response_secs) + 'S' : ''", pause_when: "(doc.status == 'On Hold' && doc.sla_pause_hold) || (doc.status == 'Replied' && doc.sla_pause_replied)",
+       met_when: "!isEmpty(doc.first_responded_at)", due_field: response_by, state_field: response_state}
+    - {name: resolve, label: Resolution, calendar: helpdesk_hours, within: "doc.resolution_secs > 0 ? 'PT' + string(doc.resolution_secs) + 'S' : ''", pause_when: "(doc.status == 'On Hold' && doc.sla_pause_hold) || (doc.status == 'Replied' && doc.sla_pause_replied)",
+       met_when: "doc.status == 'Resolved' || doc.status == 'Closed'", due_field: resolution_by, state_field: resolution_state}
   list: {columns: [number, subject, customer_name, priority, status, assigned_to, sla_status], sort: opened_at desc}
 
 - name: SavedReply

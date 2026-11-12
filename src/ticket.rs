@@ -6,14 +6,13 @@
 //! ticket's status timeline, so a priority change, a pause, a reopening or an edited holiday list
 //! always yields the same deadlines as if they had been known from the start.
 
-use crate::sla::{self, Calendar, Clock, State, Ts};
 use crate::{int, linked, outgoing};
 use async_trait::async_trait;
 use chrono::{Duration, SecondsFormat, Utc};
 use ferrum_domain::flow::create_for_user;
 use ferrum_domain::flow::created;
-use ferrum_domain::util::{b, d, get, id, money, rows, s, set, sys};
-use ferrum_kernel::value::{parse_date, parse_datetime};
+use ferrum_domain::util::{b, d, get, id, rows, s, set, sys};
+use ferrum_kernel::value::parse_datetime;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, Filter, HookCtx, Kernel, Result, Tx, notify, outbox, store};
 use ferrum_meta::{Expr, Scope};
 use rust_decimal::Decimal;
@@ -22,11 +21,10 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+type Ts = chrono::DateTime<Utc>;
+
 /// Statuses of a ticket that is still being worked on.
 pub const OPEN: [&str; 3] = ["Open", "Replied", "On Hold"];
-const WEEKDAYS: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-/// Fields maintenance may move on its own; a change of the verdict ones is published.
-const VERDICT: [&str; 3] = ["sla_status", "response_breached", "resolution_breached"];
 
 fn ts(doc: &Doc, k: &str) -> Option<Ts> {
     s(doc, k).and_then(|v| parse_datetime(v).ok())
@@ -34,10 +32,6 @@ fn ts(doc: &Doc, k: &str) -> Option<Ts> {
 
 fn ts_value(t: Ts) -> Value {
     json!(t.to_rfc3339_opts(SecondsFormat::Millis, true))
-}
-
-fn hours(ms: i64) -> Value {
-    money((Decimal::from(ms) / Decimal::from(3_600_000)).round_dp(2))
 }
 
 /// "HH:MM" (one-digit hours allowed) → minutes since midnight; "24:00" is the end of the day.
@@ -67,66 +61,66 @@ fn timeline_value(tl: &[(String, Ts)]) -> Value {
 
 // ───────────────────────────── agreements ─────────────────────────────
 
-/// An enabled service level agreement, parsed for evaluation.
+/// An enabled service level agreement, parsed for choosing: which tickets it covers and what it promises. The
+/// clock itself is the platform's service target on the working calendar `helpdesk_hours` (`hours.rs`).
 pub struct Sla {
     id: Uuid,
     name: String,
     customer: Option<Uuid>,
     customer_group: Option<Uuid>,
+    team: Option<Uuid>,
     ticket_type: Option<Uuid>,
     pause_on_hold: bool,
     pause_on_replied: bool,
-    /// priority → (response, resolution) in milliseconds of business time.
+    /// priority → (response, resolution) in seconds of working time.
     targets: HashMap<String, (i64, i64)>,
-    calendar: Calendar,
 }
 
-fn hours_to_ms(h: Decimal) -> i64 {
-    (h * Decimal::from(3_600_000)).round().to_i64().unwrap_or(i64::MAX)
+fn hours_to_secs(h: Decimal) -> i64 {
+    (h * Decimal::from(3600)).round().to_i64().unwrap_or(i64::MAX)
 }
 
 impl Sla {
     fn from_doc(doc: &Doc) -> Option<Sla> {
-        let windows: Vec<(usize, u32, u32)> = rows(doc, "working_hours")
-            .iter()
-            .filter_map(|r| Some((WEEKDAYS.iter().position(|w| Some(*w) == s(r, "weekday"))?, parse_hm(s(r, "start_time")?)?, parse_hm(s(r, "end_time")?)?)))
-            .collect();
-        let holidays = rows(doc, "holidays").iter().filter_map(|r| s(r, "holiday_date").and_then(|v| parse_date(v).ok())).collect();
         let targets = rows(doc, "priorities")
             .iter()
-            .filter_map(|r| Some((s(r, "priority")?.to_string(), (hours_to_ms(d(r, "response_hours")), hours_to_ms(d(r, "resolution_hours"))))))
+            .filter_map(|r| Some((s(r, "priority")?.to_string(), (hours_to_secs(d(r, "response_hours")), hours_to_secs(d(r, "resolution_hours"))))))
             .collect();
         Some(Sla {
             id: id(doc, "id")?,
             name: s(doc, "sla_name").unwrap_or_default().to_string(),
             customer: id(doc, "customer"),
             customer_group: id(doc, "customer_group"),
+            team: id(doc, "team"),
             ticket_type: id(doc, "ticket_type"),
             pause_on_hold: b(doc, "pause_on_hold"),
             pause_on_replied: b(doc, "pause_on_replied"),
             targets,
-            calendar: Calendar::new(int(doc, "time_zone_offset"), &windows, holidays),
         })
     }
 
-    /// How specifically the agreement fits (customer, then nearest customer group, then ticket
+    /// How specifically the agreement fits (customer, then nearest customer group, then team, then ticket
     /// type; higher wins), or `None` when one of its criteria does not match.
-    fn rank(&self, customer: Option<Uuid>, groups: &[Uuid], ticket_type: Option<Uuid>) -> Option<(bool, usize, bool)> {
-        if self.customer.is_some_and(|c| Some(c) != customer) || self.ticket_type.is_some_and(|t| Some(t) != ticket_type) {
+    fn rank(&self, customer: Option<Uuid>, groups: &[Uuid], team: Option<Uuid>, ticket_type: Option<Uuid>) -> Option<(bool, usize, bool, bool)> {
+        if self.customer.is_some_and(|c| Some(c) != customer)
+            || self.ticket_type.is_some_and(|t| Some(t) != ticket_type)
+            || self.team.is_some_and(|t| Some(t) != team)
+        {
             return None;
         }
         let group = match self.customer_group {
             Some(g) => groups.len() - groups.iter().position(|x| *x == g)?,
             None => 0,
         };
-        Some((self.customer.is_some(), group, self.ticket_type.is_some()))
+        Some((self.customer.is_some(), group, self.team.is_some(), self.ticket_type.is_some()))
     }
 }
 
 /// Cheap pre-check on an agreement's header, before its tables are loaded.
-fn applies(head: &Doc, customer: Option<Uuid>, groups: &[Uuid], ticket_type: Option<Uuid>) -> bool {
+fn applies(head: &Doc, customer: Option<Uuid>, groups: &[Uuid], team: Option<Uuid>, ticket_type: Option<Uuid>) -> bool {
     id(head, "customer").is_none_or(|c| Some(c) == customer)
         && id(head, "customer_group").is_none_or(|g| groups.contains(&g))
+        && id(head, "team").is_none_or(|t| Some(t) == team)
         && id(head, "ticket_type").is_none_or(|t| Some(t) == ticket_type)
 }
 
@@ -140,55 +134,31 @@ fn pick<'a>(slas: &'a [Sla], doc: &Doc, groups: &[Uuid]) -> Option<&'a Sla> {
     }
     slas.iter()
         .filter(|x| x.targets.contains_key(priority))
-        .filter_map(|x| x.rank(id(doc, "customer"), groups, id(doc, "ticket_type")).map(|r| (r, x)))
+        .filter_map(|x| x.rank(id(doc, "customer"), groups, id(doc, "team"), id(doc, "ticket_type")).map(|r| (r, x)))
         .min_by(|(ra, a), (rb, b)| rb.cmp(ra).then_with(|| a.name.cmp(&b.name)))
         .map(|(_, x)| x)
 }
 
-/// The SLA fields of a ticket as of `now`: agreement, deadlines, verdicts and business hours
-/// taken (on a round-the-clock calendar when no agreement applies). While a pause is running,
-/// pending deadlines are blank (they resume with the ticket) and its time is counted when it ends,
-/// so a paused ticket's fields do not change with time.
-pub fn sla_fields(slas: &[Sla], groups: &[Uuid], doc: &Doc, now: Ts) -> Doc {
+/// What the ticket's targets are told: the agreement that applies, the working seconds it gives for a response
+/// and for a resolution at the ticket's priority, and whether waiting pauses the clock. The platform's targets
+/// (`respond`, `resolve` on the Ticket) do the counting: start, pause, due moment, breach.
+pub fn policy_fields(slas: &[Sla], groups: &[Uuid], doc: &Doc) -> Doc {
     let mut out = Doc::new();
-    let Some(opened) = ts(doc, "opened_at") else { return out };
-    let sla = pick(slas, doc, groups);
-    let always = Calendar::always();
-    let (cal, on_hold, replied) = sla.map_or((&always, true, true), |x| (&x.calendar, x.pause_on_hold, x.pause_on_replied));
-    let pausing = |st: &str| (on_hold && st == "On Hold") || (replied && st == "Replied");
-    let tl = timeline(doc);
-    let stopped = sla::stopped_intervals(&tl, |st| pausing(st) || matches!(st, "Resolved" | "Closed"), now);
-    let running = tl.last().filter(|(st, _)| pausing(st)).map(|(_, at)| *at);
-    let clock = Clock { opened, stopped: &stopped, now };
-    let (responded, resolved) = (ts(doc, "first_responded_at"), ts(doc, "resolved_at"));
-    out.insert("first_response_hours".into(), responded.map_or(Value::Null, |t| hours(sla::elapsed(cal, &clock, t))));
-    out.insert("resolution_hours".into(), resolved.map_or(Value::Null, |t| hours(sla::elapsed(cal, &clock, t))));
-    let paused: i64 = sla::clip(&stopped, resolved.or(running).unwrap_or(now)).iter().map(|&(a, z)| cal.between(a, z, &[])).sum();
-    out.insert("paused_hours".into(), hours(paused));
     let priority = s(doc, "priority").unwrap_or("Medium");
-    match sla.and_then(|x| x.targets.get(priority).map(|t| (x.id, *t))) {
-        Some((sla_id, (response_ms, resolution_ms))) => {
-            let judge = |ms: i64, done: Option<Ts>| {
-                let mut v = sla::verdict(cal, &clock, ms, done);
-                if running.is_some() && done.is_none() && v.state != State::Breached {
-                    v.deadline = None;
-                }
-                v
-            };
-            let (r, z) = (judge(response_ms, responded), judge(resolution_ms, resolved));
-            out.insert("service_level_agreement".into(), json!(sla_id.to_string()));
-            out.insert("response_by".into(), r.deadline.map_or(Value::Null, ts_value));
-            out.insert("resolution_by".into(), z.deadline.map_or(Value::Null, ts_value));
-            out.insert("response_breached".into(), json!(r.state == State::Breached));
-            out.insert("resolution_breached".into(), json!(z.state == State::Breached));
-            out.insert("sla_status".into(), json!(sla::overall(r.state, z.state).label()));
+    match pick(slas, doc, groups).and_then(|x| x.targets.get(priority).map(|t| (x, *t))) {
+        Some((x, (response, resolution))) => {
+            out.insert("service_level_agreement".into(), json!(x.id.to_string()));
+            out.insert("response_secs".into(), json!(response));
+            out.insert("resolution_secs".into(), json!(resolution));
+            out.insert("sla_pause_hold".into(), json!(x.pause_on_hold));
+            out.insert("sla_pause_replied".into(), json!(x.pause_on_replied));
         }
         None => {
-            for f in ["service_level_agreement", "response_by", "resolution_by", "sla_status"] {
-                out.insert(f.into(), Value::Null);
-            }
-            out.insert("response_breached".into(), json!(false));
-            out.insert("resolution_breached".into(), json!(false));
+            out.insert("service_level_agreement".into(), Value::Null);
+            out.insert("response_secs".into(), Value::Null);
+            out.insert("resolution_secs".into(), Value::Null);
+            out.insert("sla_pause_hold".into(), json!(false));
+            out.insert("sla_pause_replied".into(), json!(false));
         }
     }
     out
@@ -254,11 +224,11 @@ impl DocHook for SlaHook {
         }
         if b(doc, "enabled") {
             let mut filters = vec![Filter::eq("enabled", true)];
-            filters.extend(["customer", "customer_group", "ticket_type"].map(|f| Filter::eq(f, doc.get(f).cloned().unwrap_or(Value::Null))));
+            filters.extend(["customer", "customer_group", "team", "ticket_type"].map(|f| Filter::eq(f, doc.get(f).cloned().unwrap_or(Value::Null))));
             let same = hc.kernel.find_tx(&sys(hc.ctx), hc.tx, "ServiceLevelAgreement", &filters, None, 2).await?;
             if let Some(other) = same.iter().find(|o| id(o, "id") != id(doc, "id")) {
                 return Err(Error::invalid(format!(
-                    "the enabled agreement '{}' already applies to the same customer, customer group and ticket type; disable it or change the criteria",
+                    "the enabled agreement '{}' already applies to the same customer, customer group, team and ticket type; disable it or change the criteria",
                     s(other, "sla_name").unwrap_or_default()
                 )));
             }
@@ -643,9 +613,13 @@ impl DocHook for TicketHook {
             }
             assign(hc, doc).await?;
         }
-        let (cust, ticket_type) = (id(doc, "customer"), id(doc, "ticket_type"));
-        let slas = load_slas(hc.kernel, hc.ctx, hc.tx, |h| applies(h, cust, &groups, ticket_type)).await?;
-        doc.extend(sla_fields(&slas, &groups, doc, now));
+        let (cust, team, ticket_type) = (id(doc, "customer"), id(doc, "team"), id(doc, "ticket_type"));
+        let slas = load_slas(hc.kernel, hc.ctx, hc.tx, |h| applies(h, cust, &groups, team, ticket_type)).await?;
+        let fields = policy_fields(&slas, &groups, doc);
+        if fields.get("response_secs").is_some_and(|v| !v.is_null()) {
+            crate::hours::ensure(hc.kernel, hc.ctx, hc.tx).await?;
+        }
+        doc.extend(fields);
         Ok(())
     }
 
@@ -656,6 +630,8 @@ impl DocHook for TicketHook {
         let known: HashSet<String> = old.map(|o| rows(o, "conversation").iter().filter_map(|r| s(r, "id").map(str::to_string)).collect()).unwrap_or_default();
         let fresh: Vec<Doc> = rows(doc, "conversation").into_iter().filter(|m| !s(m, "id").is_some_and(|i| known.contains(i))).collect();
         outgoing::dispatch(hc, doc, ticket, &fresh).await?;
+        // The targets were kept just before this save: what the inbox reads of them follows at once.
+        verdicts(hc.tx, hc.ctx.tenant, Some(ticket)).await?;
         let Some(agent) = s(doc, "assigned_to") else { return Ok(()) };
         let label = format!("{} {}", s(doc, "number").unwrap_or("Ticket"), s(doc, "subject").unwrap_or_default());
         if old.is_none_or(|o| s(o, "assigned_to") != Some(agent)) && agent != hc.ctx.email {
@@ -761,14 +737,16 @@ async fn groups_cached(k: &Kernel, ctx: &Ctx, tx: &mut Tx, cache: &mut HashMap<O
     Ok(groups)
 }
 
-/// Re-evaluates the SLA of every ticket still being worked on (verdicts change with time; a new
-/// or edited agreement may now apply). Only changed values are written, without a new version, so
-/// an agent's open form stays valid; a changed verdict is published as `Ticket.updated` for
-/// automations and webhooks. Safe on several replicas at once: rows are re-read under a lock.
+/// Which agreement applies to every ticket still being worked on, again: a new or edited agreement may now
+/// apply, or a priority was raised by an escalation. A ticket whose agreement, targets or pausing changed is
+/// saved through the full pipeline (as the system), so the platform's targets take the new seconds into their
+/// rounds: the due moment becomes what is left of the new time from now. Safe on several replicas at once:
+/// each ticket is read again under its lock before it is saved.
 pub async fn refresh_slas(k: &Kernel, ctx: &Ctx) -> Result<usize> {
     // ponytail: one read per open ticket per run; select by a stored next-deadline column if a
     // tenant keeps ~100k tickets open.
     let ent = k.entity(ctx, "Ticket")?;
+    let sctx = sys(ctx);
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
     let slas = load_slas(k, ctx, &mut tx, |_| true).await?;
     let ids: Vec<Uuid> = sqlx::query_scalar("select id from e_ticket where tenant_id = $1 and status = any($2) order by id")
@@ -780,12 +758,11 @@ pub async fn refresh_slas(k: &Kernel, ctx: &Ctx) -> Result<usize> {
     let mut groups = HashMap::new();
     let mut changed = 0;
     for chunk in ids.chunks(200) {
-        let now = Utc::now();
-        let mut tx = k.db.tenant_tx(ctx.tenant).await?;
         for &ticket in chunk {
+            let mut tx = k.db.tenant_tx(ctx.tenant).await?;
             let Some(doc) = store::load(&mut tx, &ctx.schema, &ent, ctx.tenant, ticket, false).await? else { continue };
             let g = groups_cached(k, ctx, &mut tx, &mut groups, id(&doc, "customer")).await?;
-            if delta(&doc, sla_fields(&slas, &g, &doc, now)).is_empty() {
+            if delta(&doc, policy_fields(&slas, &g, &doc)).is_empty() {
                 continue;
             }
             // Something moved: recompute from the locked row (an agent may have just saved it).
@@ -794,27 +771,86 @@ pub async fn refresh_slas(k: &Kernel, ctx: &Ctx) -> Result<usize> {
                 continue;
             }
             let g = groups_cached(k, ctx, &mut tx, &mut groups, id(&doc, "customer")).await?;
-            let values = delta(&doc, sla_fields(&slas, &g, &doc, now));
-            if values.is_empty() {
+            if delta(&doc, policy_fields(&slas, &g, &doc)).is_empty() {
                 continue;
             }
-            let publish = VERDICT.iter().any(|f| values.contains_key(*f));
-            let breached = values.get("sla_status") == Some(&json!("Breached"));
-            k.set_values_tx(ctx, &mut tx, "Ticket", ticket, values).await?;
-            if breached && let Some(agent) = s(&doc, "assigned_to") {
-                let label = format!("{} {}", s(&doc, "number").unwrap_or("Ticket"), s(&doc, "subject").unwrap_or_default());
-                notify_agent(&mut tx, ctx.tenant, agent, SLA, &format!("SLA breached on {label}"), ticket).await?;
+            // The save recomputes the agreement (its hook) and the platform's targets follow; a same-value patch is enough.
+            let mut touch = Doc::new();
+            touch.insert("priority".into(), doc.get("priority").cloned().unwrap_or(Value::Null));
+            match k.update_tx(&sctx, &mut tx, "Ticket", ticket, touch, None).await {
+                Ok(_) => {
+                    tx.commit().await?;
+                    changed += 1;
+                }
+                Err(e) => tracing::warn!(%ticket, "the agreement of a ticket could not be updated: {e}"),
             }
-            if publish {
-                let fresh = store::load(&mut tx, &ctx.schema, &ent, ctx.tenant, ticket, false).await?;
-                let payload = json!({"entity": "Ticket", "id": ticket, "event": "updated", "actor": Value::Null, "depth": ctx.depth, "request_id": ctx.request_id, "doc": fresh});
-                outbox::enqueue(&mut tx, ctx.tenant, "Ticket.updated", Some("Ticket"), Some(ticket), payload).await?;
-            }
-            changed += 1;
         }
-        tx.commit().await?;
     }
     Ok(changed)
+}
+
+/// What a ticket's service level says, kept in the fields the inbox, the escalation rules and the reports read
+/// (`sla_status`, `response_breached`, `resolution_breached`, `first_response_hours`, `resolution_hours`),
+/// worked out from the platform's target states and rounds, never from the clock: Breached once a target was
+/// missed (even when it was met late), Fulfilled once resolved in time, At Risk when a running target has used
+/// `at_risk_percent` of the time between its start and its due moment, else On Track. One statement for one
+/// ticket (after its save) or for every open one (maintenance); only changed rows are written, without a new
+/// version, so an agent's open form stays valid. Returns the tickets that just became Breached, for the
+/// agent to be told: a row is returned by the one statement that changed it, so two replicas tell once.
+pub async fn verdicts(tx: &mut Tx, tenant: Uuid, only: Option<Uuid>) -> Result<Vec<(Uuid, Option<String>, String, String)>> {
+    type Changed = (Uuid, Option<String>, String, String, Option<String>);
+    let pct: i64 = sqlx::query_scalar("select at_risk_percent from e_support_settings where tenant_id = $1 limit 1")
+        .bind(tenant)
+        .fetch_optional(&mut **tx)
+        .await?
+        .flatten()
+        .unwrap_or(75);
+    Ok(sqlx::query_as::<_, Changed>(
+        "with v as ( \
+           select t.id, \
+             case \
+               when t.response_state is null and t.resolution_state is null then null \
+               when t.response_state in ('breached', 'met_late') or t.resolution_state in ('breached', 'met_late') then 'Breached' \
+               when t.resolution_state = 'met' then 'Fulfilled' \
+               when exists (select 1 from record_target r where r.tenant_id = t.tenant_id and r.entity = 'Ticket' and r.record_id = t.id and r.started_at is not null \
+                              and r.met_at is null and r.paused_at is null and r.breached_at is null and r.due_at is not null \
+                              and now() >= r.started_at + (r.due_at - r.started_at) * ($2::float8 / 100)) then 'At Risk' \
+               else 'On Track' end as status, \
+             coalesce(t.response_state in ('breached', 'met_late'), false) as rb, \
+             coalesce(t.resolution_state in ('breached', 'met_late'), false) as zb, \
+             (select round(r.worked_secs / 3600.0, 2) from record_target r where r.tenant_id = t.tenant_id and r.entity = 'Ticket' and r.record_id = t.id and r.target = 'respond' and r.met_at is not null) as frh, \
+             (select round(r.worked_secs / 3600.0, 2) from record_target r where r.tenant_id = t.tenant_id and r.entity = 'Ticket' and r.record_id = t.id and r.target = 'resolve' and r.met_at is not null) as zh \
+           from e_ticket t where t.tenant_id = $1 and (($3::uuid is not null and t.id = $3) or ($3::uuid is null and t.status = any($4)))) \
+         update e_ticket t set sla_status = v.status, response_breached = v.rb, resolution_breached = v.zb, \
+                first_response_hours = coalesce(v.frh, t.first_response_hours), resolution_hours = coalesce(v.zh, t.resolution_hours) \
+         from v where t.tenant_id = $1 and t.id = v.id \
+           and (t.sla_status is distinct from v.status or t.response_breached is distinct from v.rb or t.resolution_breached is distinct from v.zb \
+                or t.first_response_hours is distinct from coalesce(v.frh, t.first_response_hours) or t.resolution_hours is distinct from coalesce(v.zh, t.resolution_hours)) \
+         returning t.id, t.assigned_to, coalesce(t.number, 'Ticket'), coalesce(t.subject, ''), v.status",
+    )
+    .bind(tenant)
+    .bind(pct as f64)
+    .bind(only)
+    .bind(&OPEN[..])
+    .fetch_all(&mut **tx)
+    .await?
+    .into_iter()
+    .filter(|c: &Changed| c.4.as_deref() == Some("Breached"))
+    .map(|(i, agent, number, subject, _)| (i, agent, number, subject))
+    .collect())
+}
+
+/// [`verdicts`] for every open ticket, telling each agent whose ticket just became Breached.
+pub async fn refresh_verdicts(k: &Kernel, ctx: &Ctx) -> Result<usize> {
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let breached = verdicts(&mut tx, ctx.tenant, None).await?;
+    for (ticket, agent, number, subject) in &breached {
+        if let Some(agent) = agent {
+            notify_agent(&mut tx, ctx.tenant, agent, SLA, &format!("SLA breached on {number} {subject}"), *ticket).await?;
+        }
+    }
+    tx.commit().await?;
+    Ok(breached.len())
 }
 
 /// A rule of what happens to a ticket whose agreement is in trouble.
@@ -1023,24 +1059,20 @@ mod tests {
         }
     }
 
-    fn sla(name: &str, customer: Option<Uuid>, group: Option<Uuid>, ticket_type: Option<Uuid>, priorities: &[(&str, &str, &str)]) -> Sla {
+    fn sla(name: &str, customer: Option<Uuid>, group: Option<Uuid>, team: Option<Uuid>, ticket_type: Option<Uuid>, priorities: &[(&str, &str, &str)]) -> Sla {
         let mut doc = Doc::new();
         doc.insert("id".into(), json!(Uuid::now_v7().to_string()));
         doc.insert("sla_name".into(), json!(name));
         doc.insert("customer".into(), json!(customer.map(|c| c.to_string())));
         doc.insert("customer_group".into(), json!(group.map(|c| c.to_string())));
+        doc.insert("team".into(), json!(team.map(|c| c.to_string())));
         doc.insert("ticket_type".into(), json!(ticket_type.map(|c| c.to_string())));
         doc.insert("pause_on_hold".into(), json!(true));
-        doc.insert("pause_on_replied".into(), json!(true));
+        doc.insert("pause_on_replied".into(), json!(false));
         doc.insert(
             "priorities".into(),
             Value::Array(priorities.iter().map(|(p, r, z)| json!({"priority": p, "response_hours": r, "resolution_hours": z})).collect()),
         );
-        doc.insert(
-            "working_hours".into(),
-            Value::Array(WEEKDAYS[..5].iter().map(|w| json!({"weekday": w, "start_time": "09:00", "end_time": "18:00"})).collect()),
-        );
-        doc.insert("holidays".into(), json!([{"holiday_date": "2026-11-02"}]));
         Sla::from_doc(&doc).unwrap()
     }
 
@@ -1050,13 +1082,14 @@ mod tests {
 
     #[test]
     fn the_most_specific_agreement_with_the_priority_applies() {
-        let (acme, retail, all, incident) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        let (acme, retail, all, incident, billing) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
         let slas = [
-            sla("Default", None, None, None, &[("Low", "16", "80"), ("Medium", "8", "40"), ("High", "4", "16"), ("Urgent", "1", "4")]),
-            sla("Incidents", None, None, Some(incident), &[("High", "2", "8")]),
-            sla("All Customers", None, Some(all), None, &[("High", "3", "12")]),
-            sla("Retail", None, Some(retail), None, &[("High", "2", "10")]),
-            sla("Acme", Some(acme), None, None, &[("High", "1", "4")]),
+            sla("Default", None, None, None, None, &[("Low", "16", "80"), ("Medium", "8", "40"), ("High", "4", "16"), ("Urgent", "1", "4")]),
+            sla("Incidents", None, None, None, Some(incident), &[("High", "2", "8")]),
+            sla("All Customers", None, Some(all), None, None, &[("High", "3", "12")]),
+            sla("Retail", None, Some(retail), None, None, &[("High", "2", "10")]),
+            sla("Acme", Some(acme), None, None, None, &[("High", "1", "4")]),
+            sla("Billing", None, None, Some(billing), None, &[("High", "2", "6")]),
         ];
         let chain = [retail, all];
         let name = |doc: Value, groups: &[Uuid]| pick(&slas, &ticket(doc), groups).map(|x| x.name.clone());
@@ -1065,47 +1098,36 @@ mod tests {
         assert_eq!(name(json!({"priority": "High"}), &[all]).as_deref(), Some("All Customers"));
         assert_eq!(name(json!({"priority": "High", "ticket_type": incident.to_string()}), &[]).as_deref(), Some("Incidents"));
         assert_eq!(name(json!({"priority": "Low", "customer": acme.to_string()}), &chain).as_deref(), Some("Default"), "Acme sets no Low target");
+        assert_eq!(name(json!({"priority": "High", "team": billing.to_string()}), &[]).as_deref(), Some("Billing"), "a team's own agreement");
+        assert_eq!(
+            name(json!({"priority": "High", "team": billing.to_string(), "ticket_type": incident.to_string()}), &[]).as_deref(),
+            Some("Billing"),
+            "the team outranks the type"
+        );
+        assert_eq!(
+            name(json!({"priority": "High", "team": billing.to_string(), "customer": acme.to_string()}), &[]).as_deref(),
+            Some("Acme"),
+            "the customer outranks the team"
+        );
     }
 
     #[test]
-    fn sla_fields_from_the_timeline() {
-        let slas = [sla("Default", None, None, None, &[("Medium", "8", "40"), ("Urgent", "1", "4")])];
-        let t = |s: &str| parse_datetime(s).unwrap();
-        // Opened Friday 17:00 (Monday 2 November is a holiday): 1h on Friday + 7h on Tuesday.
-        let mut doc = ticket(json!({
-            "priority": "Medium", "status": "Open", "opened_at": "2026-10-30T17:00:00.000Z",
-            "status_history": [{"status": "Open", "at": "2026-10-30T17:00:00.000Z"}],
-        }));
-        let f = sla_fields(&slas, &[], &doc, t("2026-10-30T17:30:00Z"));
-        assert_eq!(f["response_by"], json!("2026-11-03T16:00:00.000Z"));
-        assert_eq!(f["sla_status"], json!("On Track"));
-        assert_eq!(f["service_level_agreement"], json!(slas[0].id.to_string()));
-        // Urgent: due Friday 18:00, so by Tuesday it has breached.
-        doc.insert("priority".into(), json!("Urgent"));
-        let f = sla_fields(&slas, &[], &doc, t("2026-11-03T09:30:00Z"));
-        assert_eq!(f["response_by"], json!("2026-10-30T18:00:00.000Z"));
-        assert_eq!((f["sla_status"].clone(), f["response_breached"].clone()), (json!("Breached"), json!(true)));
-        // On hold since Friday 17:30: pending deadlines wait for the resume, the verdict is frozen.
-        doc.insert("priority".into(), json!("Medium"));
-        doc.insert("status".into(), json!("On Hold"));
-        doc.insert(
-            "status_history".into(),
-            json!([{"status": "Open", "at": "2026-10-30T17:00:00.000Z"}, {"status": "On Hold", "at": "2026-10-30T17:30:00.000Z"}]),
+    fn what_the_targets_are_told() {
+        let slas = [sla("Default", None, None, None, None, &[("Medium", "8", "40"), ("Urgent", "1", "4")])];
+        let f = policy_fields(&slas, &[], &ticket(json!({"priority": "Urgent"})));
+        assert_eq!((f["response_secs"].clone(), f["resolution_secs"].clone()), (json!(3600), json!(14400)), "working seconds");
+        assert_eq!(
+            (f["service_level_agreement"].clone(), f["sla_pause_hold"].clone(), f["sla_pause_replied"].clone()),
+            (json!(slas[0].id.to_string()), json!(true), json!(false))
         );
-        let f = sla_fields(&slas, &[], &doc, t("2026-11-05T12:00:00Z"));
-        assert_eq!((f["response_by"].clone(), f["sla_status"].clone(), f["paused_hours"].clone()), (Value::Null, json!("On Track"), json!("0")));
-        // Resumed Wednesday 10:00: the 7.5 business hours left run from then; 10.5 were paused.
-        doc.insert("status".into(), json!("Open"));
-        doc.insert(
-            "status_history".into(),
-            json!([{"status": "Open", "at": "2026-10-30T17:00:00.000Z"}, {"status": "On Hold", "at": "2026-10-30T17:30:00.000Z"}, {"status": "Open", "at": "2026-11-04T10:00:00.000Z"}]),
+        let none = policy_fields(&slas, &[], &ticket(json!({"priority": "Low"})));
+        assert_eq!(
+            (none["response_secs"].clone(), none["service_level_agreement"].clone()),
+            (Value::Null, Value::Null),
+            "no target at this priority: no clock"
         );
-        let f = sla_fields(&slas, &[], &doc, t("2026-11-04T10:00:00Z"));
-        assert_eq!(f["response_by"], json!("2026-11-04T17:30:00.000Z"));
-        assert_eq!(f["paused_hours"], json!("10.5"), "0.5h Friday + 9h Tuesday + 1h Wednesday");
-        // No agreement: no deadlines, but hours are still measured (round the clock).
-        let none = sla_fields(&[], &[], &doc, t("2026-11-04T10:00:00Z"));
-        assert_eq!((none["sla_status"].clone(), none["response_breached"].clone()), (Value::Null, json!(false)));
-        assert_eq!(none["paused_hours"], json!("112.5"));
+        let half = sla("Half", None, None, None, None, &[("Medium", "0.5", "1.25")]);
+        let f = policy_fields(&[half], &[], &ticket(json!({"priority": "Medium"})));
+        assert_eq!((f["response_secs"].clone(), f["resolution_secs"].clone()), (json!(1800), json!(4500)));
     }
 }
