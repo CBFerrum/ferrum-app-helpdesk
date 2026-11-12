@@ -9,6 +9,7 @@ import type { EntityMeta } from "@ferrum/records";
 import { Composer } from "./Composer";
 import { Conversation } from "./Conversation";
 import { buildFeed, type Story } from "./feed";
+import { MergeDialog } from "./Merge";
 import { Queues } from "./Queues";
 import { Rail, type RailTicket } from "./Rail";
 import { ResolveDialog } from "./Resolve";
@@ -267,5 +268,34 @@ describe("resolving", () => {
   it("warns that closing is final", () => {
     expect(draw({ status: "Closed" })).toContain("A closed ticket is final");
     expect(draw()).not.toContain("A closed ticket is final");
+  });
+});
+
+describe("merging", () => {
+  const mk = (id: string, over: Partial<Ticket> = {}): Ticket => ({ id, number: `TKT-${id}`, subject: `Jam ${id}`, status: "Open", customer_name: "Acme", opened_at: `2026-11-0${id}T09:00:00Z`, ...over });
+  const draw = (o: Partial<React.ComponentProps<typeof MergeDialog>> = {}) =>
+    page(<MergeDialog open tickets={[mk("1"), mk("2")]} onClose={() => {}} onDone={() => {}} {...o} />);
+
+  it("from the inbox, lets the agent choose the ticket that stays and says what happens to the others", () => {
+    const html = draw();
+    expect(html).toContain("The ticket that stays");
+    expect(html).toContain('type="radio"');
+    expect(html).toContain("Merge 1 ticket");
+    expect(html).toContain("TKT-2 then closes as merged");
+    expect(html).toContain("This cannot be undone");
+  });
+
+  it("says why tickets of two customers are not merged, and does not offer to", () => {
+    const html = draw({ tickets: [mk("1"), mk("2", { customer_name: "Globex" })] });
+    expect(html).toContain("is another customer&#x27;s: only tickets of one customer are merged");
+    expect(html).toContain("disabled");
+  });
+
+  it("from a ticket, offers the customer's other tickets to tick", () => {
+    const html = draw({ keep: "1", tickets: [mk("1"), mk("2"), mk("3", { status: "Closed" })] });
+    expect(html).toContain("Merge tickets into TKT-1");
+    expect(html).toContain('type="checkbox"');
+    expect(html).toContain("(closed)");
+    expect(html).toContain("Merge 0 tickets");
   });
 });

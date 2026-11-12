@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.1
+
+The interface gains the screens for merging tickets, rebuilt with Ferrum-Frontend 1381367. In the inbox, select two or more tickets and Merge…: choose the ticket that stays (the oldest is offered), read what moves and that the others close as merged and cannot be undone, and confirm. On a ticket, More actions, Merge other tickets into this one… offers the customer's other open tickets to tick. Tickets of two customers, a closed ticket and a ticket into itself are told in plain words before asking, and the server's own refusals are shown as it words them. A merged ticket says Merged into the ticket that stayed, with a link, and has no box to reply in; in the survivor's conversation each message that came from a merged ticket is marked with that ticket's number. Words and names in Arabic and Hindi (23 words and 6 names more; translated by the model, to be reviewed by native speakers).
+
+Not in this release: a Merged mark on the inbox rows, merging by e-mail reply, and the screens were not run against a server.
+
 ## 0.9.0
 
 Merge duplicate tickets. The action Merge Tickets Into This One on the ticket that stays takes the numbers of the duplicates, which must be the same customer's (the same contact when there is no customer) and not closed. Their conversation moves in time order, each message marked in `merged_from` with the ticket it came from; their files, comments, assignments, watchers and tags move too, a tag or watcher both had staying once (the platform record merge's own statements). Each duplicate closes as merged (`merged_into`, `merged_at`, `merged_by`), and a note in both conversations says who merged and when. A customer's reply on the portal to a merged ticket lands on the survivor. The survivor's SLA fields are not reset and nothing that moved is sent again. The platform's record merge was not used: it hides the duplicate and does not move a record's own lines. A merge is not undone: a closed ticket is final, and undoing would mean moving messages back out of a conversation that is a record, so it is not offered. Merging by e-mail reply and merging in the inbox's own screens are not built.

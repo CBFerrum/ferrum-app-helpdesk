@@ -294,6 +294,7 @@ CHANGELOG.md  what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.9.1** | Screens for merging tickets: select tickets in the inbox or tick a customer's other tickets on one, choose the one that stays, and read what moves; a merged ticket links to the survivor and its messages say where they came from. |
 | **0.9.0** | Merge duplicate tickets: the conversation, files, watchers and tags move to the surviving ticket, the duplicate closes as merged and a customer's reply to it lands on the survivor. |
 | **0.8.2** | Rebuilt on the tuned design system: better menu icons, a lighter first page, a visible scroll cue, cleaner print. |
 | **0.8.1** | The redesigned interface: the upgraded design system, shaped loading, told-apart states. |
