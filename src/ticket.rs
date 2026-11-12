@@ -14,7 +14,7 @@ use ferrum_domain::flow::created;
 use ferrum_domain::util::{b, d, get, id, rows, s, set, sys};
 use ferrum_kernel::value::parse_datetime;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, Filter, HookCtx, Kernel, Result, Tx, notify, outbox, store};
-use ferrum_meta::{Expr, Scope};
+use ferrum_meta::Expr;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use serde_json::{Value, json};
@@ -301,62 +301,6 @@ pub fn pick_member(members: &[Member], last: Option<&str>, open: &HashMap<String
     chosen.map(|m| m.agent.clone())
 }
 
-/// Routes a new ticket: the first enabled rule (highest priority) whose team fits and whose
-/// condition matches sets the team and, if a member is available, the agent. The rule row is locked
-/// for the rest of the transaction, so concurrent tickets take turns instead of colliding.
-async fn assign(hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
-    if s(doc, "assigned_to").is_some() {
-        return Ok(());
-    }
-    let sctx = sys(hc.ctx);
-    let rules = hc.kernel.find_tx(&sctx, hc.tx, "TicketAssignmentRule", &[Filter::eq("enabled", true)], Some("priority desc"), 1000).await?;
-    let view = hc.entity.cel_view(&Value::Object(doc.clone()), &hc.ctx.schema);
-    let user = hc.ctx.user_value();
-    // Agents limited to some teams route only into those teams (anything else would be refused).
-    let allowed = if hc.ctx.is_admin || hc.ctx.is_system { None } else { hc.ctx.scopes.get("SupportTeam").cloned() };
-    for rule in rules {
-        let (Some(rule_id), Some(team)) = (id(&rule, "id"), id(&rule, "team")) else { continue };
-        if id(doc, "team").is_some_and(|t| t != team) || allowed.as_ref().is_some_and(|a| !a.contains(&team)) {
-            continue;
-        }
-        if let Some(cond) = s(&rule, "condition") {
-            match Expr::compile(cond).and_then(|e| e.eval_bool(&Scope { doc: &view, old: None, parent: None, user: &user })) {
-                Ok(true) => {}
-                Ok(false) => continue,
-                Err(e) => {
-                    tracing::warn!(rule = %rule_id, "assignment rule condition failed: {e}");
-                    continue;
-                }
-            }
-        }
-        let rule = hc.kernel.get_tx(&sctx, hc.tx, "TicketAssignmentRule", rule_id, true).await?;
-        let members: Vec<Member> = rows(&get(hc.kernel, hc.ctx, hc.tx, "SupportTeam", team).await?, "members")
-            .iter()
-            .filter_map(|m| Some(Member { agent: s(m, "agent")?.to_string(), active: b(m, "active"), max_open: int(m, "max_open_tickets") }))
-            .collect();
-        let agents: Vec<String> = members.iter().map(|m| m.agent.clone()).collect();
-        let open: HashMap<String, i64> = sqlx::query_as::<_, (String, i64)>(
-            "select assigned_to, count(*) from e_ticket where tenant_id = $1 and assigned_to = any($2) and status = any($3) group by assigned_to",
-        )
-        .bind(hc.ctx.tenant)
-        .bind(&agents)
-        .bind(&OPEN[..])
-        .fetch_all(&mut **hc.tx)
-        .await?
-        .into_iter()
-        .collect();
-        set(doc, "team", team.to_string());
-        if let Some(agent) = pick_member(&members, s(&rule, "last_assigned_to"), &open, s(&rule, "rule_type") == Some("Load Balancing")) {
-            set(doc, "assigned_to", agent.clone());
-            let mut v = Doc::new();
-            v.insert("last_assigned_to".into(), json!(agent));
-            hc.kernel.set_values_tx(&sctx, hc.tx, "TicketAssignmentRule", rule_id, v).await?;
-        }
-        return Ok(());
-    }
-    Ok(())
-}
-
 // ───────────────────────────── tickets ─────────────────────────────
 
 pub struct TicketHook;
@@ -569,6 +513,10 @@ impl DocHook for TicketHook {
             }
         }
         let status = s(doc, "status").unwrap_or("Open").to_string();
+        if status == "Open" && old.as_ref().is_some_and(|o| s(o, "status") == Some("Resolved")) {
+            set(doc, "reopen_count", json!(int(doc, "reopen_count") + 1));
+            crate::routing::reroute_reopened(hc, doc).await?;
+        }
         let opened = ts(doc, "opened_at").unwrap_or(now);
         let at = now.max(opened);
         let mut tl = timeline(doc);
@@ -611,7 +559,7 @@ impl DocHook for TicketHook {
             {
                 set(doc, "contact_email", email.to_string());
             }
-            assign(hc, doc).await?;
+            crate::routing::assign(hc, doc).await?;
         }
         let (cust, team, ticket_type) = (id(doc, "customer"), id(doc, "team"), id(doc, "ticket_type"));
         let slas = load_slas(hc.kernel, hc.ctx, hc.tx, |h| applies(h, cust, &groups, team, ticket_type)).await?;
