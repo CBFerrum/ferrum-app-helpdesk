@@ -31,6 +31,10 @@ impl Site for HelpdeskSite {
             ("POST", ["portal", "tickets", t, "replies"]) => (200, reply(k, user, ticket_id(t)?, &body(&req)?).await?),
             ("POST", ["portal", "tickets", t, "rating"]) => (200, rate(k, user, ticket_id(t)?, &body(&req)?).await?),
             ("GET", ["portal", "tickets", t, "files", f]) => return file(k, user, ticket_id(t)?, f).await,
+            ("GET", ["portal", "articles"]) => (200, articles(k, user, query(&req, "q"), 20).await?),
+            ("GET", ["portal", "suggest"]) => (200, articles(k, user, query(&req, "subject"), 5).await?),
+            ("GET", ["portal", "articles", a]) => (200, article(k, user, article_id(a)?).await?),
+            ("POST", ["portal", "articles", a, "vote"]) => (200, vote(k, user, article_id(a)?, &body(&req)?).await?),
             _ => return Err(Error::NotFound(format!("helpdesk endpoint {} {}", req.method, req.path))),
         };
         let mut r = SiteResponse::json(status, &out);
@@ -55,6 +59,10 @@ fn body(req: &SiteRequest) -> Result<Map<String, Value>> {
         Ok(Value::Object(m)) => Ok(m),
         _ => Err(Error::invalid("the request body must be a JSON object")),
     }
+}
+
+fn article_id(raw: &str) -> Result<Uuid> {
+    raw.parse().map_err(|_| Error::NotFound("article".into()))
 }
 
 fn ticket_id(raw: &str) -> Result<Uuid> {
@@ -318,6 +326,46 @@ async fn rate(k: &Kernel, user: &Ctx, ticket: Uuid, body: &Map<String, Value>) -
         Ok(view)
     })
     .await
+}
+
+/// `GET portal/articles?q=` and `GET portal/suggest?subject=`: the help centre's articles a signed-in customer may read (Public
+/// and Customers Only, Published), the best fits for the words first. Offered while they start a request.
+async fn articles(k: &Kernel, user: &Ctx, text: Option<&str>, limit: i64) -> Result<Value> {
+    k.rate_limit(
+        &format!("helpdesk|articles|{}|{}", user.tenant, user.user),
+        std::time::Duration::from_secs(60),
+        60,
+        "too many searches; try again in a minute",
+    )
+    .await?;
+    let mut tx = k.db.tenant_tx(user.tenant).await?;
+    let found = crate::help::find(&mut tx, user.tenant, text, limit).await?;
+    tx.commit().await?;
+    Ok(json!({"articles": found}))
+}
+
+/// `GET portal/articles/{id}`: one article, and one more view of it.
+async fn article(k: &Kernel, user: &Ctx, article: Uuid) -> Result<Value> {
+    let mut tx = k.db.tenant_tx(user.tenant).await?;
+    let a = crate::help::read(&mut tx, user.tenant, article).await?;
+    tx.commit().await?;
+    Ok(a)
+}
+
+/// `POST portal/articles/{id}/vote` `{helpful}`: whether the article helped, once a day for each customer.
+async fn vote(k: &Kernel, user: &Ctx, article: Uuid, body: &Map<String, Value>) -> Result<Value> {
+    let helpful = body.get("helpful").and_then(Value::as_bool).ok_or_else(|| Error::field("helpful", "true or false"))?;
+    k.rate_limit(
+        &format!("helpdesk|vote|{}|{}|{article}", user.tenant, user.user),
+        std::time::Duration::from_secs(86_400),
+        1,
+        "you have told us about this one already",
+    )
+    .await?;
+    let mut tx = k.db.tenant_tx(user.tenant).await?;
+    crate::help::vote(&mut tx, user.tenant, article, helpful).await?;
+    tx.commit().await?;
+    Ok(json!({"counted": true}))
 }
 
 /// `GET work`: the open tickets assigned to the caller, for Home's My work: due when their SLA
