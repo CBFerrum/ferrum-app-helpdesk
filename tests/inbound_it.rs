@@ -34,7 +34,9 @@ fn raw(m: &Value) -> String {
     for (k, v) in m["headers"].as_object().into_iter().flatten() {
         head.push(format!("{k}: {}", v.as_str().unwrap()));
     }
-    if m["unverified"] != json!(true) {
+    if m["unverified"] == json!(true) {
+        head.push("Authentication-Results: mx.acme.test; spf=fail; dkim=none; dmarc=fail header.from=cust.test".into());
+    } else if m["noresult"] != json!(true) {
         head.push("Authentication-Results: mx.acme.test; dkim=pass header.d=cust.test; dmarc=pass header.from=cust.test".into());
     }
     let text = get("text_content").unwrap_or("");
@@ -400,9 +402,25 @@ async fn scenario() {
 
     // ── mail that fails authentication, from someone known, is held: a forged sender cannot read or steer a ticket ──
     e.update("SupportSettings", settings, json!({"unknown_senders": "Open Ticket"})).await;
-    // A settings record from before this release has no value for it: the default holds.
+    // A settings record from before this release has no value for it: the default is Hold Failed.
     e.exec("update e_support_settings set unverified_senders = null where tenant_id = $1", &[]).await;
     let known_ticket = uid(&e.list("Ticket", json!({"subject": "Known"})).await[0]);
+    // A mail server that adds no authentication result at all: a customer's reply is taken, and marked.
+    let before = e.get("Ticket", known_ticket).await["conversation"].as_array().map_or(0, Vec::len);
+    let mut quiet = mail(
+        "ada@cust.test",
+        &format!("support+{}@acme.test", e.get("Ticket", known_ticket).await["mail_token"].as_str().unwrap()),
+        "Re: Known",
+        "No result from the server.",
+        "noresult@cust.test",
+    );
+    quiet["noresult"] = json!(true);
+    deliver(&e, quiet).await;
+    let after = e.get("Ticket", known_ticket).await;
+    let rows = after["conversation"].as_array().unwrap();
+    assert_eq!(rows.len(), before + 1, "not held by default");
+    assert_eq!(rows.last().unwrap()["sender_unverified"], json!(true), "marked on the message");
+    assert!(rows[0]["sender_unverified"] != json!(true), "a verified one is not");
     let steps = e.get("Ticket", known_ticket).await["conversation"].as_array().map_or(0, Vec::len);
     let n = tickets(&e).await.len();
     let mut forged = mail(
@@ -423,7 +441,10 @@ async fn scenario() {
         "neither added to their ticket nor opened one in their name"
     );
     let unverified = e.list("InboundLog", json!({"reason": "Unverified sender"})).await;
-    assert_eq!((unverified.len(), unverified[0]["outcome"].clone(), unverified[0]["detail"].clone()), (2, json!("Held"), json!("x-ferrum-auth: unverified")));
+    assert_eq!(
+        (unverified.len(), unverified[0]["outcome"].clone(), unverified[0]["detail"].clone()),
+        (2, json!("Held"), json!("authentication-results: failed"))
+    );
     // The requester of a ticket who is no customer is as known as a customer is, on their own ticket.
     let zed_ticket = e.list("Ticket", json!({"subject": "Invoice question"})).await.remove(0);
     let mut zed = mail(
@@ -456,7 +477,13 @@ async fn scenario() {
     accepted["unverified"] = json!(true);
     deliver(&e, accepted).await;
     assert_eq!(e.list("Ticket", json!({"subject": "Accepted anyway"})).await.len(), 1);
-    e.update("SupportSettings", settings, json!({"unverified_senders": "Hold for Review", "unknown_senders": "Ignore"})).await;
+    // Hold All Unverified holds a mail with no result too.
+    e.update("SupportSettings", settings, json!({"unverified_senders": "Hold All Unverified"})).await;
+    let mut silent = mail("ada@cust.test", "support@acme.test", "Silent server", "No result.", "silent@cust.test");
+    silent["noresult"] = json!(true);
+    deliver(&e, silent).await;
+    assert!(e.list("Ticket", json!({"subject": "Silent server"})).await.is_empty(), "held");
+    e.update("SupportSettings", settings, json!({"unverified_senders": "Hold Failed", "unknown_senders": "Ignore"})).await;
 
     // ── a ticket that is closed is final: its customer's mail opens one that follows it up ──
     let closed = e.get("Ticket", known_ticket).await;

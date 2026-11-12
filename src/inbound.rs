@@ -197,7 +197,8 @@ struct Policy {
     unknown: String,
     per_hour: i64,
     /// Whether mail that fails authentication from a known sender is held (the default) or taken.
-    hold_unverified: bool,
+    /// `Failed` (the default), `All` or `Accept`.
+    hold: String,
 }
 
 async fn policy(k: &Kernel, sctx: &Ctx, tx: &mut Tx) -> Result<Policy> {
@@ -206,7 +207,12 @@ async fn policy(k: &Kernel, sctx: &Ctx, tx: &mut Tx) -> Result<Policy> {
     Ok(Policy {
         unknown: st.and_then(|d| s(d, "unknown_senders")).unwrap_or("Open Ticket").to_string(),
         per_hour: st.and_then(|d| d.get("inbound_per_hour")).and_then(Value::as_i64).unwrap_or(20),
-        hold_unverified: st.and_then(|d| s(d, "unverified_senders")) != Some("Accept"),
+        hold: match st.and_then(|d| s(d, "unverified_senders")) {
+            Some("Hold All Unverified") => "All",
+            Some("Accept") => "Accept",
+            _ => "Failed",
+        }
+        .into(),
     })
 }
 
@@ -363,8 +369,13 @@ async fn run(k: &Kernel, ctx: &Ctx, tx: &mut Tx, mail: &Inbound, held: Option<Uu
     };
     // Mail the server could not verify, from someone we know: held, so a forged sender neither adds to their ticket nor opens one
     // in their name. Known: a customer's address or contact, or the requester or a copy of the ticket it answers.
-    let unverified = mail.headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("x-ferrum-auth") && v.trim().eq_ignore_ascii_case("unverified"));
-    if held.is_none() && unverified && pol.hold_unverified {
+    let auth = auth_of(&mail.headers);
+    let hold = match pol.hold.as_str() {
+        "All" => auth != Auth::Verified,
+        "Accept" => false,
+        _ => auth == Auth::Failed,
+    };
+    if held.is_none() && hold {
         let known = match (customer, existing) {
             (Some(_), _) => true,
             (None, Some((t, _))) => {
@@ -379,8 +390,19 @@ async fn run(k: &Kernel, ctx: &Ctx, tx: &mut Tx, mail: &Inbound, held: Option<Uu
             (None, None) => false,
         };
         if known {
-            let row =
-                log(k, &sctx, tx, mail, &to, "Held", Some("Unverified sender"), Some("x-ferrum-auth: unverified"), existing.map(|(t, _)| t), None).await?;
+            let row = log(
+                k,
+                &sctx,
+                tx,
+                mail,
+                &to,
+                "Held",
+                Some("Unverified sender"),
+                Some(if auth == Auth::Failed { "authentication-results: failed" } else { "x-ferrum-auth: unverified" }),
+                existing.map(|(t, _)| t),
+                None,
+            )
+            .await?;
             return Ok(Outcome::Held(row));
         }
     }
@@ -436,11 +458,39 @@ async fn drop_copies(k: &Kernel, sctx: &Ctx, files: &[Value]) {
     }
 }
 
+/// What the mail server found of the sender, from the headers Mail stored: `x-ferrum-auth` is `unverified` both when a
+/// check failed and when there was no result, so the stored `authentication-results` tells them apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Auth {
+    /// Verified, or Mail kept no verdict (mail from before Mail 0.20): taken as it always was.
+    Verified,
+    /// A result was present and the sender was not authenticated, and it says it failed.
+    Failed,
+    /// A result was present without a pass or a failure (none, neutral, an error), or there was none at all.
+    Unproven,
+}
+
+pub fn auth_of(headers: &BTreeMap<String, String>) -> Auth {
+    let get = |n: &str| headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(n)).map(|(_, v)| v.to_lowercase());
+    match get("x-ferrum-auth").as_deref().map(str::trim) {
+        None | Some("verified") => return Auth::Verified,
+        _ => {}
+    }
+    let Some(result) = get("authentication-results") else { return Auth::Unproven };
+    let says = |m: &str, v: &str| result.split(|c: char| c == ';' || c.is_whitespace()).any(|t| t == format!("{m}={v}"));
+    let (dmarc_fail, spf_bad, dkim_fail, dkim_pass) =
+        (says("dmarc", "fail"), says("spf", "fail") || says("spf", "softfail"), says("dkim", "fail"), says("dkim", "pass"));
+    // Failed: DMARC failed; or SPF and DKIM both failed; or a DKIM pass that was not for the From domain (misaligned, so
+    // Mail did not count it) with SPF not passing either.
+    if dmarc_fail || (spf_bad && dkim_fail) || (dkim_pass && !says("spf", "pass") && !says("dmarc", "pass")) { Auth::Failed } else { Auth::Unproven }
+}
+
 fn message(mail: &Inbound, files: &[Value], from: &str, body: &str, copied: &[String]) -> Value {
     json!({
         "author_kind": "Customer", "author": from, "body": body, "is_internal": false,
         "attachments": files, "message_id": mail.message_id.as_deref().map(|m| cut(m, 500)),
         "communication": mail.communication.map(|c| c.to_string()), "cc": if copied.is_empty() { Value::Null } else { json!(copied.join(", ")) },
+        "sender_unverified": auth_of(&mail.headers) != Auth::Verified,
     })
 }
 
@@ -700,6 +750,23 @@ mod tests {
             why(&mail(&[("return-path", "<ada@cust.test>"), ("content-type", "text/plain")], "ada@cust.test")),
             None,
             "a person's mail has a return path"
+        );
+    }
+
+    #[test]
+    fn a_failed_check_is_told_from_no_result() {
+        let h = |v: &[(&str, &str)]| -> BTreeMap<String, String> { v.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect() };
+        assert_eq!(auth_of(&h(&[])), Auth::Verified, "no verdict kept: as before");
+        assert_eq!(auth_of(&h(&[("x-ferrum-auth", "verified"), ("authentication-results", "mx; dmarc=pass")])), Auth::Verified);
+        assert_eq!(auth_of(&h(&[("x-ferrum-auth", "unverified")])), Auth::Unproven, "no result at all");
+        assert_eq!(auth_of(&h(&[("x-ferrum-auth", "unverified"), ("authentication-results", "mx.x; spf=none; dkim=none")])), Auth::Unproven);
+        assert_eq!(auth_of(&h(&[("x-ferrum-auth", "unverified"), ("authentication-results", "mx.x; dmarc=fail header.from=a.test")])), Auth::Failed);
+        assert_eq!(auth_of(&h(&[("x-ferrum-auth", "unverified"), ("authentication-results", "mx.x; spf=fail; dkim=fail")])), Auth::Failed);
+        assert_eq!(auth_of(&h(&[("x-ferrum-auth", "unverified"), ("authentication-results", "mx.x; spf=fail; dkim=none")])), Auth::Unproven);
+        assert_eq!(
+            auth_of(&h(&[("x-ferrum-auth", "unverified"), ("authentication-results", "mx.x; dkim=pass header.d=other.test; spf=softfail")])),
+            Auth::Failed,
+            "misaligned"
         );
     }
 
