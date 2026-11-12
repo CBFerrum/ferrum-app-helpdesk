@@ -632,6 +632,7 @@ impl DocHook for TicketHook {
         outgoing::dispatch(hc, doc, ticket, &fresh).await?;
         // The targets were kept just before this save: what the inbox reads of them follows at once.
         verdicts(hc.tx, hc.ctx.tenant, Some(ticket)).await?;
+        crate::tags::apply(hc, doc, ticket).await?;
         let Some(agent) = s(doc, "assigned_to") else { return Ok(()) };
         let label = format!("{} {}", s(doc, "number").unwrap_or("Ticket"), s(doc, "subject").unwrap_or_default());
         if old.is_none_or(|o| s(o, "assigned_to") != Some(agent)) && agent != hc.ctx.email {

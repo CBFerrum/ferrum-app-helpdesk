@@ -11,6 +11,7 @@ mod outgoing;
 mod replies;
 mod reports;
 mod site;
+mod tags;
 mod ticket;
 mod visits;
 mod warranty;
@@ -33,6 +34,8 @@ pub fn register(hooks: &mut HookRegistry) {
         .register("WarrantyClaim", Arc::new(warranty::ClaimHook))
         .register("MaintenanceSchedule", Arc::new(visits::ScheduleHook))
         .register("MaintenanceVisit", Arc::new(visits::VisitHook))
+        .register("TicketTag", Arc::new(tags::TagHook))
+        .register("TagRule", Arc::new(tags::RuleHook))
         .register("SupportAddress", Arc::new(inbound::AddressHook))
         .register("InboundLog", Arc::new(inbound::LogHook));
     // Mail's records are Mail's: this runs only where Helpdesk is installed, and only reads the message Mail is saving.

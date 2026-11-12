@@ -213,3 +213,24 @@ pub fn run<F: std::future::Future<Output = ()> + Send + 'static>(scenario: F) {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().thread_stack_size(16 << 20).build().unwrap();
     rt.block_on(async { tokio::spawn(scenario).await.unwrap() });
 }
+
+/// A call to Helpdesk's own endpoints (`/api/app/helpdesk/…`) as `who`, or as no one (a public page).
+pub async fn call(k: &Kernel, who: Option<&Ctx>, tenant: Uuid, method: &str, path: &str, body: Value) -> Result<Value> {
+    let site = k.hooks.site("helpdesk").expect("helpdesk's endpoints").clone();
+    let (path, query) = match path.split_once('?') {
+        Some((p, q)) => (p, q.split('&').filter_map(|kv| kv.split_once('=')).map(|(k, v)| (k.to_string(), json!(v))).collect()),
+        None => (path, serde_json::Map::new()),
+    };
+    let req = ferrum_kernel::SiteRequest {
+        tenant,
+        user: who.cloned(),
+        method: method.into(),
+        path: format!("/{path}"),
+        query,
+        headers: Default::default(),
+        body: if body.is_null() { vec![] } else { body.to_string().into_bytes() },
+        client_ip: "203.0.113.9".into(),
+    };
+    let r = site.handle(k, req).await?;
+    Ok(serde_json::from_slice(&r.body).unwrap_or(Value::Null))
+}
