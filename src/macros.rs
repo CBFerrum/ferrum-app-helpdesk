@@ -21,7 +21,10 @@ pub fn fields(ticket: &Doc, customer: Option<&Doc>, agent: &str, link: Option<&s
     let agent_first = agent.split_whitespace().next().unwrap_or(agent);
     json!({
         "customer": {"name": customer_name, "first_name": first, "company": customer.and_then(|c| s(c, "customer_name")).unwrap_or_default()},
-        "ticket": {"number": s(ticket, "number"), "subject": s(ticket, "subject"), "priority": s(ticket, "priority"), "status": s(ticket, "status"), "link": link},
+        "ticket": {
+            "number": s(ticket, "number").unwrap_or_default(), "subject": s(ticket, "subject").unwrap_or_default(), "priority": s(ticket, "priority").unwrap_or_default(),
+            "status": s(ticket, "status").unwrap_or_default(), "link": link.unwrap_or_default(),
+        },
         "agent": {"name": agent, "first_name": agent_first},
     })
 }

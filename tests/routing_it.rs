@@ -137,7 +137,7 @@ async fn scenario() {
     let again = say(&e, mine, json!({"author_kind": "Customer", "body": "Hm"})).await;
     assert_eq!((again["assigned_to"].clone(), again["reopen_count"].clone()), (json!("ann@acme.test"), json!(1)), "its own agent is on shift");
     // Settings can turn it off.
-    let settings = uid(&e.insert("SupportSettings", json!({"route_reopened": false})).await);
+    let settings = e.settings(json!({"route_reopened": false})).await;
     k.set_away(&e.admin, user["ann"], today, today, user["boss"], "Sick").await.unwrap();
     e.update("Ticket", mine, json!({"status": "Resolved", "resolution_details": "Done again"})).await;
     let kept = say(&e, mine, json!({"author_kind": "Customer", "body": "Again"})).await;
