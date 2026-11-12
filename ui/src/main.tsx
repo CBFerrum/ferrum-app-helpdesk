@@ -84,6 +84,7 @@ const agentRoutes = [
       // The inbox and the workspace are Helpdesk's two big screens: the first script holds only the frame.
       { index: true, lazy: () => import("./Home").then((m) => ({ Component: m.HelpdeskHome })) },
       { path: "t/:id", lazy: () => import("./Ticket").then((m) => ({ Component: m.TicketRoute })) },
+      { path: "admin/:section?", lazy: () => import("./admin/Admin").then((m) => ({ Component: m.AdminRoute })) },
       { path: "e/:entity", lazy: page("ListView") },
       { path: "e/:entity/:id", lazy: page("FormView") },
       { path: "r/:name", lazy: page("ReportView") },
