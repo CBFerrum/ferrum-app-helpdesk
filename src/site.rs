@@ -277,7 +277,12 @@ async fn reply(k: &Kernel, user: &Ctx, ticket: Uuid, body: &Map<String, Value>) 
     let sctx = sys(user);
     with_retry(|| async {
         let mut tx = k.db.tenant_tx(user.tenant).await?;
-        let t = own(k, &sctx, &mut tx, user, ticket, true).await?;
+        let mut t = own(k, &sctx, &mut tx, user, ticket, true).await?;
+        let mut ticket = ticket;
+        // A ticket merged into another is not replied to: the reply lands on the one that stayed.
+        while let Some(stays) = id(&t, "merged_into") {
+            (t, ticket) = (own(k, &sctx, &mut tx, user, stays, true).await?, stays);
+        }
         if s(&t, "status") == Some("Closed") {
             return Err(Error::invalid("this ticket is closed; raise a new one"));
         }

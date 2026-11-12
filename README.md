@@ -47,6 +47,9 @@ Email, portal, phone, chat and web forms, with conversations, statuses and satis
 </td>
 <td width="50%" valign="top">
 
+### 🔀 Merging duplicates
+Tickets of one customer merge into one: conversation in time order, each message marked with where it came from, with files, watchers and tags; the duplicates close as merged and their customer's replies land on the survivor. A merge is not undone.
+
 ### ⏱️ SLAs on business hours
 Working hours, holidays and time zones; pausing statuses; response and resolution breach tracking.
 
@@ -291,6 +294,7 @@ CHANGELOG.md  what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.9.0** | Merge duplicate tickets: the conversation, files, watchers and tags move to the surviving ticket, the duplicate closes as merged and a customer's reply to it lands on the survivor. |
 | **0.8.2** | Rebuilt on the tuned design system: better menu icons, a lighter first page, a visible scroll cue, cleaner print. |
 | **0.8.1** | The redesigned interface: the upgraded design system, shaped loading, told-apart states. |
 | **0.8.0** | Work outside a customer's entitlement can wait for a Support Manager's approval (Support Settings), with no reply to the customer until it is approved or declined, saying why. |
