@@ -13,6 +13,7 @@ import { can, type Doc, type EntityMeta, useEntityMeta, useMe, useMetaIndex, use
 import { MergeDialog, type Merged } from "./Merge";
 import type { MergeTicket } from "./duplicates";
 import { Composer, type Mode, type Outgoing } from "./Composer";
+import { copyList } from "./copywords";
 import { Conversation } from "./Conversation";
 import { type AuditEvent, buildFeed, type FeedFilter, type Message, type Story, whatChanged } from "./feed";
 import { prefersReducedMotion, useMedia, useNames, useQuiet } from "./hooks";
@@ -485,6 +486,11 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
       ) : (
         closed && <Alert tone="info">{tr("This ticket is closed for good. You can still read everything on it.")}</Alert>
       )}
+      {t.related_ticket && (
+        <Alert tone="info">
+          {placed(tr("This ticket follows up {p1}, which was closed for good when this arrived."), { p1: <Link to={`/t/${t.related_ticket}`}>{isolate(t._titles?.related_ticket ?? tr("an earlier ticket"))}</Link> })}
+        </Alert>
+      )}
       {waiting && (
         <Alert tone="warning">
           {tr("Outside the customer's entitlement: it waits for a Support Manager to approve the work. Nothing goes to the customer until then; internal notes can be written.")}
@@ -503,6 +509,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
               inputRef={input}
               rootRef={bottom}
               to={{ name: t.contact_name || t.customer_name || tr("the customer"), email: t.contact_email ?? null }}
+              cc={copyList(t.cc)}
               assignee={owner ? tr("{owner} has this ticket.", { owner }) : t.assigned_to ? null : tr("Nobody has this ticket yet.")}
               about={about}
               replies={hasReplies}
