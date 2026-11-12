@@ -1541,3 +1541,39 @@ a.hd-file:focus-visible {
   margin: 0;
   padding-inline-start: 1.25rem;
 }
+
+/* The help centre: the editor beside its preview, and the suggestions under a request's subject. */
+
+.hd-article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .hd-article {
+    grid-template-columns: 1fr;
+  }
+}
+
+.hd-suggest {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.hd-suggest h3 {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.hd-suggest ul {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding-inline-start: 1.25rem;
+}
