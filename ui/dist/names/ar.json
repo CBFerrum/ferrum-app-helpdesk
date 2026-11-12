@@ -317,5 +317,11 @@
   "Works tickets, writes knowledge base articles, logs warranty claims and maintenance visits. Give the user Support Team scopes to limit them to their teams' tickets.": "يعمل على التذاكر، ويكتب مقالات قاعدة المعرفة، ويسجل مطالبات الضمان وزيارات الصيانة. أعطِ المستخدم نطاقات فريق الدعم لحصره في تذاكر فرقه.",
   "Writes and publishes knowledge base articles and organizes their categories.": "يكتب مقالات قاعدة المعرفة وينشرها وينظم فئاتها.",
   "Yearly": "سنوي",
-  "Your tickets": "تذاكرك"
+  "Your tickets": "تذاكرك",
+  "Merge Tickets Into This One": "دمج التذاكر في هذه التذكرة",
+  "Merged From": "مدمجة من",
+  "Merged Into": "مدمجة في",
+  "Merged At": "وقت الدمج",
+  "Merged By": "دمجها",
+  "Tickets to merge": "التذاكر المراد دمجها"
 }
