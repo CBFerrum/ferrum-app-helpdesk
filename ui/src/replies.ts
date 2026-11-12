@@ -22,6 +22,9 @@ export const VARIABLES: { name: string; says: string }[] = [
   { name: "customer.company", get says() { return t("their company"); } },
   { name: "ticket.number", get says() { return t("the ticket's number"); } },
   { name: "ticket.subject", get says() { return t("its subject"); } },
+  { name: "ticket.priority", get says() { return t("its priority"); } },
+  { name: "ticket.status", get says() { return t("its status"); } },
+  { name: "ticket.link", get says() { return t("the address that opens it"); } },
   { name: "agent.first_name", get says() { return t("your first name"); } },
   { name: "agent.name", get says() { return t("your name"); } },
 ];

@@ -178,7 +178,8 @@ describe("the composer", () => {
         to={{ name: "Ada", email: "ada@shop.test" }}
         cc={[]}
         assignee={null}
-        about={{ ticket: {}, contact: {}, agent: {} }}
+        agent="priya@acme.test"
+        onSignature={() => {}}
         replies
         conflict={null}
         onSend={async () => true}
