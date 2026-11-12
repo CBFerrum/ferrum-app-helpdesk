@@ -51,7 +51,7 @@ Email, portal, phone, chat and web forms, with conversations, statuses and satis
 Tickets of one customer merge into one: conversation in time order, each message marked with where it came from, with files, watchers and tags; the duplicates close as merged and their customer's replies land on the survivor. A merge is not undone.
 
 ### ⏱️ Targets on the platform's clock
-First response and resolution are Ferrum's service targets on a working calendar the workspace owns (hours, time zone with daylight saving, dated exceptions); agreements by priority, customer, group or team; the clock stops while the customer is asked; each breach recorded once and raising the ticket's updated event.
+First response and resolution are Ferrum's service targets on a working calendar (hours, time zone with daylight saving, dated exceptions): each agreement names its own, else the workspace's `helpdesk_hours`; agreements by priority, customer, group or team; the clock starts when the ticket was opened and stops while the customer is asked; each breach recorded once and raising the ticket's updated event.
 
 </td>
 </tr>
@@ -146,13 +146,11 @@ with them under the same rules as people.
 
 ### Customers writing to support
 
-Add a **Support Address** for each address customers write to (support@, billing@), mapped to a team, and have the Mail app receive that mailbox. Mail stores each received message as a Communication; Helpdesk's hook on that record turns it into a ticket or a message on the ticket it answers, and puts the Communication on the ticket. Do not set the mailbox's "create records" option: Helpdesk's addresses do that. Replies go out through Mail as Communications on the ticket.
+Add a **Support Address** for each address customers write to (support@, billing@), mapped to a team and, if you like, a **Brand** (a name, a reply signature and a wrapper around replies). Helpdesk registers each address with the Mail app (version 0.20 or later, `ferrum_app_comms::routes`) and keeps the registration in step as addresses are added, changed, disabled or deleted (an address Mail will not take says why on the address). Mail then hands each message for one to Helpdesk, once, with the headers it kept; there is no hook on Mail's records. Do not set the mailbox's "create records" option: Helpdesk's addresses do that.
 
-Mail does not yet offer what a complete integration needs, so, until it does:
+A reply is matched to its ticket by the Message-ID it answers (In-Reply-To, References), then by the ticket's secret in the address it was written to (`support+<secret>@acme.test`, the Reply-To of what Helpdesk sends), and last by the number and secret in the subject's tag. Auto-replies, bounces and list mail are recognised by the headers Mail stored. Mail the mail server could not verify (`x-ferrum-auth: unverified`) from a known customer, or from the requester or a copy of the ticket it answers, is held in the Inbound Mail Log for staff (Support Settings, Mail That Fails Authentication: Hold for Review by default, or Accept): a forged sender must not read or steer a ticket. A mail server that adds no authentication result makes every such mail unverified, so a workspace without one chooses Accept. An administrator reads the held mail's body in the log (the field group `held_mail`).
 
-- **Headers of received mail.** Mail keeps none of a received message's headers. Helpdesk reads `headers` on the Communication when it is there (the names Mail's own validation already allows: Auto-Submitted, Precedence, List-Id, List-Unsubscribe, X-...), and without it recognises noise by the sender's address only. Mail should store those headers (and the Delivered-To address) when it receives a message.
-- **A Reply-To.** Mail's `headers` cannot carry one, so a reply's route back is the subject's tag and the threading headers. Mail should let the app that queues a message name its Reply-To (or an address pattern per account).
-- **A registration instead of a hook.** The hook on Mail's `Communication` is an observer of Mail's own record, inside Mail's transaction. An explicit registration (an address or account an app receives, with the parsed message handed to it) would let the app refuse mail before Mail stores it and keep Mail's tables to Mail.
+Replies go out through Mail with `outbound::send`: a Reply-To that routes back, In-Reply-To and References from the conversation, the support address's Mail account, the brand's name, signature and wrapper; the Message-ID Mail gave the message is kept on the conversation row.
 
 ### What it adds to Ferrum
 
@@ -304,6 +302,7 @@ CHANGELOG.md  what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.10.2** | Hours per agreement are back (each agreement names its own working calendar; a workspace's old hours, holidays and time zones are recreated as calendars when it is updated; a target's clock starts from when the ticket was opened), inbound mail through Mail's registrations (Reply-To that routes back, threading by headers then by the address's secret, mail that fails authentication held), the platform's calls for tags, calendars and files, the help centre counts its public visitors' views and votes with a report by article, brands on support addresses, the held mail's body for administrators, unanswered time in working hours, and surveys that respect opt-outs. |
 | **0.10.1** | The screens for 0.9 and 0.10: the ticket page reads the platform's target states and tells public replies from internal notes, with tags, copies, rating and the ticket it follows up; saved replies filled in by the server, macros previewed before they are applied, the agent's signature; queues by tag and by target state with bulk tag and macro; Administration (support addresses, inbound log, agent profiles, tags, assignment rules, macros, satisfaction survey); the help centre's editor and the portal's article search; reports as the questions a desk asks. |
 | **0.10.0** | Customers write to support addresses and it lands in the ticket (new ticket or a reply matched by headers or the subject's secret, copies and files kept, loops and noise logged), targets on the platform's clock, tags and private notes, routing by skill, language and shift, macros and filled-in replies, ratings by a signed link, a help centre, and backlog, volume and reopen reports. |
 | **0.9.1** | Screens for merging tickets: select tickets in the inbox or tick a customer's other tickets on one, choose the one that stays, and read what moves; a merged ticket links to the survivor and its messages say where they came from. |
