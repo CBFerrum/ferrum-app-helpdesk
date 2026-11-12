@@ -8,7 +8,8 @@ import { Alert, Button, Icon, toast } from "@ferrum/kit";
 import { fileSize } from "./feed";
 import { useDraft, useLeaveWarning } from "./hooks";
 import { ReplyPicker } from "./ReplyPicker";
-import { type FillWith, insertAt, leftover } from "./replies";
+import { insertAt, leftover } from "./replies";
+import { SignatureLine } from "./Signature";
 
 export type Mode = "reply" | "note";
 
@@ -44,8 +45,10 @@ export function Composer({
   to,
   cc,
   assignee,
-  about,
+  agent,
   replies,
+  onMacros,
+  onSignature,
   conflict,
   onSend,
 }: {
@@ -61,7 +64,11 @@ export function Composer({
   cc: string[];
   /** Who has the ticket, as a sentence ("Priya has this ticket"), or null when it is the agent's own or nobody's. */
   assignee: string | null;
-  about: FillWith;
+  /** The signed-in agent's address, whose signature is added to an emailed reply. */
+  agent: string;
+  /** Opens the macros of the workspace; absent when it has none. */
+  onMacros?: () => void;
+  onSignature: () => void;
   /** Whether the workspace has saved replies at all. */
   replies: boolean;
   /** Set when the ticket changed under the agent while they were writing. */
@@ -233,6 +240,7 @@ export function Composer({
           {isolate(open.map((o) => `{{${o}}}`).join(", "))} {tr("still to fill in before this can be sent.")}
         </p>
       )}
+      {mode === "reply" && to.email && <SignatureLine email={agent} onEdit={onSignature} />}
       {(mine.length > 0 || uploading > 0) && (
         <ul className="hd-files" aria-label={tr("Files to send")}>
           {mine.map((f) => (
@@ -267,6 +275,11 @@ export function Composer({
             <kbd className="kbd">/</kbd>
           </button>
         )}
+        {onMacros && (
+          <button type="button" className="btn btn-ghost btn-sm" aria-haspopup="dialog" onClick={onMacros}>
+            {tr("Macros")}
+          </button>
+        )}
         <label className="btn btn-ghost btn-sm">
           <Icon name="upload" />
           {tr("Attach")}
@@ -278,7 +291,7 @@ export function Composer({
           {mode === "note" ? tr("Add internal note, not sent") : to.email ? tr("Send reply by email") : tr("Add reply to the portal")}
         </Button>
       </div>
-      {picker && <ReplyPicker about={about} draft={body} onPick={pasted} onClose={() => setPicker(false)} />}
+      {picker && <ReplyPicker ticket={ticket} draft={body} onPick={pasted} onClose={() => setPicker(false)} />}
     </section>
   );
 }
