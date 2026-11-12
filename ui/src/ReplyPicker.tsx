@@ -1,5 +1,6 @@
-// Saved replies, found from the composer: type to search, arrows and Enter to choose. A reply is
-// filled in from the ticket before it goes into the text, so what you read is what is sent.
+// Saved replies, found from the composer: type to search, arrows and Enter to choose. The server fills a
+// reply's merge fields in from the ticket (the action `render`) before it goes into the text, so what you
+// read in the preview is what is sent, and a refusal is shown as it is worded.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type KeyboardEvent, useId, useMemo, useRef, useState } from "react";
@@ -8,7 +9,7 @@ import { api, docPath, errorMessage, t, isolate } from "@ferrum/client";
 import { Alert, Button, Dialog, ErrorState, Field, Spinner, toast, useDismiss, placed } from "@ferrum/kit";
 import { LinkInput, useMe } from "@ferrum/records";
 import { useRemembered } from "./hooks";
-import { fill, type FillWith, pick, SCOPE_FILTERS, type ReplyScope, type SavedReply, type ScopeFilter } from "./replies";
+import { pick, SCOPE_FILTERS, type ReplyScope, type SavedReply, type ScopeFilter } from "./replies";
 
 const KEY = ["helpdesk", "replies"];
 
@@ -86,7 +87,12 @@ function SaveReply({ body, onClose }: { body: string; onClose: () => void }) {
   );
 }
 
-export function ReplyPicker({ about, draft, onPick, onClose }: { about: FillWith; draft: string; onPick: (text: string) => void; onClose: () => void }) {
+/** A saved reply as the server renders it for a ticket. */
+export function renderReply(reply: string, ticket: string, signal?: AbortSignal): Promise<string> {
+  return api.post<{ body: string }>(docPath("SavedReply", reply, "actions", "render"), { ticket }, { signal }).then((r) => r.body);
+}
+
+export function ReplyPicker({ ticket, draft, onPick, onClose }: { ticket: string; draft: string; onPick: (text: string) => void; onClose: () => void }) {
   const qc = useQueryClient();
   const me = useMe().data?.user;
   const list = useReplies();
@@ -101,15 +107,33 @@ export function ReplyPicker({ about, draft, onPick, onClose }: { about: FillWith
   const found = useMemo(() => pick(list.data ?? [], { query, scope, me: me?.id }), [list.data, query, scope, me?.id]);
   const active = Math.min(at, found.length - 1);
   const chosen: SavedReply | undefined = found[active];
-  const filled = chosen ? fill(chosen.body, about) : null;
+  const [busy, setBusy] = useState(false);
+  const [refused, setRefused] = useState<string | null>(null);
+  // The preview is the server's rendering of the highlighted reply for this ticket.
+  const preview = useQuery({
+    queryKey: ["helpdesk", "render", chosen?.id, ticket],
+    enabled: !!chosen,
+    staleTime: 30_000,
+    retry: false,
+    queryFn: ({ signal }) => renderReply((chosen as SavedReply).id, ticket, signal),
+  });
 
-  const choose = (r: SavedReply) => {
-    // Counting a use is for ordering the list next time; it never holds up the reply.
-    void api
-      .post(docPath("SavedReply", r.id, "actions", "used"), {})
-      .then(() => qc.invalidateQueries({ queryKey: KEY }))
-      .catch(() => {});
-    onPick(fill(r.body, about).text);
+  const choose = async (r: SavedReply) => {
+    if (busy) return;
+    setBusy(true);
+    setRefused(null);
+    try {
+      const text = await qc.fetchQuery({ queryKey: ["helpdesk", "render", r.id, ticket], staleTime: 30_000, queryFn: ({ signal }) => renderReply(r.id, ticket, signal) });
+      // Counting a use is for ordering the list next time; it never holds up the reply.
+      void api
+        .post(docPath("SavedReply", r.id, "actions", "used"), {})
+        .then(() => qc.invalidateQueries({ queryKey: KEY }))
+        .catch(() => {});
+      onPick(text);
+    } catch (e) {
+      setRefused(errorMessage(e));
+      setBusy(false);
+    }
   };
   const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "ArrowDown") {
@@ -120,7 +144,7 @@ export function ReplyPicker({ about, draft, onPick, onClose }: { about: FillWith
       setAt(Math.max(0, active - 1));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (chosen) choose(chosen);
+      if (chosen) void choose(chosen);
     }
   };
 
@@ -182,22 +206,24 @@ export function ReplyPicker({ about, draft, onPick, onClose }: { about: FillWith
                   data-active={i === active || undefined}
                   className="hd-picker-opt"
                   onMouseEnter={() => setAt(i)}
-                  onClick={() => choose(r)}
+                  onClick={() => void choose(r)}
                 >
                   <span className="hd-picker-title">{isolate(r.title)}</span>
                   <span className="faint">{isolate(WHO[r.scope])}</span>
                 </li>
               ))}
             </ul>
-            {filled && (
+            {chosen && (
               <div className="hd-picker-preview" aria-live="polite">
                 <h3>{t("For this ticket")}</h3>
-                <p className="hd-picker-text">{isolate(filled.text)}</p>
-                {filled.missing.length > 0 && (
-                  <p className="hd-warn">
-                    {isolate(filled.missing.map((m) => `{{${m}}}`).join(", "))} {t("cannot be filled from this ticket. It stays in the text for you to write, and sending waits for it.")}
-                  </p>
+                {preview.isLoading ? (
+                  <Spinner label={t("Filling it in")} />
+                ) : preview.error ? (
+                  <ErrorState error={preview.error} onRetry={() => void preview.refetch()} title={t("It could not be filled in")} />
+                ) : (
+                  <p className="hd-picker-text">{isolate(preview.data ?? "")}</p>
                 )}
+                {refused && <Alert tone="error">{isolate(refused)}</Alert>}
               </div>
             )}
           </>

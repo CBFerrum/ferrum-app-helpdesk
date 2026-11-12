@@ -4,15 +4,18 @@
 // from /api/app/helpdesk/portal/…, which answers by the address the person signed in with.
 
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, lazy, Suspense, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, errorMessage, t as tr, isolate } from "@ferrum/client";
-import { Badge, Button, Field, Icon, ListSkeleton, Markdown, ReaderSkeleton, StatePanel, toast, useShellTitle } from "@ferrum/kit";
+import { Badge, Button, Field, Icon, ListSkeleton, Markdown, ReaderSkeleton, Spinner, StatePanel, toast, useShellTitle } from "@ferrum/kit";
 import { LoadFailed } from "./states";
 import { STATUS_TONES } from "./tones";
 import { fileSize } from "./feed";
 
 const BASE = "/api/app/helpdesk/portal/tickets";
+
+// The articles that may already answer a request are offered while it is written; they load beside the form, not with the page.
+const Suggestions = lazy(() => import("./PortalHelp").then((m) => ({ default: m.Suggestions })));
 
 export interface PortalTicketSummary {
   id: string;
@@ -65,9 +68,14 @@ export function PortalTickets() {
           <h1 className="page-title">{tr("Your tickets")}</h1>
           <p className="page-sub">{tr("Ask for help, and follow what the team says.")}</p>
         </div>
-        <Link className="btn btn-primary btn-md" to="/new">
-          {tr("New ticket")}
-        </Link>
+        <span className="row">
+          <Link className="btn btn-default btn-md" to="/articles">
+            {tr("Help articles")}
+          </Link>
+          <Link className="btn btn-primary btn-md" to="/new">
+            {tr("New ticket")}
+          </Link>
+        </span>
       </div>
       {q.error ? (
         <LoadFailed error={q.error} onRetry={() => void q.refetch()} />
@@ -139,6 +147,9 @@ export function PortalNewTicket() {
           <Field label={tr("Subject")} htmlFor="hd-subject">
             <input id="hd-subject" className="input" required maxLength={300} value={subject} onChange={(e) => setSubject(e.target.value)} />
           </Field>
+          <Suspense fallback={<Spinner label={tr("Looking for articles")} />}>
+            <Suggestions subject={subject} />
+          </Suspense>
           <Field label={tr("What happened?")} htmlFor="hd-description">
             <textarea id="hd-description" className="input" required rows={7} maxLength={20000} value={description} onChange={(e) => setDescription(e.target.value)} />
           </Field>

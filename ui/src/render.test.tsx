@@ -128,6 +128,13 @@ describe("a row of the inbox", () => {
   });
 });
 
+describe("a row and the rule that placed it", () => {
+  it("says which assignment rule put the ticket where it is", () => {
+    expect(row(ticket({ routed_by: "r1", _titles: { routed_by: "Billing by skill" } }))).toContain("placed by Billing by skill");
+    expect(row(ticket())).not.toContain("placed by");
+  });
+});
+
 describe("the queues", () => {
   const queues = [
     { id: "mine" as const, label: "Mine" },
@@ -145,8 +152,23 @@ describe("the queues", () => {
         name={name}
         onPerson={() => {}}
         showMore={more}
+        tags={[{ tag: "refund", colour: "#2563eb" }, { tag: "vip" }]}
+        onTag={() => {}}
+        targets={[{ id: "response:breached", label: "First response breached", count: 4 }]}
+        onTarget={() => {}}
       />,
     );
+
+  it("narrow by tag, with the tag's colour, and by target state, with how many are in it", () => {
+    const html = draw({ ...START, queue: "open", tag: "refund", target: "response:breached" });
+    expect(html).toContain("By tag");
+    expect(html).toContain("refund");
+    expect(html).toContain("--tag:#2563eb");
+    expect(html).toContain("By target");
+    expect(html).toContain("First response breached");
+    expect(html).toContain('aria-pressed="true"');
+    expect(draw(START, false)).not.toContain("By tag");
+  });
 
   it("count each queue, mark the one shown, and list the saved filters and who has what", () => {
     const html = draw();
@@ -176,8 +198,10 @@ describe("the composer", () => {
         inputRef={{ current: null }}
         rootRef={null}
         to={{ name: "Ada", email: "ada@shop.test" }}
+        cc={[]}
         assignee={null}
-        about={{ ticket: {}, contact: {}, agent: {} }}
+        agent="priya@acme.test"
+        onSignature={() => {}}
         replies
         conflict={null}
         onSend={async () => true}
@@ -187,21 +211,33 @@ describe("the composer", () => {
 
   it("writes to the customer, says where it goes, and offers saved replies", () => {
     const html = draw();
-    expect(html).toContain("To Ada &lt;ada@shop.test&gt;");
+    expect(html).toContain("Public reply");
+    expect(html).toContain("emailed to Ada");
+    expect(html).toContain("&lt;ada@shop.test&gt;");
     expect(html).toContain("Saved replies");
-    expect(html).toContain("Send reply");
+    expect(html).toContain("Send reply by email");
     expect(html).toContain("Internal note");
   });
 
+  it("names the copies a reply carries", () => {
+    const html = draw({ cc: ["bob@shop.test", "eve@shop.test"] });
+    expect(html).toContain("and copied to");
+    expect(html).toContain("bob@shop.test, eve@shop.test");
+  });
+
   it("says plainly when there is no address to email, and who will lose the ticket by being answered over", () => {
-    expect(draw({ to: { name: "Ada", email: null } })).toContain("No email address on this ticket");
+    const bare = draw({ to: { name: "Ada", email: null } });
+    expect(bare).toContain("nothing is emailed");
+    expect(bare).toContain("Add reply to the portal");
+    expect(bare).not.toContain("Send reply by email");
     expect(draw({ assignee: "Priya has this ticket." })).toContain("Priya has this ticket. Sending takes it over.");
   });
 
   it("is a note for the team in note mode, without saved replies", () => {
     const html = draw({ mode: "note" });
-    expect(html).toContain("Only your team sees this");
-    expect(html).toContain("Add note");
+    expect(html).toContain("It is never emailed, copied or shown to the customer");
+    expect(html).toContain("Add internal note, not sent");
+    expect(html).not.toContain("Send reply");
     expect(html).not.toContain("Saved replies");
   });
 
@@ -225,7 +261,9 @@ describe("the details beside a ticket", () => {
     assigned_to: "raj@acme.test",
     service_level_agreement: "sla",
     response_by: "2099-01-01T10:00:00Z",
+    response_state: "running",
     resolution_by: "2099-01-02T10:00:00Z",
+    resolution_state: "running",
     entitlement: "Exhausted",
     escalation_level: 2,
     support_contract: "k1",
@@ -242,6 +280,31 @@ describe("the details beside a ticket", () => {
     expect(html).toContain("Support contract has no tickets left");
     expect(html).toContain("ada@acme.test");
     expect(html).toContain("Assign to me");
+  });
+
+  it("shows who is copied, and the rating with its comment when there is one", () => {
+    expect(draw({ cc: "bob@acme.test, eve@acme.test" })).toContain("eve@acme.test");
+    expect(draw({ cc: "bob@acme.test" })).toContain("Copy another address");
+    const rated = draw({ satisfaction_rating: 2, feedback: "Took too long.", rated_at: "2026-11-05T10:00:00Z" });
+    expect(rated).toContain("2 of 5");
+    expect(rated).toContain("Took too long.");
+    expect(draw()).not.toContain("Satisfaction");
+  });
+
+  it("leaves the copies and tags unchanged for someone who may not", () => {
+    const html = page(<Rail meta={{ name: "Ticket" } as unknown as EntityMeta} t={{ ...t, cc: "bob@acme.test" }} me="priya@acme.test" people={[]} name={name} editable={false} save={async () => {}} />);
+    expect(html).toContain("bob@acme.test");
+    expect(html).not.toContain("Copy another address");
+    expect(html).not.toContain("Add a tag");
+  });
+
+  it("says which rule placed the ticket, and when, with a link to it", () => {
+    const html = draw({ routed_by: "r1", routed_at: "2026-11-05T10:00:00Z", reassigned_count: 1, _titles: { routed_by: "Billing by skill" } });
+    expect(html).toContain("Placed by the assignment rule");
+    expect(html).toContain('href="/e/TicketAssignmentRule/r1"');
+    expect(html).toContain("Billing by skill");
+    expect(html).toContain("moved on 1 times");
+    expect(draw()).not.toContain("Placed by the assignment rule");
   });
 
   it("keeps a former agent who still has a ticket among the choices", () => {

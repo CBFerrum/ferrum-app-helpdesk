@@ -3,6 +3,9 @@ import { t as tr } from "@ferrum/client";
 // asks the server, which tickets need someone first, how long each has waited, what the inbox keeps
 // in its address so a link opens the same view, and the filters a person saves.
 
+/** What the platform says of a service target (Ticket `targets`: respond, resolve). */
+export type TargetState = "running" | "paused" | "met" | "met_late" | "breached";
+
 export interface Ticket {
   id: string;
   version?: number;
@@ -24,6 +27,11 @@ export interface Ticket {
   last_customer_message_at?: string | null;
   last_agent_message_at?: string | null;
   last_message_preview?: string | null;
+  /** The assignment rule that placed it, and when (`routed_by` is the rule's id; its name is in `_titles`). */
+  routed_by?: string | null;
+  routed_at?: string | null;
+  response_state?: TargetState | null;
+  resolution_state?: TargetState | null;
   _titles?: Record<string, string>;
 }
 
@@ -172,6 +180,33 @@ export const SORTS: { id: SortId; label: string }[] = [
   { id: "newest", get label() { return tr("Newest"); } },
 ];
 
+/** The target states a queue can be narrowed to, as the platform keeps them on a ticket. */
+export const TARGET_STATES = ["running", "paused", "met", "met_late", "breached"] as const;
+
+export interface TargetPick {
+  /** `response:breached`: which target and the state it is in. */
+  id: string;
+  label: string;
+}
+
+/** The choices of the "By target" filter: a target and a state. */
+export const TARGET_PICKS: TargetPick[] = (["response", "resolution"] as const).flatMap((k) =>
+  TARGET_STATES.map((st) => ({
+    id: `${k}:${st}`,
+    get label() {
+      const target = k === "response" ? tr("First response") : tr("Resolution");
+      const state = { running: tr("running"), paused: tr("paused"), met: tr("met"), met_late: tr("met late"), breached: tr("breached") }[st];
+      return `${target} ${state}`;
+    },
+  })),
+);
+
+/** The server's filter for a target pick, or null for one that is not. */
+export function targetFilter(id: string): unknown[] | null {
+  const m = /^(response|resolution):(running|paused|met|met_late|breached)$/.exec(id);
+  return m ? [`${m[1]}_state`, "=", m[2]] : null;
+}
+
 export interface Refine {
   /** Words to find in the subject, the requester and the customer. */
   q: string;
@@ -180,6 +215,10 @@ export interface Refine {
   channel: string;
   /** An agent's address. */
   assignee: string;
+  /** A tag the ticket carries. */
+  tag: string;
+  /** A target and its state: one of `TARGET_PICKS`. */
+  target: string;
 }
 
 export interface InboxState extends Refine {
@@ -187,7 +226,7 @@ export interface InboxState extends Refine {
   sort: SortId;
 }
 
-export const NO_REFINE: Refine = { q: "", priority: "", team: "", channel: "", assignee: "" };
+export const NO_REFINE: Refine = { q: "", priority: "", team: "", channel: "", assignee: "", tag: "", target: "" };
 export const START: InboxState = { queue: "mine", sort: "urgent", ...NO_REFINE };
 
 const REFINE_KEYS = Object.keys(NO_REFINE) as (keyof Refine)[];
@@ -222,6 +261,9 @@ export function refineFilters(r: Refine): unknown[] {
   if (r.team) out.push(["team", "=", r.team]);
   if (r.channel) out.push(["channel", "=", r.channel]);
   if (r.assignee) out.push(["assigned_to", "=", r.assignee.toLowerCase()]);
+  if (r.tag) out.push(["_tag", "=", r.tag.toLowerCase()]);
+  const target = r.target ? targetFilter(r.target) : null;
+  if (target) out.push(target);
   return out;
 }
 

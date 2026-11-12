@@ -4,6 +4,8 @@
 import { Link } from "react-router";
 import { Icon } from "@ferrum/kit";
 import { initials, isFilter, type InboxState, type QueueId, type SavedFilter, START, writeState } from "./inbox";
+import { colourOf } from "./tagwords";
+import type { CSSProperties } from "react";
 import { t, isolate } from "@ferrum/client";
 
 export interface QueueEntry {
@@ -21,6 +23,10 @@ export function Queues({
   name,
   onPerson,
   showMore,
+  tags,
+  onTag,
+  targets,
+  onTarget,
 }: {
   state: InboxState;
   /** The queues this person has (My teams only for those in a team). */
@@ -34,6 +40,12 @@ export function Queues({
   onPerson: (email: string) => void;
   /** Whether the saved filters and the people are shown (narrow screens fold them away). */
   showMore: boolean;
+  /** The workspace's tags with their colours: a click narrows the queue to the tickets that carry one. */
+  tags: { tag: string; colour?: string | null }[];
+  onTag: (tag: string) => void;
+  /** The targets that need an eye, each with how many open tickets are in that state. */
+  targets: { id: string; label: string; count?: number }[];
+  onTarget: (id: string) => void;
 }) {
   const plain = (q: QueueId) => ({ search: writeState({ ...START, queue: q }).toString() });
   const onAFilter = saved.some((f) => isFilter(f, state));
@@ -68,6 +80,40 @@ export function Queues({
                 </Link>
                 <button type="button" className="icon-btn icon-btn-sm" aria-label={t("Remove the saved filter {name}", { name: f.name })} onClick={() => onRemove(f)}>
                   <Icon name="x" size={12} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {showMore && targets.length > 0 && (
+        <section aria-labelledby="hd-targets">
+          <h2 id="hd-targets" className="hd-side-title">
+            {t("By target")}
+          </h2>
+          <ul className="hd-saved">
+            {targets.map((x) => (
+              <li key={x.id}>
+                <button type="button" className="hd-side-link" aria-pressed={state.target === x.id} onClick={() => onTarget(x.id)}>
+                  <span>{isolate(x.label)}</span>
+                  {x.count !== undefined && <span className="hd-count">{x.count}</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {showMore && tags.length > 0 && (
+        <section aria-labelledby="hd-tagsq">
+          <h2 id="hd-tagsq" className="hd-side-title">
+            {t("By tag")}
+          </h2>
+          <ul className="hd-saved">
+            {tags.map((x) => (
+              <li key={x.tag}>
+                <button type="button" className="hd-side-link" aria-pressed={state.tag.toLowerCase() === x.tag.toLowerCase()} onClick={() => onTag(x.tag)}>
+                  <span className="hd-tag-dot" aria-hidden="true" style={colourOf(x.colour) ? ({ "--tag": colourOf(x.colour) } as CSSProperties) : undefined} />
+                  <span>{isolate(x.tag)}</span>
                 </button>
               </li>
             ))}

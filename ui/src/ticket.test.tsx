@@ -27,6 +27,9 @@ const ticket = {
   opened_at: "2026-11-01T09:00:00Z",
   service_level_agreement: "sla",
   response_by: "2026-11-01T10:00:00Z",
+  response_state: "breached",
+  resolution_state: "running",
+  resolution_by: "2026-11-05T10:00:00Z",
   response_breached: true,
   sla_status: "Breached",
   status_history: [{ status: "Open", at: "2026-11-01T09:00:00Z" }],
@@ -81,9 +84,9 @@ describe("a ticket's workspace", () => {
     expect(html).toContain("Might be the roller.");
     expect(html).toContain("Emailed to the customer");
     expect(html).toContain("Write to the ticket");
-    expect(html).toContain("Send reply");
+    expect(html).toContain("Send reply by email");
     expect(html).toContain("Service levels");
-    expect(html).toContain("Overdue by");
+    expect(html).toContain("Breached: overdue by");
     expect(html).toContain("Customer");
   });
 
@@ -128,6 +131,28 @@ describe("a ticket's workspace", () => {
     const html = draw({ doc: { conversation: [{ id: "m9", author_kind: "Customer", body: "Still jammed.", sent_at: "2026-11-02T09:00:00Z", merged_from: "TKT-2026-000100" }] } });
     expect(html).toContain("Still jammed.");
     expect(html).toContain("From TKT-2026-000100, merged");
+  });
+
+  it("tells public replies from internal notes in the conversation", () => {
+    const html = draw();
+    expect(html).toContain("Emailed to the customer");
+    expect(html).toContain("Internal note");
+    expect(html).toContain("Public reply");
+  });
+
+  it("shows the copies on a message and that a ticket follows up an earlier one", () => {
+    const html = draw({
+      doc: {
+        related_ticket: "t8",
+        _titles: { related_ticket: "TKT-2026-000090" },
+        conversation: [{ id: "m1", author_kind: "Customer", body: "Hello again", sent_at: "2026-11-02T09:00:00Z", cc: "bob@acme.test" }],
+      },
+    });
+    expect(html).toContain("follows up");
+    expect(html).toContain('href="/t/t8"');
+    expect(html).toContain("TKT-2026-000090");
+    expect(html).toContain("Cc");
+    expect(html).toContain("bob@acme.test");
   });
 
   it("leaves a ticket to be read by someone who may not change it", () => {
