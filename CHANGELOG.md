@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.0
+
+Merge duplicate tickets. The action Merge Tickets Into This One on the ticket that stays takes the numbers of the duplicates, which must be the same customer's (the same contact when there is no customer) and not closed. Their conversation moves in time order, each message marked in `merged_from` with the ticket it came from; their files, comments, assignments, watchers and tags move too, a tag or watcher both had staying once (the platform record merge's own statements). Each duplicate closes as merged (`merged_into`, `merged_at`, `merged_by`), and a note in both conversations says who merged and when. A customer's reply on the portal to a merged ticket lands on the survivor. The survivor's SLA fields are not reset and nothing that moved is sent again. The platform's record merge was not used: it hides the duplicate and does not move a record's own lines. A merge is not undone: a closed ticket is final, and undoing would mean moving messages back out of a conversation that is a record, so it is not offered. Merging by e-mail reply and merging in the inbox's own screens are not built.
+
 ## 0.8.2
 
 Rebuilt with Ferrum-Frontend 45dad7f, the design system as tuned after the landed build was reviewed. The left menu's icons are chosen so that none repeats on more than three rows and each fits its row; their drawings load beside the first page instead of inside it, so the page starts lighter; a row that scrolls sideways fades at the edge where there is more, in every browser and with reduced motion; a printed record leaves out empty fields and keeps its totals with the table; menus and popovers sit inside the page's landmarks for assistive technology; a selection bar folds what does not fit into More on a narrow screen. Nothing else changes.

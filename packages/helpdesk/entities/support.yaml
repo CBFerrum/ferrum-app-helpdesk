@@ -146,6 +146,7 @@
     - {name: is_internal, type: check, label: Internal Note, in_list: true, description: "Visible to agents only; does not count as a response"}
     - {name: sent_at, type: datetime, default_expr: now, in_list: true}
     - {name: attachments, type: json, description: "Files sent with the message: [{id}] of files uploaded through /api/files (up to 10, 20 MB together). The server fills in each file's name and size"}
+    - {name: merged_from, type: data, read_only: true, no_copy: true, label: Merged From, description: "The ticket this message came from, when its ticket was merged into this one"}
     - {name: emailed, type: check, read_only: true, no_copy: true, description: "A reply that was emailed to the ticket's contact when it was sent (the address stays on the ticket, where a personal-data erasure reaches it)"}
 
 - name: Ticket
@@ -201,6 +202,9 @@
     - {name: resolution_hours, type: decimal, precision: 2, read_only: true, no_copy: true, description: "Business hours from opening to resolution, pauses excluded"}
     - {name: paused_hours, type: decimal, precision: 2, read_only: true, no_copy: true, description: "Business hours the SLA clock was stopped"}
     - {name: status_history, type: json, read_only: true, hidden: true, no_copy: true}
+    - {name: merged_into, type: link, to: Ticket, read_only: true, no_copy: true, in_filter: true, label: Merged Into, description: "Closed as a duplicate of this ticket, which holds its conversation now; a reply to this one lands there"}
+    - {name: merged_at, type: datetime, read_only: true, no_copy: true}
+    - {name: merged_by, type: email, read_only: true, no_copy: true}
   form:
     - {label: Ticket, fields: [subject, status, priority, ticket_type, channel, description]}
     - {label: Customer, fields: [customer, customer_name, contact_name, contact_email]}
@@ -211,6 +215,8 @@
     - {label: Service Level, collapsible: true, fields: [escalation_level, escalated_at, service_level_agreement, sla_status, response_by, resolution_by, response_breached, resolution_breached, opened_at, first_responded_at, resolved_at, closed_at, first_response_hours, resolution_hours, paused_hours]}
     - {label: Product, collapsible: true, fields: [item, serial_no, sales_invoice]}
   actions:
+    - {name: merge_tickets, label: Merge Tickets Into This One, permission: write, condition: "doc.status != 'Closed'",
+       params: [{name: numbers, label: Tickets to merge, type: text, required: true, description: "The numbers of the duplicates, separated by commas or lines. They must be this customer's; their conversation, files, watchers and tags move here, and they close as merged"}]}
     - {name: make_warranty_claim, label: Create Warranty Claim, permission: write, condition: "doc.item != null && doc.customer != null"}
     - {name: approve_outside_entitlement, label: Approve Work Outside Entitlement, permission: write, condition: "doc.entitlement_approval == 'Waiting'",
        params: [{name: reason, label: Why, type: data, required: true, description: "Why this customer's ticket is worked though their contract does not cover it"}]}
