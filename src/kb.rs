@@ -11,6 +11,27 @@ pub struct ArticleHook;
 #[async_trait]
 impl DocHook for ArticleHook {
     async fn before_validate(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
+        // An article's address is made from its title once, and stays.
+        if !crate::help::has_slug(doc) {
+            let me = id(doc, "id");
+            let stored: Option<String> = match me {
+                Some(m) => sqlx::query_scalar("select slug from e_kb_article where tenant_id = $1 and id = $2")
+                    .bind(hc.ctx.tenant)
+                    .bind(m)
+                    .fetch_optional(&mut **hc.tx)
+                    .await?
+                    .flatten(),
+                None => None,
+            };
+            match stored {
+                Some(existing) => crate::help::address(doc, existing),
+                None => {
+                    let base = crate::help::slug_of(s(doc, "title").unwrap_or_default());
+                    let free = crate::help::free_slug(hc.tx, hc.ctx.tenant, me, &base).await?;
+                    crate::help::address(doc, free);
+                }
+            }
+        }
         if s(doc, "status") != Some("Published") {
             return Ok(());
         }

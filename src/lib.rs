@@ -2,6 +2,7 @@
 //!
 //! Hooks are registered per entity, so a tenant without the `support` package never runs them.
 
+mod help;
 mod hours;
 pub mod inbound;
 mod kb;
@@ -69,6 +70,7 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
             }
             let ctx = Ctx::system(tenant, schema);
             hours::ensure_for_tenant(k, &ctx).await?;
+            help::ensure_defaults(k, &ctx).await?;
             let refreshed = ticket::refresh_slas(k, &ctx).await? + ticket::refresh_verdicts(k, &ctx).await?;
             survey::send_due(k, &ctx).await?;
             let escalated = ticket::escalate(k, &ctx).await? + routing::reassign_unanswered(k, &ctx).await?;

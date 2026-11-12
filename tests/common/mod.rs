@@ -240,7 +240,7 @@ pub fn run<F: std::future::Future<Output = ()> + Send + 'static>(scenario: F) {
 pub async fn call(k: &Kernel, who: Option<&Ctx>, tenant: Uuid, method: &str, path: &str, body: Value) -> Result<Value> {
     let site = k.hooks.site("helpdesk").expect("helpdesk's endpoints").clone();
     let (path, query) = match path.split_once('?') {
-        Some((p, q)) => (p, q.split('&').filter_map(|kv| kv.split_once('=')).map(|(k, v)| (k.to_string(), json!(v))).collect()),
+        Some((p, q)) => (p, q.split('&').filter_map(|kv| kv.split_once('=')).map(|(k, v)| (k.to_string(), json!(v.replace("%20", " ")))).collect()),
         None => (path, serde_json::Map::new()),
     };
     let req = ferrum_kernel::SiteRequest {
