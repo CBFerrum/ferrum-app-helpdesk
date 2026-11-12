@@ -128,6 +128,13 @@ describe("a row of the inbox", () => {
   });
 });
 
+describe("a row and the rule that placed it", () => {
+  it("says which assignment rule put the ticket where it is", () => {
+    expect(row(ticket({ routed_by: "r1", _titles: { routed_by: "Billing by skill" } }))).toContain("placed by Billing by skill");
+    expect(row(ticket())).not.toContain("placed by");
+  });
+});
+
 describe("the queues", () => {
   const queues = [
     { id: "mine" as const, label: "Mine" },
@@ -145,8 +152,23 @@ describe("the queues", () => {
         name={name}
         onPerson={() => {}}
         showMore={more}
+        tags={[{ tag: "refund", colour: "#2563eb" }, { tag: "vip" }]}
+        onTag={() => {}}
+        targets={[{ id: "response:breached", label: "First response breached", count: 4 }]}
+        onTarget={() => {}}
       />,
     );
+
+  it("narrow by tag, with the tag's colour, and by target state, with how many are in it", () => {
+    const html = draw({ ...START, queue: "open", tag: "refund", target: "response:breached" });
+    expect(html).toContain("By tag");
+    expect(html).toContain("refund");
+    expect(html).toContain("--tag:#2563eb");
+    expect(html).toContain("By target");
+    expect(html).toContain("First response breached");
+    expect(html).toContain('aria-pressed="true"');
+    expect(draw(START, false)).not.toContain("By tag");
+  });
 
   it("count each queue, mark the one shown, and list the saved filters and who has what", () => {
     const html = draw();
@@ -274,6 +296,15 @@ describe("the details beside a ticket", () => {
     expect(html).toContain("bob@acme.test");
     expect(html).not.toContain("Copy another address");
     expect(html).not.toContain("Add a tag");
+  });
+
+  it("says which rule placed the ticket, and when, with a link to it", () => {
+    const html = draw({ routed_by: "r1", routed_at: "2026-11-05T10:00:00Z", reassigned_count: 1, _titles: { routed_by: "Billing by skill" } });
+    expect(html).toContain("Placed by the assignment rule");
+    expect(html).toContain('href="/e/TicketAssignmentRule/r1"');
+    expect(html).toContain("Billing by skill");
+    expect(html).toContain("moved on 1 times");
+    expect(draw()).not.toContain("Placed by the assignment rule");
   });
 
   it("keeps a former agent who still has a ticket among the choices", () => {

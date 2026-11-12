@@ -4,10 +4,9 @@
 // missed (red), paused (blue). Pure, so the wording is tested without a browser.
 
 import { formatMoment, t as tr } from "@ferrum/client";
-import { span } from "./inbox";
+import { span, type TargetState } from "./inbox";
 
-/** What the platform says of a target (Ticket `targets`: respond, resolve). */
-export type TargetState = "running" | "paused" | "met" | "met_late" | "breached";
+export type { TargetState };
 
 export interface SlaTicket {
   status?: string | null;

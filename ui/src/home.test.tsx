@@ -19,12 +19,14 @@ function draw(opts: { url?: string; rows?: Ticket[]; permissions?: Record<string
   qc.setQueryData(["helpdesk", "teams"], [{ id: "team-1", team_name: "Front line" }]);
   qc.setQueryData(["helpdesk", "my-teams", ME], ["team-1"]);
   qc.setQueryData(["helpdesk", "prefs"], { value: { filters: [{ id: "s1", name: "Urgent email", query: { priority: "Urgent", channel: "Email" } }] }, version: 1 });
+  qc.setQueryData(["helpdesk", "tag-defs"], [{ tag_name: "refund", colour: "#2563eb" }, { tag_name: "vip" }]);
+  for (const id of ["response:breached", "resolution:breached", "response:paused", "resolution:paused"]) qc.setQueryData(["helpdesk", "queue", "count", "target", id], id === "response:breached" ? 6 : 0);
   qc.setQueryData(["helpdesk", "queue", "load"], [{ who: ME, count: 4 }, { who: "raj@acme.test", count: 2 }]);
   const mineFor = (queue: string) => ["helpdesk", "queue", "count", queue, ME, "team-1"];
   for (const [q, n] of [["mine", 3], ["unassigned", 1], ["alerts", 2], ["teams", 5], ["open", 9]] as const) qc.setQueryData(mineFor(q), n);
   const rows = opts.rows ?? [];
   const url = new URL(opts.url ?? "/", "http://x");
-  const key = ["helpdesk", "queue", "list", url.searchParams.get("queue") ?? "mine", url.searchParams.get("sort") === "newest", url.searchParams.get("q") ?? "", url.searchParams.get("priority") ?? "", url.searchParams.get("team") ?? "", url.searchParams.get("channel") ?? "", url.searchParams.get("assignee") ?? "", ME, "team-1"];
+  const key = ["helpdesk", "queue", "list", url.searchParams.get("queue") ?? "mine", url.searchParams.get("sort") === "newest", url.searchParams.get("q") ?? "", url.searchParams.get("priority") ?? "", url.searchParams.get("team") ?? "", url.searchParams.get("channel") ?? "", url.searchParams.get("assignee") ?? "", url.searchParams.get("tag") ?? "", url.searchParams.get("target") ?? "", ME, "team-1"];
   qc.setQueryData(key, { pages: [{ rows, total: rows.length }], pageParams: [0] });
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
@@ -67,6 +69,26 @@ describe("the inbox", () => {
     expect(html).toContain("Urgent email");
     expect(html).toContain("Who has what");
     expect(html).toContain("Raj Rao");
+  });
+
+  it("offers the queues by tag and by target state, and the same two as filters", () => {
+    const html = draw({ rows: [ticket("1")] });
+    expect(html).toContain("By tag");
+    expect(html).toContain("By target");
+    expect(html).toContain("First response breached");
+    expect(html).toContain(">6<");
+    expect(html).toContain("Any tag");
+    expect(html).toContain("Any target state");
+  });
+
+  it("opens on a tag or a target from its address, and says nothing fits in words that name it", () => {
+    const html = draw({ url: "/?queue=open&tag=refund&target=resolution:breached" });
+    expect(html).toContain("No ticket matches");
+    expect(html).toContain("Clear the filters");
+  });
+
+  it("shows the rule that placed a ticket on its row", () => {
+    expect(draw({ rows: [ticket("1", { routed_by: "r1", _titles: { routed_by: "Billing by skill" } })] })).toContain("placed by Billing by skill");
   });
 
   it("says a queue is empty in words, not with a blank page", () => {
