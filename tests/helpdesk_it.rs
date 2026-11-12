@@ -1042,7 +1042,8 @@ async fn replies_and_files(k: &Arc<Kernel>) {
     drain(k).await;
     let mails = sent_to("ada@shop.test");
     assert_eq!(mails.len(), 1, "{mails:?}");
-    assert_eq!(mails[0].1, format!("Re: [{number}] Printer jam <urgent>"), "the subject names the ticket");
+    let token = t.get("Ticket", ticket).await["mail_token"].as_str().unwrap().to_string();
+    assert_eq!(mails[0].1, format!("Re: [{number}/{token}] Printer jam <urgent>"), "the subject names the ticket and carries its secret");
     let html = &mails[0].2;
     assert!(html.contains("<strong>rear tray</strong>") && html.contains("<a href=\"https://help.example.test/g\">the guide</a>"), "{html}");
     assert!(html.contains("&lt;b&gt;now&lt;/b&gt;") && !html.contains("<b>"), "what an agent typed is text: {html}");
