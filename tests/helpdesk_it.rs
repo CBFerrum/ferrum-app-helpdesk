@@ -215,6 +215,13 @@ impl T {
         sqlx::query(sql).bind(id).execute(&mut *tx).await.unwrap();
         tx.commit().await.unwrap();
     }
+    /// The workspace's settings record with `v` set: the one there is (the upkeep makes it), else a new one.
+    async fn settings(&self, v: Value) -> Doc {
+        match self.list("SupportSettings", json!({})).await.unwrap().first() {
+            Some(d) => self.update("SupportSettings", uid(d), v).await,
+            None => self.insert("SupportSettings", v).await,
+        }
+    }
     /// Runs a statement that takes the workspace as `$1`, as the engine.
     async fn exec(&self, sql: &'static str) {
         let mut tx = self.k.db.tenant_tx(self.ctx.tenant).await.unwrap();
@@ -749,7 +756,7 @@ async fn scenario() {
     let t2doc = t.get("Ticket", t2id).await;
     assert_eq!((t2doc["status"].clone(), t2doc["closed_at"].is_string()), (json!("Closed"), true), "resolved for over 7 days");
     assert_eq!(t.get("Ticket", t9).await["status"], json!("Resolved"), "still in the grace period");
-    t.insert("SupportSettings", json!({"auto_close_days": 30})).await;
+    t.settings(json!({"auto_close_days": 30})).await;
     t.update("Ticket", t8, json!({"status": "Resolved", "resolution_details": "Done"})).await;
     t.sql("update e_ticket set resolved_at = resolved_at - interval '8 days' where id = $1", t8).await;
     ferrum_app_helpdesk::maintenance(&k).await.expect("maintenance");
@@ -971,7 +978,7 @@ async fn portal(k: &Arc<Kernel>) {
     assert_eq!(third["entitlement"], json!("Exhausted"), "said, not refused: an agent decides");
 
     // ───────────── work outside entitlement waits for approval, where the workspace says so (FEO-030) ─────────────
-    let settings = t.insert("SupportSettings", json!({"outside_entitlement": "Hold for Approval"})).await;
+    let settings = t.settings(json!({"outside_entitlement": "Hold for Approval"})).await;
     let helper = t.user("helper@sd.test", &["Support Agent"], &[]).await;
     let approver = t.user("approver@sd.test", &["Support Manager"], &[]).await;
     let held = t.insert("Ticket", open_ticket("Past the contract", now)).await;

@@ -183,6 +183,16 @@ impl Env {
     pub async fn update(&self, entity: &str, id: Uuid, v: Value) -> Doc {
         self.k.update(&self.admin, entity, id, obj(v), None).await.unwrap_or_else(|e| panic!("update {entity}: {e:?}"))
     }
+    /// The workspace's settings record with `v` set: the one there is (the upkeep may have made it), else a new one.
+    pub async fn settings(&self, v: Value) -> Uuid {
+        match self.list("SupportSettings", json!({})).await.first() {
+            Some(d) => {
+                self.update("SupportSettings", uid(d), v).await;
+                uid(d)
+            }
+            None => uid(&self.insert("SupportSettings", v).await),
+        }
+    }
     pub async fn get(&self, entity: &str, id: Uuid) -> Doc {
         self.k.get(&self.admin, entity, id, false).await.unwrap_or_else(|e| panic!("get {entity}: {e:?}"))
     }

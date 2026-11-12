@@ -34,7 +34,7 @@ async fn scenario() {
     drain(&k).await;
     assert!(sent_to("ada@cust.test").is_empty(), "off until the workspace turns it on");
 
-    let settings = uid(&e.insert("SupportSettings", json!({"survey_enabled": true, "survey_delay_hours": 0, "survey_reopen_at_or_below": 2, "survey_alert_at_or_below": 2, "survey_alert_to": "lead@acme.test"})).await);
+    let settings = e.settings(json!({"survey_enabled": true, "survey_delay_hours": 0, "survey_reopen_at_or_below": 2, "survey_alert_at_or_below": 2, "survey_alert_to": "lead@acme.test"})).await;
     ferrum_app_helpdesk::maintenance(&k).await.unwrap();
     ferrum_app_helpdesk::maintenance(&k).await.unwrap();
     drain(&k).await;
