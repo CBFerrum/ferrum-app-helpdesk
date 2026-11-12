@@ -17,14 +17,16 @@ modules:
     label: Support
     icon: life-buoy
     order: 45
-    items: [Ticket, SavedReply, WarrantyClaim, MaintenanceSchedule, MaintenanceVisit, KbArticle, KbCategory, ServiceLevelAgreement, SupportContract, EscalationRule,
-            SupportTeam, TicketAssignmentRule, TicketType, SupportSettings, report:support_ticket_summary, report:support_sla_compliance, report:support_response_times,
-            report:support_agent_workload, report:support_customer_satisfaction]
+    items: [Ticket, SavedReply, SupportMacro, WarrantyClaim, MaintenanceSchedule, MaintenanceVisit, KbArticle, KbCategory, ServiceLevelAgreement, SupportContract, EscalationRule,
+            SupportTeam, TicketAssignmentRule, AgentProfile, TicketTag, TagRule, TicketType, SupportAddress, InboundLog, SupportSettings, report:support_ticket_summary,
+            report:support_sla_compliance, report:support_response_times, report:support_agent_workload, report:support_customer_satisfaction, report:support_backlog,
+            report:support_volume, report:support_reopens]
 
 # What a personal-data request exports and erases for the person who raised tickets (their email):
 # their name and address on the ticket; the conversation stays with the ticket.
 personal_data:
-  - {entity: Ticket, match: contact_email, erase: [contact_name, contact_email]}
+  - {entity: Ticket, match: contact_email, erase: [contact_name, contact_email, cc]}
+  - {entity: InboundLog, match: from_address, erase: [from_address, subject, payload]}
 roles:
   - name: Support Agent
     description: Works tickets, writes knowledge base articles, logs warranty claims and maintenance visits. Give the user Support Team scopes to limit them to their teams' tickets.
@@ -35,6 +37,13 @@ roles:
       - {entity: ServiceLevelAgreement, read: true}
       - {entity: SupportContract, read: true}
       - {entity: SupportSettings, read: true}
+      - {entity: SupportAddress, read: true}
+      - {entity: TicketTag, read: true}
+      - {entity: AgentProfile, read: true}
+      - {entity: AgentProfile, read: true, write: true, create: true, if_owner: true}
+      # Macros: those shared with a team or everyone, and the agent's own.
+      - {entity: SupportMacro, read: true, where: {scope: [Team, Everyone]}}
+      - {entity: SupportMacro, read: true, write: true, create: true, delete: true, if_owner: true}
       # Saved replies: those shared with a team or everyone, and the agent's own (Personal ones stay theirs).
       - {entity: SavedReply, read: true, where: {scope: [Team, Everyone]}}
       - {entity: SavedReply, read: true, write: true, create: true, delete: true, if_owner: true}
@@ -57,6 +66,13 @@ roles:
       - {entity: SupportContract, read: true, write: true, create: true, delete: true}
       - {entity: EscalationRule, read: true, write: true, create: true, delete: true}
       - {entity: SupportSettings, read: true, write: true, create: true}
+      - {entity: SupportAddress, read: true, write: true, create: true, delete: true}
+      - {entity: InboundLog, read: true, write: true, delete: true}
+      - {entity: AgentProfile, read: true, write: true, create: true, delete: true}
+      - {entity: TicketTag, read: true, write: true, create: true, delete: true}
+      - {entity: TagRule, read: true, write: true, create: true, delete: true}
+      - {entity: SupportMacro, read: true, write: true, create: true, delete: true, where: {scope: [Team, Everyone]}}
+      - {entity: SupportMacro, read: true, write: true, create: true, delete: true, if_owner: true}
       - {entity: SavedReply, read: true, write: true, create: true, delete: true, where: {scope: [Team, Everyone]}}
       - {entity: SavedReply, read: true, write: true, create: true, delete: true, if_owner: true}
       - {entity: KbArticle, read: true, write: true, create: true, delete: true}
@@ -98,3 +114,39 @@ handover:
   - {entity: Ticket, field: assigned_to, where: {status: [Open, Replied, On Hold]}}
   - {entity: SupportTeam, field: members.agent}
   - {entity: MaintenanceSchedule, field: assigned_to, where: {status: [Draft, Active]}}
+
+# What the customer reads, in the workspace's words: Settings, Messages edits these.
+messages:
+  - key: helpdesk.reply
+    label: Reply to a customer
+    entity: Ticket
+    category: operational
+    channels: [email]
+    values: [body, signature, link, files, attached]
+    languages:
+      en:
+        email:
+          subject: "Re: [{{ doc.number }}/{{ doc.mail_token }}] {{ doc.subject }}"
+          body: "<div style=\"font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;font-size:15px;line-height:1.5;color:#18181b;max-width:560px\">{{ values.body|safe }}{% if values.signature %}<div style=\"margin:0 0 12px\">{{ values.signature|safe }}</div>{% endif %}{% if values.files %}<p style=\"margin:0 0 12px;color:#52525b\">{% if values.attached %}Attached{% elif values.link %}Files with this reply (open the ticket to download them){% else %}Files with this reply{% endif %}: {{ values.files }}</p>{% endif %}<p style=\"margin:16px 0 0;padding-top:12px;border-top:1px solid #e4e4e7;color:#71717a;font-size:13px\">Ticket {{ doc.number }}{% if values.link %} &middot; <a href=\"{{ values.link|safe }}\" style=\"color:#52525b\">Follow it, or reply, here</a>{% endif %}</p></div>"
+  - key: helpdesk.survey
+    label: Ask the customer to rate the help
+    entity: Ticket
+    category: operational
+    channels: [email]
+    values: [url]
+    languages:
+      en:
+        email:
+          subject: "How did we do? {{ doc.number }}"
+          body: "<p>Hello{% if doc.contact_name %} {{ doc.contact_name }}{% endif %},</p><p>Your request <b>{{ doc.number }}</b> ({{ doc.subject }}) was marked solved. <a href=\"{{ values.url }}\">Tell us how we did</a>: it takes a moment, and the link works once.</p><p>Thank you.</p>"
+  - key: helpdesk.survey_alert
+    label: A low rating, to the lead
+    entity: Ticket
+    category: operational
+    channels: [email]
+    values: [rating]
+    languages:
+      en:
+        email:
+          subject: "A {{ values.rating }}-star rating on {{ doc.number }}"
+          body: "<p>{{ doc.contact_name }} rated {{ doc.number }} ({{ doc.subject }}) {{ values.rating }} out of 5.</p><p>{{ doc.feedback }}</p>"

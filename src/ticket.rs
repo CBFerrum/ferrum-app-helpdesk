@@ -517,6 +517,10 @@ impl DocHook for TicketHook {
             };
         }
 
+        if s(doc, "mail_token").is_none() {
+            set(doc, "mail_token", crate::inbound::new_token());
+        }
+
         // New messages: author and server time (replies to an existing ticket cannot be backdated).
         let known: HashSet<String> =
             old.as_ref().map(|o| rows(o, "conversation").iter().filter_map(|r| s(r, "id").map(str::to_string)).collect()).unwrap_or_default();
@@ -524,7 +528,8 @@ impl DocHook for TicketHook {
         let (ticket, number, title) = (id(doc, "id"), s(doc, "number").unwrap_or("Ticket").to_string(), s(doc, "subject").unwrap_or_default().to_string());
         // Asked once, when a public reply needs it: whether the reply goes out by email.
         let mut emailed: Option<bool> = None;
-        let mut last_new = None;
+        // What the new messages say: whether the customer wrote, and whether the team answered in public.
+        let (mut new_customer, mut new_public_reply, mut any_new) = (false, false, false);
         let mut messages = rows(doc, "conversation");
         for m in messages.iter_mut().filter(|m| !s(m, "id").is_some_and(|i| known.contains(i))) {
             let kind = s(m, "author_kind").unwrap_or("Agent").to_string();
@@ -553,7 +558,9 @@ impl DocHook for TicketHook {
                 }
                 set(m, "emailed", emailed == Some(true));
             }
-            last_new = Some((kind == "Customer", b(m, "is_internal")));
+            any_new = true;
+            new_customer |= kind == "Customer";
+            new_public_reply |= kind == "Agent" && !b(m, "is_internal");
             set(m, "author_kind", kind);
         }
         set(doc, "conversation", Value::Array(messages.into_iter().map(Value::Object).collect()));
@@ -574,14 +581,11 @@ impl DocHook for TicketHook {
         let explicit = old.as_ref().is_some_and(|o| s(o, "status") != s(doc, "status"));
         // Waiting for approval outside entitlement, it stays On Hold whatever is said meanwhile.
         let waiting = s(doc, "entitlement_approval") == Some("Waiting");
-        if !explicit
-            && !waiting
-            && let Some((from_customer, internal)) = last_new
-        {
+        if !explicit && !waiting && any_new {
             let current = s(doc, "status").unwrap_or("Open").to_string();
-            match (from_customer, internal, current.as_str()) {
+            match (new_customer, new_public_reply, current.as_str()) {
                 (true, _, "Replied" | "Resolved" | "On Hold") => set(doc, "status", "Open"),
-                (false, false, "Open") => set(doc, "status", "Replied"),
+                (false, true, "Open") => set(doc, "status", "Replied"),
                 _ => {}
             }
         }

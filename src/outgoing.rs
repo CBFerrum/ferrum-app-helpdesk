@@ -1,12 +1,17 @@
 //! A reply on its way to the customer: the email it becomes, and the files it carries.
 //!
-//! The platform's mail (`Kernel::queue_mail`) sends one HTML message to one address, with no
-//! threading and no reply address, so the subject names the ticket and the message says where to
-//! follow it. Files are the platform's stored files: an agent uploads one (`POST /api/files`), then
-//! names it in the message.
+//! Where the Mail app is installed the reply is a `Communication` on the ticket, so Mail sends it with
+//! proper threading headers (In-Reply-To and References from the customer's last message), copies the
+//! ticket's CC and keeps it on the ticket's timeline; the customer's answer comes back to Mail and
+//! [`crate::inbound`]. Without Mail it goes through the platform's mail (`Kernel::queue_mail`), one
+//! HTML message to each address with no threading headers. Either way the subject carries the ticket's
+//! number and secret (`[TKT-2026-000123/…]`), which is what matches an answer to its ticket when no header
+//! does, and the wording around the agent's words is the message template `helpdesk.reply`, which the
+//! workspace edits. Files are the platform's stored files: an agent uploads one (`POST /api/files`),
+//! then names it in the message.
 
-use ferrum_domain::util::{b, s};
-use ferrum_kernel::{Doc, Error, HookCtx, Kernel, Result, Tx};
+use ferrum_domain::util::{b, id, rows, s, sys};
+use ferrum_kernel::{Ctx, Doc, Error, Filter, HookCtx, Kernel, Result, Tx};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -32,10 +37,10 @@ fn escape(s: &str) -> String {
     out
 }
 
-/// "Re: [TKT-2026-000123] Printer jam": the ticket's number is in the subject, so the customer (and a
-/// mailbox that files by subject) can tell which ticket it is about.
-pub fn subject(number: &str, subject: &str) -> String {
-    let mut out = format!("Re: [{number}] ");
+/// "Re: [TKT-2026-000123/secret] Printer jam": the subject the template `helpdesk.reply` gives by default. The
+/// number and the secret say which ticket it is about, so an answer finds it even when its headers do not.
+pub fn subject(number: &str, token: &str, subject: &str) -> String {
+    let mut out = format!("Re: [{number}/{token}] ");
     for c in subject.chars().filter(|c| !c.is_control()) {
         if out.len() + c.len_utf8() > MAX_SUBJECT {
             break;
@@ -134,30 +139,6 @@ pub fn markdown_html(src: &str) -> String {
     out
 }
 
-/// The email for one reply. `files` are the names of what it carries; `attached` says they travel with
-/// the email (else the customer is pointed to the ticket for them). `link` is the ticket's address.
-pub fn reply_html(body: &str, number: &str, link: Option<&str>, files: &[String], attached: bool) -> String {
-    let mut html = String::from(
-        "<div style=\"font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;font-size:15px;line-height:1.5;color:#18181b;max-width:560px\">",
-    );
-    html.push_str(&markdown_html(body));
-    if !files.is_empty() {
-        let list = files.iter().map(|f| escape(f)).collect::<Vec<_>>().join(", ");
-        let how = match (attached, link) {
-            (true, _) => "Attached",
-            (false, Some(_)) => "Files with this reply (open the ticket to download them)",
-            (false, None) => "Files with this reply",
-        };
-        html.push_str(&format!("<p style=\"margin:0 0 12px;color:#52525b\">{how}: {list}</p>"));
-    }
-    let follow = link.map(|l| format!(" · <a href=\"{}\" style=\"color:#52525b\">Follow it, or reply, here</a>", escape(l))).unwrap_or_default();
-    html.push_str(&format!(
-        "<p style=\"margin:16px 0 0;padding-top:12px;border-top:1px solid #e4e4e7;color:#71717a;font-size:13px\">Ticket {}{follow}</p></div>",
-        escape(number)
-    ));
-    html
-}
-
 /// Where links in the emails point: the workspace's own address when the server is reached over HTTPS (or
 /// does not say), else the server's own (`PUBLIC_URL`); none without either. The same rule the
 /// platform's notification emails follow.
@@ -242,17 +223,74 @@ pub async fn attach(tx: &mut Tx, tenant: Uuid, ids: &[Uuid], ticket: Uuid) -> Re
     Ok(())
 }
 
-/// After a ticket is saved: puts the files its new messages carry on the ticket, and emails the replies
-/// that were marked `emailed` when they were checked, to the ticket's contact. Queued in the save's own
-/// transaction, so a reply that is refused sends nothing.
+/// Renders the message template `helpdesk.reply` (the workspace's copy, else the package's) for a ticket and
+/// the values it declares: the mail's subject and HTML.
+async fn render_reply(k: &Kernel, sctx: &Ctx, ticket: &Doc, values: &Value) -> Result<(String, String)> {
+    let def = k.message_template(sctx, "helpdesk.reply").await?;
+    let languages = def["template"]["languages"].as_object().ok_or_else(|| Error::internal("the template helpdesk.reply has no languages"))?;
+    let email = languages
+        .get("en")
+        .or_else(|| languages.values().next())
+        .and_then(|l| l.get("email"))
+        .ok_or_else(|| Error::internal("the template helpdesk.reply has no email"))?;
+    let mut doc = ticket.clone();
+    doc.remove("conversation");
+    let vars = json!({"doc": doc, "values": values});
+    let mut env = minijinja::Environment::new();
+    env.set_auto_escape_callback(|name| if name == "body" { minijinja::AutoEscape::Html } else { minijinja::AutoEscape::None });
+    let bad = |e: minijinja::Error| Error::internal(format!("the template helpdesk.reply: {e}"));
+    env.add_template_owned("subject", email["subject"].as_str().unwrap_or_default().to_string()).map_err(bad)?;
+    env.add_template_owned("body", email["body"].as_str().unwrap_or_default().to_string()).map_err(bad)?;
+    let subject: String =
+        env.get_template("subject").and_then(|t| t.render(&vars)).map_err(bad)?.chars().filter(|c| !c.is_control()).take(MAX_SUBJECT).collect();
+    let html = env.get_template("body").and_then(|t| t.render(&vars)).map_err(bad)?;
+    Ok((subject, html))
+}
+
+/// The text of Markdown as plain lines, for the mail's plain part.
+fn plain(markdown: &str) -> String {
+    markdown.lines().map(|l| l.trim_end().replace("**", "").replace('`', "")).collect::<Vec<_>>().join("\n")
+}
+
+/// After a ticket is saved: puts the files its new messages carry on the ticket, and sends the replies that
+/// were marked `emailed` when they were checked, to the ticket's contact (and its CC), through Mail when it is
+/// installed. Done in the save's own transaction, so a reply that is refused sends nothing.
 pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Doc]) -> Result<()> {
     let files: Vec<Uuid> = fresh.iter().flat_map(|m| file_ids(m.get("attachments"))).collect();
     attach(hc.tx, hc.ctx.tenant, &files, ticket).await?;
     let Some(to) = s(doc, "contact_email").filter(|_| fresh.iter().any(|m| b(m, "emailed"))) else { return Ok(()) };
+    let sctx = sys(hc.ctx);
     let number = s(doc, "number").unwrap_or("Ticket");
-    let title = subject(number, s(doc, "subject").unwrap_or_default());
     let link = link_base(hc.kernel, hc.ctx.tenant).await.map(|base| format!("{base}/open/Ticket/{ticket}"));
-    let can_attach = hc.kernel.mailer.as_ref().is_some_and(|m| m.can_attach());
+    let via_mail = hc.ctx.schema.entity("Communication").is_some();
+    let can_attach = via_mail || hc.kernel.mailer.as_ref().is_some_and(|m| m.can_attach());
+    // Never to a support address itself: that would answer ourselves.
+    let own: Vec<String> =
+        hc.kernel.find_tx(&sctx, hc.tx, "SupportAddress", &[], None, 1000).await?.iter().filter_map(|a| s(a, "address").map(crate::inbound::norm)).collect();
+    if own.contains(&crate::inbound::norm(to)) {
+        return Ok(());
+    }
+    let copies: Vec<String> = crate::inbound::addresses(s(doc, "cc")).into_iter().filter(|a| !own.contains(a)).collect();
+    // Threads onto the customer's latest message that came through Mail.
+    let parent = rows(doc, "conversation")
+        .iter()
+        .rev()
+        .find(|m| s(m, "author_kind") == Some("Customer") && s(m, "communication").is_some())
+        .and_then(|m| id(m, "communication"));
+    let account = match (via_mail, id(doc, "channel_address")) {
+        (true, Some(a)) => {
+            match hc.kernel.get_tx(&sctx, hc.tx, "SupportAddress", a, false).await.ok().and_then(|d| s(&d, "mail_account").map(str::to_string)) {
+                Some(name) => hc
+                    .kernel
+                    .find_tx(&sctx, hc.tx, "EmailAccount", &[Filter::eq("account_name", name)], None, 1)
+                    .await
+                    .ok()
+                    .and_then(|r| r.first().and_then(|d| id(d, "id"))),
+                None => None,
+            }
+        }
+        _ => None,
+    };
     for m in fresh.iter().filter(|m| b(m, "emailed")) {
         let ids = file_ids(m.get("attachments"));
         let names: Vec<String> = m
@@ -262,23 +300,78 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
             .flatten()
             .filter_map(|f| f.get("file_name").and_then(Value::as_str).map(str::to_string))
             .collect();
-        let html = reply_html(s(m, "body").unwrap_or_default(), number, link.as_deref(), &names, can_attach);
-        // A mailer that cannot attach (the development stub) sends the words and points to the ticket.
-        if can_attach && !ids.is_empty() {
-            hc.kernel.queue_mail_with(hc.tx, hc.ctx.tenant, to, &title, &html, &ids).await?;
+        let body = s(m, "body").unwrap_or_default();
+        let signature = match s(m, "author") {
+            Some(agent) => hc
+                .kernel
+                .find_tx(&sctx, hc.tx, "AgentProfile", &[Filter::eq("agent", agent.to_lowercase())], None, 1)
+                .await?
+                .first()
+                .and_then(|p| s(p, "signature").map(markdown_html)),
+            None => None,
+        };
+        let values =
+            json!({"body": markdown_html(body), "signature": signature, "link": link, "files": names.join(", "), "attached": can_attach && !ids.is_empty()});
+        // A template that is missing (a workspace not yet updated) or broken (edited) never stops a reply: the
+        // agent's words go out in plain form, with the ticket's tag in the subject.
+        let (title, html) = match render_reply(hc.kernel, &sctx, doc, &values).await {
+            Ok(done) => done,
+            Err(e) => {
+                tracing::warn!(ticket = %ticket, "the reply template could not be used: {e}");
+                let (token, subject_line) = (s(doc, "mail_token").unwrap_or_default(), s(doc, "subject").unwrap_or_default());
+                (subject(number, token, subject_line), format!("{}{}", markdown_html(body), signature.clone().unwrap_or_default()))
+            }
+        };
+        if via_mail {
+            let mut c = Doc::new();
+            for (f, v) in [
+                ("channel", json!("Email")),
+                ("direction", json!("Sent")),
+                ("subject", json!(title)),
+                ("content", json!(html)),
+                ("text_content", json!(plain(body))),
+                ("recipients", json!(to)),
+                ("cc", if copies.is_empty() { Value::Null } else { json!(copies.join(", ")) }),
+                ("reference_entity", json!("Ticket")),
+                ("reference_id", json!(ticket.to_string())),
+                ("reply_to", json!(parent.map(|p| p.to_string()))),
+                ("email_account", json!(account.map(|a| a.to_string()))),
+                ("attachments", m.get("attachments").cloned().unwrap_or_else(|| json!([]))),
+                ("headers", json!({"X-Ferrum-Helpdesk": number})),
+                ("seen", json!(true)),
+            ] {
+                c.insert(f.into(), v);
+            }
+            let sent = hc.kernel.insert_tx(&sctx, hc.tx, "Communication", c).await?;
+            if let Some(message) = id(m, "id") {
+                sqlx::query("update e_ticket__conversation set message_id = $1, communication = $2 where tenant_id = $3 and id = $4")
+                    .bind(s(&sent, "message_id"))
+                    .bind(s(&sent, "id"))
+                    .bind(hc.ctx.tenant)
+                    .bind(message)
+                    .execute(&mut **hc.tx)
+                    .await?;
+            }
         } else {
-            hc.kernel.queue_mail(hc.tx, hc.ctx.tenant, to, &title, &html).await?;
+            // A mailer that cannot attach (the development stub) sends the words and points to the ticket.
+            for address in std::iter::once(to).chain(copies.iter().map(String::as_str)) {
+                if can_attach && !ids.is_empty() {
+                    hc.kernel.queue_mail_with(hc.tx, hc.ctx.tenant, address, &title, &html, &ids).await?;
+                } else {
+                    hc.kernel.queue_mail(hc.tx, hc.ctx.tenant, address, &title, &html).await?;
+                }
+            }
         }
     }
     Ok(())
 }
 
 /// Whether a new public reply goes out by email: the ticket has a contact address, the server has a
-/// mailer, the platform's mail accepts the address, and nothing restricts writing to it. If not, the
-/// reply is still in the conversation, and in the portal.
+/// mailer (or Mail is installed), the platform's mail accepts the address, and nothing restricts writing to it.
+/// If not, the reply is still in the conversation, and in the portal.
 pub async fn goes_by_email(hc: &mut HookCtx<'_>, existing: bool, contact: Option<&str>, number: &str, title: &str) -> Result<bool> {
-    let Some(to) = contact.filter(|_| existing && hc.kernel.mailer.is_some()) else { return Ok(false) };
-    if ferrum_kernel::outbox::check_mail(to, &subject(number, title)).is_err() {
+    let Some(to) = contact.filter(|_| existing && (hc.kernel.mailer.is_some() || hc.ctx.schema.entity("Communication").is_some())) else { return Ok(false) };
+    if ferrum_kernel::outbox::check_mail(to, &subject(number, "x", title)).is_err() {
         return Ok(false);
     }
     hc.kernel.may_contact(hc.tx, hc.ctx.tenant, to).await
@@ -290,11 +383,12 @@ mod tests {
 
     #[test]
     fn the_subject_names_the_ticket_and_fits_the_platforms_limit() {
-        assert_eq!(subject("TKT-2026-000123", "Printer jam"), "Re: [TKT-2026-000123] Printer jam");
-        let long = subject("TKT-2026-000123", &"é".repeat(400));
-        assert!(long.len() <= 300 && long.starts_with("Re: [TKT-2026-000123] é"), "{}", long.len());
+        assert_eq!(subject("TKT-2026-000123", "k3j9x2m1", "Printer jam"), "Re: [TKT-2026-000123/k3j9x2m1] Printer jam");
+        let long = subject("TKT-2026-000123", "k3j9x2m1", &"é".repeat(400));
+        assert!(long.len() <= 300 && long.starts_with("Re: [TKT-2026-000123/k3j9x2m1] é"), "{}", long.len());
         assert!(ferrum_kernel::outbox::check_mail("ada@shop.test", &long).is_ok());
-        assert_eq!(subject("T-1", "two\nlines"), "Re: [T-1] twolines");
+        assert_eq!(subject("T-1", "abcdefgh", "two\nlines"), "Re: [T-1/abcdefgh] twolines");
+        assert!(crate::inbound::tag(&subject("T-1", "abcdefgh", "x")).is_some(), "what goes out is what comes back");
     }
 
     #[test]
@@ -322,19 +416,6 @@ mod tests {
         assert_eq!(inline("Go to https://help.test/reset."), "Go to <a href=\"https://help.test/reset\">https://help.test/reset</a>.");
         assert_eq!(inline("not-a-link xhttps://nope"), "not-a-link xhttps://nope");
         assert_eq!(inline("2 * 3 * 4 and a_b_c"), "2 * 3 * 4 and a_b_c");
-    }
-
-    #[test]
-    fn the_email_says_where_to_follow_the_ticket_and_what_came_with_it() {
-        let html = reply_html("Fixed.", "TKT-1", Some("https://help.test/open/Ticket/abc"), &["fix <1>.pdf".into()], true);
-        assert!(
-            html.contains("Attached: fix &lt;1&gt;.pdf") && html.contains("Ticket TKT-1") && html.contains("href=\"https://help.test/open/Ticket/abc\""),
-            "{html}"
-        );
-        let by_link = reply_html("Fixed.", "TKT-1", Some("https://help.test/x"), &["fix.pdf".into()], false);
-        assert!(by_link.contains("open the ticket to download them"), "{by_link}");
-        let bare = reply_html("Fixed.", "TKT-1", None, &[], false);
-        assert!(!bare.contains("href") && bare.contains("Ticket TKT-1"), "{bare}");
     }
 
     #[test]

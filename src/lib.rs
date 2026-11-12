@@ -2,7 +2,9 @@
 //!
 //! Hooks are registered per entity, so a tenant without the `support` package never runs them.
 
+pub mod inbound;
 mod kb;
+mod mailhook;
 mod merge;
 mod outgoing;
 mod replies;
@@ -30,7 +32,13 @@ pub fn register(hooks: &mut HookRegistry) {
         .register("SavedReply", Arc::new(replies::ReplyHook))
         .register("WarrantyClaim", Arc::new(warranty::ClaimHook))
         .register("MaintenanceSchedule", Arc::new(visits::ScheduleHook))
-        .register("MaintenanceVisit", Arc::new(visits::VisitHook));
+        .register("MaintenanceVisit", Arc::new(visits::VisitHook))
+        .register("SupportAddress", Arc::new(inbound::AddressHook))
+        .register("InboundLog", Arc::new(inbound::LogHook));
+    // Mail's records are Mail's: this runs only where Helpdesk is installed, and only reads the message Mail is saving.
+    hooks.scoped(&["helpdesk".to_string()], |h| {
+        h.register("Communication", Arc::new(mailhook::CommunicationHook));
+    });
     hooks.add_site("helpdesk", Arc::new(site::HelpdeskSite));
 }
 

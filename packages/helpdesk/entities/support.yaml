@@ -6,6 +6,21 @@
     - {name: auto_close_days, type: int, label: Close Resolved Tickets After (Days), default: 7, min: 0, max: 3650, description: "Resolved tickets without a customer reply close automatically after this many days; 0 = never"}
     - {name: outside_entitlement, type: select, options: [Inform, Hold for Approval], default: Inform, required: true, label: Tickets Outside Entitlement,
        description: "A ticket from a customer whose contract has ended or run out of tickets, or who has none. Inform: it is worked as any other, marked so. Hold for Approval: it waits On Hold, with no reply to the customer, until a Support Manager approves the work or declines it, saying why"}
+    - {name: unknown_senders, type: select, options: [Open Ticket, Hold for Review, Ignore], default: Open Ticket, required: true, label: Mail From Unknown Senders,
+       description: "What mail to a support address does when its sender is no customer's address (or contact's) and is not writing on a ticket. Open Ticket: the sender is the requester, with no customer. Hold for Review: it waits in the Inbound Mail Log for staff to open a ticket from it or discard it. Ignore: it is logged only"}
+    - {name: inbound_per_hour, type: int, default: 20, min: 0, max: 10000, label: Mail Taken From One Sender Per Hour, description: "More than this from one address in an hour is logged and not turned into tickets or messages; 0 = no limit"}
+    - {name: inbound_log_days, type: int, default: 90, min: 1, max: 3650, label: Keep the Inbound Mail Log (Days)}
+    - {name: at_risk_percent, type: int, default: 75, min: 1, max: 99, label: At Risk After (% of the Time), description: "A running target is At Risk when this share of the time between its start and its due moment has passed"}
+    - {name: route_reopened, type: check, default: true, label: Route Reopened Tickets, description: "A ticket that is reopened goes through the assignment rules again when it has no agent or its agent cannot take it (away, off shift, no longer in the team)"}
+    - {name: reassign_unanswered_hours, type: int, default: 0, min: 0, max: 8760, label: Reassign After Unanswered (Hours), description: "An open ticket nobody has answered for this many hours goes to the next available agent its rule picks (not the one who has it); 0 = never"}
+    - {name: max_reassignments, type: int, default: 2, min: 1, max: 20, label: Reassignments Per Ticket}
+    - {name: survey_enabled, type: check, default: false, label: Ask for a Rating When Solved, description: "A solved ticket's customer is mailed a link to rate it once"}
+    - {name: survey_delay_hours, type: int, default: 1, min: 0, max: 720, label: Send the Survey After (Hours)}
+    - {name: survey_link_days, type: int, default: 30, min: 1, max: 90, label: Survey Link Lasts (Days)}
+    - {name: survey_reopen_at_or_below, type: int, default: 0, min: 0, max: 5, label: Reopen at a Rating of or Below, description: "A solved ticket rated this low or lower is reopened; 0 = never"}
+    - {name: survey_alert_at_or_below, type: int, default: 0, min: 0, max: 5, label: Tell the Lead at a Rating of or Below, description: "0 = never"}
+    - {name: survey_alert_to, type: email, label: Lead Told About Bad Ratings}
+    - {name: defaults_made, type: check, hidden: true, read_only: true, no_copy: true}
 
 - name: TicketType
   label: Ticket Type
@@ -42,7 +57,7 @@
   kind: master
   module: support
   title_field: rule_name
-  description: "Routes new unassigned tickets: the enabled rule with the highest priority whose condition matches picks the team and an agent in it."
+  description: "Routes new unassigned tickets, and reopened ones when Support Settings say so: the enabled rule with the highest priority whose condition matches picks the team and an agent in it."
   fields:
     - {name: rule_name, type: data, required: true, unique: true, in_list: true}
     - {name: team, type: link, to: SupportTeam, required: true, in_list: true, in_filter: true}
@@ -50,6 +65,10 @@
     - {name: rule_type, type: select, label: Rule, options: [Round Robin, Load Balancing], required: true, default: Round Robin, in_list: true, description: "Round Robin takes turns through the team; Load Balancing picks the agent with the fewest open tickets"}
     - {name: priority, type: int, default: 1, min: 1, max: 1000, in_list: true, description: "Rules with a higher priority are tried first"}
     - {name: enabled, type: check, default: true, in_list: true, in_filter: true}
+    - {name: needs_skill, type: select, options: [No, Ticket Language, Fixed Skill], default: "No", required: true, label: Match Skill, description: "Ticket Language: only agents whose profile lists the ticket's language. Fixed Skill: only agents whose profile lists the skill below"}
+    - {name: skill, type: data, max_length: 40, required_if: "doc.needs_skill == 'Fixed Skill'", visible_if: "doc.needs_skill == 'Fixed Skill'"}
+    - {name: only_available, type: check, default: true, label: Only Agents Who Can Take It, description: "Skips agents who are away (Home, Away) or off shift (their profile's working calendar is closed now)"}
+    - {name: fallback_agent, type: email, description: "Who gets the ticket when nobody in the team can take it; empty: it stays with the team, unassigned"}
     - {name: last_assigned_to, type: email, read_only: true, no_copy: true, description: "Round-robin position: the agent who got the previous ticket"}
   list: {columns: [rule_name, team, rule_type, priority, enabled], sort: priority desc}
 
@@ -83,21 +102,22 @@
   kind: master
   module: support
   title_field: sla_name
-  description: "Response and resolution targets per priority in business hours. The most specific enabled agreement applies: customer, then customer group (nearest), then ticket type, then the default one without criteria."
+  description: "Response and resolution targets per priority, counted in working time on the calendar helpdesk_hours (Admin, Calendars: hours, time zone with daylight saving, dated exceptions). The most specific enabled agreement applies: customer, then customer group (nearest), then team and ticket type, then the default one without criteria. A customer's support contract can name one that applies whatever else would."
   fields:
     - {name: sla_name, type: data, label: Name, required: true, unique: true, in_list: true}
     - {name: enabled, type: check, default: true, in_list: true, in_filter: true}
     - {name: customer, type: link, to: Customer, in_list: true, description: "Applies only to this customer"}
     - {name: customer_group, type: link, to: CustomerGroup, in_list: true, description: "Applies to customers in this group and its sub-groups"}
     - {name: ticket_type, type: link, to: TicketType, in_list: true}
-    - {name: time_zone_offset, type: int, label: Time Zone (UTC Offset in Minutes), default: 0, min: -720, max: 840, description: "Working hours and holidays are read in this fixed offset, e.g. 330 for India or -300 for US Eastern standard time"}
+    - {name: team, type: link, to: SupportTeam, in_list: true, description: "Applies only to tickets of this team"}
+    - {name: time_zone_offset, type: int, label: Time Zone (UTC Offset in Minutes), default: 0, min: -720, max: 840, hidden: true, description: "Before 0.10, each agreement had its own hours. Targets now count on the working calendar helpdesk_hours (Admin, Calendars); this and the two tables below are read once, to make that calendar from the default agreement when the workspace has none"}
     - {name: pause_on_hold, type: check, label: Pause While On Hold, default: true}
     - {name: pause_on_replied, type: check, label: Pause While Awaiting the Customer (Replied), default: true}
     - {name: priorities, type: table, of: SlaPriority, label: Targets, required: true}
-    - {name: working_hours, type: table, of: SlaWorkingHour, description: "Leave empty for round-the-clock (24x7) support"}
-    - {name: holidays, type: table, of: SlaHoliday}
+    - {name: working_hours, type: table, of: SlaWorkingHour, hidden: true, description: "See Time Zone"}
+    - {name: holidays, type: table, of: SlaHoliday, hidden: true}
     - {name: description, type: text}
-  list: {columns: [sla_name, customer, customer_group, ticket_type, enabled], sort: sla_name asc}
+  list: {columns: [sla_name, customer, customer_group, team, ticket_type, enabled], sort: sla_name asc}
 
 - name: EscalationRule
   label: Escalation Rule
@@ -148,6 +168,9 @@
     - {name: attachments, type: json, description: "Files sent with the message: [{id}] of files uploaded through /api/files (up to 10, 20 MB together). The server fills in each file's name and size"}
     - {name: merged_from, type: data, read_only: true, no_copy: true, label: Merged From, description: "The ticket this message came from, when its ticket was merged into this one"}
     - {name: emailed, type: check, read_only: true, no_copy: true, description: "A reply that was emailed to the ticket's contact when it was sent (the address stays on the ticket, where a personal-data erasure reaches it)"}
+    - {name: message_id, type: data, read_only: true, no_copy: true, hidden: true, description: "The mail's Message-ID, to thread a reply to it"}
+    - {name: communication, type: data, read_only: true, no_copy: true, hidden: true, description: "The Mail message this one is (its id), when it came or went through Mail"}
+    - {name: cc, type: text, read_only: true, no_copy: true, description: "Who else the message was copied to"}
 
 - name: Ticket
   label: Ticket
@@ -198,21 +221,38 @@
     - {name: resolution_by, type: datetime, read_only: true, no_copy: true}
     - {name: response_breached, type: check, read_only: true, no_copy: true, in_filter: true}
     - {name: resolution_breached, type: check, read_only: true, no_copy: true, in_filter: true}
-    - {name: first_response_hours, type: decimal, precision: 2, read_only: true, no_copy: true, description: "Business hours from opening to the first response, pauses excluded"}
-    - {name: resolution_hours, type: decimal, precision: 2, read_only: true, no_copy: true, description: "Business hours from opening to resolution, pauses excluded"}
-    - {name: paused_hours, type: decimal, precision: 2, read_only: true, no_copy: true, description: "Business hours the SLA clock was stopped"}
+    - {name: first_response_hours, type: decimal, precision: 2, read_only: true, no_copy: true, description: "Working hours the first response took on the platform's service target, pauses excluded"}
+    - {name: resolution_hours, type: decimal, precision: 2, read_only: true, no_copy: true, description: "Working hours resolution took, pauses excluded"}
+    - {name: paused_hours, type: decimal, precision: 2, read_only: true, no_copy: true, hidden: true, description: "Kept for tickets before 0.10; no longer worked out (the platform's target keeps the time worked, not the time stopped)"}
+    - {name: response_state, type: select, options: [running, paused, met, met_late, breached], read_only: true, no_copy: true, in_filter: true, label: Response Target, description: "The platform's service target: the breach is recorded once and raises the ticket's updated event"}
+    - {name: resolution_state, type: select, options: [running, paused, met, met_late, breached], read_only: true, no_copy: true, in_filter: true, label: Resolution Target}
+    - {name: response_secs, type: int, read_only: true, no_copy: true, hidden: true, description: "Seconds of working time the agreement gives for a first response to this ticket's priority"}
+    - {name: resolution_secs, type: int, read_only: true, no_copy: true, hidden: true}
+    - {name: sla_pause_hold, type: check, read_only: true, no_copy: true, hidden: true}
+    - {name: sla_pause_replied, type: check, read_only: true, no_copy: true, hidden: true}
     - {name: status_history, type: json, read_only: true, hidden: true, no_copy: true}
     - {name: merged_into, type: link, to: Ticket, read_only: true, no_copy: true, in_filter: true, label: Merged Into, description: "Closed as a duplicate of this ticket, which holds its conversation now; a reply to this one lands there"}
     - {name: merged_at, type: datetime, read_only: true, no_copy: true}
     - {name: merged_by, type: email, read_only: true, no_copy: true}
+    - {name: mail_token, type: data, read_only: true, no_copy: true, hidden: true, description: "A secret in the subject of the mail sent about this ticket, so a reply is matched to it by something nobody can guess"}
+    - {name: channel_address, type: link, to: SupportAddress, read_only: true, no_copy: true, in_filter: true, label: Support Address, description: "The support address the customer wrote to"}
+    - {name: cc, type: text, no_copy: true, label: Copied, description: "Addresses copied on the customer's mail; replies to the customer are copied to them too"}
+    - {name: related_ticket, type: link, to: Ticket, read_only: true, no_copy: true, label: Follows Up, description: "The closed ticket this one continues: mail arrived on a ticket that was closed"}
+    - {name: language, type: data, max_length: 35, in_filter: true, description: "The customer's language (a tag such as en or hi): assignment rules can look for agents who speak it"}
+    - {name: routed_by, type: link, to: TicketAssignmentRule, read_only: true, no_copy: true}
+    - {name: routed_at, type: datetime, read_only: true, no_copy: true}
+    - {name: reassigned_count, type: int, default: 0, read_only: true, no_copy: true}
+    - {name: reopen_count, type: int, default: 0, read_only: true, no_copy: true, in_filter: true, description: "How many times the ticket was reopened after being resolved"}
+    - {name: survey_sent_at, type: datetime, read_only: true, no_copy: true}
+    - {name: rated_at, type: datetime, read_only: true, no_copy: true}
   form:
     - {label: Ticket, fields: [subject, status, priority, ticket_type, channel, description]}
-    - {label: Customer, fields: [customer, customer_name, contact_name, contact_email]}
-    - {label: Assignment, fields: [team, assigned_to]}
+    - {label: Customer, fields: [customer, customer_name, contact_name, contact_email, cc]}
+    - {label: Assignment, fields: [team, assigned_to, language]}
     - {label: Conversation, fields: [conversation]}
     - {label: Resolution, fields: [resolution_details, satisfaction_rating, feedback]}
     - {label: Entitlement, collapsible: true, fields: [support_contract, entitlement, entitlement_approval, entitlement_decided_by, entitlement_reason]}
-    - {label: Service Level, collapsible: true, fields: [escalation_level, escalated_at, service_level_agreement, sla_status, response_by, resolution_by, response_breached, resolution_breached, opened_at, first_responded_at, resolved_at, closed_at, first_response_hours, resolution_hours, paused_hours]}
+    - {label: Service Level, collapsible: true, fields: [escalation_level, escalated_at, service_level_agreement, sla_status, response_by, resolution_by, response_breached, resolution_breached, opened_at, first_responded_at, resolved_at, closed_at, first_response_hours, resolution_hours, response_state, resolution_state]}
     - {label: Product, collapsible: true, fields: [item, serial_no, sales_invoice]}
   actions:
     - {name: merge_tickets, label: Merge Tickets Into This One, permission: write, condition: "doc.status != 'Closed'",
@@ -268,6 +308,11 @@
     - {name: published_at, type: datetime, read_only: true, no_copy: true, in_list: true}
     - {name: helpful_count, type: int, label: Helpful, default: 0, read_only: true, no_copy: true, in_list: true}
     - {name: not_helpful_count, type: int, label: Not Helpful, default: 0, read_only: true, no_copy: true}
+    - {name: visibility, type: select, options: [Internal, Customers Only, Public], default: Internal, required: true, in_list: true, in_filter: true,
+       description: "Internal: agents only. Customers Only: signed-in customers in the portal. Public: the help centre page, to anyone (when published)"}
+    - {name: slug, type: data, max_length: 120, unique: true, read_only: true, no_copy: true, description: "The article's address in the help centre, made from its title"}
+    - {name: summary, type: data, max_length: 300, description: "A line for the help centre's list and for search engines"}
+    - {name: views, type: int, default: 0, read_only: true, no_copy: true, label: Views}
   actions:
     - {name: mark_helpful, label: Helpful, permission: read, condition: "doc.status == 'Published'"}
     - {name: mark_not_helpful, label: Not Helpful, permission: read, condition: "doc.status == 'Published'"}

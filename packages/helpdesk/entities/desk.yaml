@@ -1,0 +1,45 @@
+- name: TicketTag
+  label: Ticket Tag
+  kind: master
+  module: support
+  title_field: tag_name
+  description: "A label on tickets, with a colour, for queues, reports and rules. Put on a ticket by hand, or by a Tag Rule."
+  fields:
+    - {name: tag_name, type: data, required: true, unique: true, in_list: true, max_length: 40, description: "Lowercase letters, digits, dashes and underscores"}
+    - {name: colour, type: data, label: Colour, max_length: 7, default: "#64748b", in_list: true, description: "#rrggbb"}
+    - {name: description, type: text}
+  list: {columns: [tag_name, colour], sort: tag_name asc}
+
+- name: TagRule
+  label: Tag Rule
+  kind: master
+  module: support
+  title_field: rule_name
+  description: "Puts a tag on every ticket the condition holds for, when the ticket is saved; never takes one off."
+  fields:
+    - {name: rule_name, type: data, required: true, unique: true, in_list: true}
+    - {name: tag, type: link, to: TicketTag, required: true, in_list: true}
+    - {name: condition, type: code, required: true, description: "CEL on the ticket, e.g. doc.subject.contains('refund') || doc.priority == 'Urgent'"}
+    - {name: enabled, type: check, default: true, in_list: true}
+  list: {columns: [rule_name, tag, enabled], sort: rule_name asc}
+
+- name: MacroStep
+  label: Macro Step
+  kind: child
+  fields:
+    - {name: step, type: select, options: [Set Status, Set Priority, Set Team, Assign To, Set Type, Set Language, Add Tag, Remove Tag, Public Reply, Private Note], required: true, in_list: true}
+    - {name: value, type: text, in_list: true, max_length: 20000, description: "What the step sets: a status, a priority, a team's name, an agent's address, a type's name, a tag. For a reply or note, its text (merge fields as in a saved reply)"}
+
+- name: SupportMacro
+  label: Macro
+  kind: master
+  module: support
+  title_field: macro_name
+  description: "Several changes to a ticket in one click: set fields, add or remove a tag, send a reply, change the status. Steps run in order and either all apply or none does."
+  fields:
+    - {name: macro_name, type: data, required: true, unique: true, in_list: true, max_length: 120}
+    - {name: scope, type: select, options: [Personal, Team, Everyone], required: true, default: Everyone, in_list: true, in_filter: true}
+    - {name: team, type: link, to: SupportTeam, in_list: true, required_if: "doc.scope == 'Team'", visible_if: "doc.scope == 'Team'"}
+    - {name: steps, type: table, of: MacroStep, required: true}
+    - {name: uses, type: int, default: 0, read_only: true, no_copy: true, in_list: true}
+  list: {columns: [macro_name, scope, team, uses], sort: macro_name asc}

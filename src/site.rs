@@ -251,7 +251,7 @@ async fn raise(k: &Kernel, user: &Ctx, body: &Map<String, Value>) -> Result<Valu
 }
 
 /// The customer an address belongs to: the customer's own email, or one of its contacts'.
-async fn customer_of(k: &Kernel, sctx: &Ctx, tx: &mut Tx, email: &str) -> Result<Option<Uuid>> {
+pub(crate) async fn customer_of(k: &Kernel, sctx: &Ctx, tx: &mut Tx, email: &str) -> Result<Option<Uuid>> {
     let direct = k.find_tx(sctx, tx, "Customer", &[Filter::eq("email", email)], Some("created_at asc"), 5).await?;
     if let Some(c) = direct.iter().find(|c| !b(c, "disabled")).and_then(|c| id(c, "id")) {
         return Ok(Some(c));
