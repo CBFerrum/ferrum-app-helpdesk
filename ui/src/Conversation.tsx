@@ -21,12 +21,17 @@ function Message({ m, address }: { m: MessageItem; address: string | null }) {
       <article className="hd-bubble">
         <header className="hd-bubble-head">
           <strong>{isolate(m.author)}</strong>
-          {m.internal && <span className="hd-note-chip">{t("Internal note")}</span>}
+          {m.internal ? <span className="hd-note-chip">{t("Internal note")}</span> : m.side === "agent" && <span className="hd-public-chip">{t("Public reply")}</span>}
           {m.mergedFrom && <span className="hd-from-chip">{t("From {n}, merged", { n: m.mergedFrom })}</span>}
           <time dateTime={m.at} title={full(m.at)} className="faint">
             {isolate(when(m.at))}
           </time>
         </header>
+        {m.cc && (
+          <p className="hd-cc faint">
+            {t("Cc")} <bdi>{isolate(m.cc)}</bdi>
+          </p>
+        )}
         <div className="hd-bubble-body">
           <Markdown source={m.body} />
         </div>
@@ -43,6 +48,7 @@ function Message({ m, address }: { m: MessageItem; address: string | null }) {
             ))}
           </ul>
         )}
+        {m.internal && <p className="hd-sent faint">{t("Only your team sees this. It was not sent.")}</p>}
         {m.side === "agent" && !m.internal && (
           <p className="hd-sent faint" title={m.emailed && address ? t("Emailed to {address}", { address }) : undefined}>
             {m.emailed ? t("Emailed to the customer") : t("Not sent by email. The customer can read it in the portal.")}

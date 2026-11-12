@@ -1214,3 +1214,377 @@ a.hd-file:focus-visible {
   color: var(--muted-foreground);
   font-size: var(--text-xs);
 }
+
+/* Which kind of message is being written, in words (the tint alone is not told to everyone). */
+
+.hd-write-kind {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.375rem;
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+.hd-write-kind[data-mode="note"] {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.hd-write-kind svg {
+  flex: none;
+  margin-block-start: 2px;
+}
+
+/* Tags and copies as chips. The tag's own colour is a dot (data from the tag record, never text colour). */
+
+.hd-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hd-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: var(--control-h-sm);
+  padding: 0 0.25rem 0 0.5rem;
+  border: 1px solid var(--border-control);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.hd-tag-dot {
+  flex: none;
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 50%;
+  background: var(--tag, var(--muted-foreground));
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+
+.hd-tag-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.hd-tag-add .input {
+  flex: 1 1 8rem;
+  min-width: 0;
+}
+
+.hd-tag-add .hd-warn {
+  flex-basis: 100%;
+}
+
+.hd-stars {
+  color: var(--warning);
+  letter-spacing: 0.1em;
+}
+
+.hd-public-chip {
+  padding: 0 0.4375rem;
+  border: 1px solid var(--border-control);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.hd-cc {
+  margin: 0;
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+/* Macros and the signature, from the box under a ticket. */
+
+.hd-macro-body {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) minmax(0, 2fr);
+  gap: 0.75rem;
+  min-height: 12rem;
+}
+
+@media (max-width: 640px) {
+  .hd-macro-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.hd-effects {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding-inline-start: 1.25rem;
+  overflow-wrap: anywhere;
+}
+
+.hd-effects li[data-kind="same"] {
+  color: var(--muted-foreground);
+}
+
+.hd-effects li[data-kind="reply"] {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.hd-signature {
+  display: grid;
+  gap: 0.375rem;
+  font-size: var(--text-sm);
+}
+
+.hd-signature summary {
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.hd-subhead {
+  margin: 0 0 0.25rem;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+/* The queues' narrower views (by target, by tag) and what placed a ticket. */
+
+.hd-side-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: var(--control-h-sm);
+  padding: 0.125rem 0.5rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: start;
+  cursor: pointer;
+}
+
+.hd-side-link:hover {
+  background: var(--surface-2);
+}
+
+.hd-side-link[aria-pressed="true"] {
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.hd-side-link .hd-count {
+  margin-inline-start: auto;
+}
+
+.hd-routed {
+  font-size: var(--text-sm);
+}
+
+/* Administration. */
+
+.hd-admin-body {
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 800px) {
+  .hd-admin-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.hd-admin-main {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.hd-admin-title,
+.hd-admin-h {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 600;
+}
+
+.hd-admin-h {
+  font-size: var(--text-lg);
+}
+
+.hd-table-wrap {
+  overflow-x: auto;
+}
+
+.hd-table td {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.hd-table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+.hd-code {
+  font-family: var(--mono);
+}
+
+.hd-colour {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.hd-log {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.hd-log-main,
+.hd-log-state {
+  display: grid;
+  gap: 0.125rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.hd-log-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+.hd-steps {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.hd-steps ol {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hd-step-row {
+  display: grid;
+  grid-template-columns: minmax(9rem, 12rem) minmax(0, 1fr) auto;
+  gap: 0.375rem;
+  align-items: start;
+}
+
+@media (max-width: 640px) {
+  .hd-step-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.hd-step-tools {
+  display: flex;
+  gap: 0.125rem;
+}
+
+.hd-preview-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: 1rem;
+}
+
+.hd-preview-frame {
+  width: 100%;
+  min-height: 14rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.hd-rating-sample {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 24rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.hd-rating-sample p {
+  margin: 0;
+}
+
+.hd-lines {
+  margin: 0;
+  padding-inline-start: 1.25rem;
+}
+
+/* The help centre: the editor beside its preview, and the suggestions under a request's subject. */
+
+.hd-article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .hd-article {
+    grid-template-columns: 1fr;
+  }
+}
+
+.hd-suggest {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.hd-suggest h3 {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.hd-suggest ul {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding-inline-start: 1.25rem;
+}
+
+/* The report views. */
+
+.hd-views {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}

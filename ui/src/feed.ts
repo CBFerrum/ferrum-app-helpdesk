@@ -23,6 +23,8 @@ export interface Message {
   emailed?: boolean | null;
   /** The number of the ticket this message came from, when that ticket was merged into this one. */
   merged_from?: string | null;
+  /** The addresses copied on the message, a text of addresses the server read from the mail or put on the reply. */
+  cc?: string | null;
 }
 
 export interface AuditEvent {
@@ -70,6 +72,8 @@ export interface MessageItem {
   emailed: boolean;
   /** The ticket it came from, when it was merged into this one. */
   mergedFrom: string | null;
+  /** The addresses copied on it, if any. */
+  cc: string | null;
 }
 
 export interface EventItem {
@@ -139,6 +143,7 @@ export function buildFeed(t: Story, events: AuditEvent[], name: (email: string) 
     attachments: [],
     emailed: false,
     mergedFrom: null,
+    cc: null,
   });
   messages.forEach((m, i) => {
     const customer = m.author_kind === "Customer";
@@ -154,6 +159,7 @@ export function buildFeed(t: Story, events: AuditEvent[], name: (email: string) 
       attachments: m.attachments ?? [],
       emailed: !!m.emailed,
       mergedFrom: m.merged_from || null,
+      cc: m.cc?.trim() || null,
     });
   });
 

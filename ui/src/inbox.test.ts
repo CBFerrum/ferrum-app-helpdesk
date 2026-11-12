@@ -21,6 +21,8 @@ import {
   START,
   step,
   stateOf,
+  TARGET_PICKS,
+  targetFilter,
   type Ticket,
   toggle,
   waitLabel,
@@ -127,7 +129,7 @@ describe("the inbox in its address", () => {
   });
 
   it("turns the quick filters into what the server is asked, and knows when any is on", () => {
-    expect(refineFilters({ q: "x", priority: "High", team: "t1", channel: "Email", assignee: "Raj@Acme.test" })).toEqual([
+    expect(refineFilters({ q: "x", priority: "High", team: "t1", channel: "Email", assignee: "Raj@Acme.test", tag: "", target: "" })).toEqual([
       ["priority", "=", "High"],
       ["team", "=", "t1"],
       ["channel", "=", "Email"],
@@ -137,6 +139,35 @@ describe("the inbox in its address", () => {
     expect(isRefined(START)).toBe(false);
     expect(isRefined({ ...START, q: " " })).toBe(false);
     expect(isRefined({ ...START, channel: "Chat" })).toBe(true);
+  });
+});
+
+describe("narrowing by tag and by target state", () => {
+  it("asks the server for tickets carrying the tag, and for a target in a state", () => {
+    expect(refineFilters({ ...START, tag: "Refund", target: "resolution:breached" })).toEqual([
+      ["_tag", "=", "refund"],
+      ["resolution_state", "=", "breached"],
+    ]);
+    expect(refineFilters({ ...START, target: "response:paused" })).toEqual([["response_state", "=", "paused"]]);
+  });
+
+  it("ignores a target that is not one of the platform's states, whatever the address says", () => {
+    expect(targetFilter("response:late")).toBeNull();
+    expect(targetFilter("sla_status:Breached")).toBeNull();
+    expect(refineFilters({ ...START, target: "nonsense" })).toEqual([]);
+  });
+
+  it("keeps them in the address so a link opens the same queue", () => {
+    const state = { ...START, queue: "open" as const, tag: "vip", target: "response:breached" };
+    expect(writeState(state).toString()).toBe("queue=open&tag=vip&target=response%3Abreached");
+    expect(readState(writeState(state))).toEqual(state);
+    expect(isRefined({ ...START, tag: "vip" })).toBe(true);
+  });
+
+  it("offers every state of both targets, said in words", () => {
+    expect(TARGET_PICKS.map((p) => p.id)).toHaveLength(10);
+    expect(TARGET_PICKS.find((p) => p.id === "response:met_late")?.label).toBe("First response met late");
+    expect(TARGET_PICKS.find((p) => p.id === "resolution:breached")?.label).toBe("Resolution breached");
   });
 });
 

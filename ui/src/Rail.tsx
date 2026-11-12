@@ -4,11 +4,13 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
-import { api, docPath, t as tr, isolate } from "@ferrum/client";
-import { Badge, Button, Spinner } from "@ferrum/kit";
+import { api, docPath, formatMoment, t as tr, isolate } from "@ferrum/client";
+import { Badge, Button, placed, Spinner } from "@ferrum/kit";
 import { STATUS_TONES } from "./tones";
 import { type EntityMeta, LinkInput, LinkTitle, type Person, Related } from "@ferrum/records";
+import { Copies } from "./Copies";
 import { fileSize } from "./feed";
+import { TicketTags } from "./Tags";
 import { PRIORITIES, requester, type Ticket } from "./inbox";
 import { type SlaTicket, slaCards } from "./sla";
 
@@ -20,6 +22,16 @@ export interface RailTicket extends Ticket, SlaTicket {
   customer?: string | null;
   escalation_level?: number | null;
   entitlement?: string | null;
+  cc?: string | null;
+  related_ticket?: string | null;
+  satisfaction_rating?: number | null;
+  feedback?: string | null;
+  rated_at?: string | null;
+  channel_address?: string | null;
+  routed_by?: string | null;
+  routed_at?: string | null;
+  reassigned_count?: number | null;
+  reopen_count?: number | null;
   _titles?: Record<string, string>;
   [key: string]: unknown;
 }
@@ -173,6 +185,13 @@ export function Rail({
             <LinkInput to="TicketType" id="hd-type" value={(t.ticket_type as string | null | undefined) ?? null} title={t._titles?.ticket_type} disabled={!editable} onChange={(v) => void save("ticket_type", v)} />
           </div>
         </div>
+        {t.routed_by && (
+          <p className="hd-routed">
+            {placed(tr("Placed by the assignment rule {p1}"), { p1: <Link to={`/e/TicketAssignmentRule/${t.routed_by}`}>{isolate(t._titles?.routed_by ?? tr("a rule"))}</Link> })}
+            {t.routed_at ? <span className="faint">{` ${formatMoment(t.routed_at, { dateStyle: "medium", timeStyle: "short" })}`}</span> : null}
+            {(t.reassigned_count ?? 0) > 0 && <span className="faint">{` · ${tr("moved on {n} times for want of an answer", { n: t.reassigned_count ?? 0 })}`}</span>}
+          </p>
+        )}
       </section>
 
       <section className="hd-card" aria-labelledby="hd-rail-customer">
@@ -196,6 +215,23 @@ export function Rail({
         )}
         <Others t={t} />
       </section>
+
+      <TicketTags id={t.id} editable={editable} />
+      <Copies cc={t.cc} contact={t.contact_email} editable={editable} save={save} />
+
+      {t.satisfaction_rating ? (
+        <section className="hd-card" aria-labelledby="hd-rail-rating">
+          <h3 id="hd-rail-rating">{tr("Satisfaction")}</h3>
+          <p>
+            <strong>{tr("{rating} of 5", { rating: t.satisfaction_rating })}</strong>{" "}
+            <span className="hd-stars" role="img" aria-label={tr("{rating} of 5 stars", { rating: t.satisfaction_rating })}>
+              {isolate("★".repeat(t.satisfaction_rating) + "☆".repeat(Math.max(0, 5 - t.satisfaction_rating)))}
+            </span>
+          </p>
+          {t.feedback ? <p>{isolate(t.feedback)}</p> : <p className="faint">{tr("No comment.")}</p>}
+          {t.rated_at && <p className="faint">{tr("Rated {when}", { when: formatMoment(t.rated_at, { dateStyle: "medium", timeStyle: "short" }) })}</p>}
+        </section>
+      ) : null}
 
       {meta.linked_from?.length ? (
         <section className="hd-card" aria-labelledby="hd-rail-linked">

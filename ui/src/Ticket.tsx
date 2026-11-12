@@ -10,9 +10,13 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from "reac
 import { api, ApiError, bootstrap, docPath, errorMessage, formatMoment, t as tr, isolate } from "@ferrum/client";
 import { Alert, Badge, Button, confirmDialog, Icon, Menu, MenuItem, placed, ReaderSkeleton, StatePanel, toast, useLiveEntity, useShellTitle } from "@ferrum/kit";
 import { can, type Doc, type EntityMeta, useEntityMeta, useMe, useMetaIndex, useRecord } from "@ferrum/records";
+import { MacroPicker } from "./MacroPicker";
 import { MergeDialog, type Merged } from "./Merge";
+import { SignatureDialog } from "./Signature";
 import type { MergeTicket } from "./duplicates";
 import { Composer, type Mode, type Outgoing } from "./Composer";
+import type { Current } from "./macros";
+import { copyList } from "./copywords";
 import { Conversation } from "./Conversation";
 import { type AuditEvent, buildFeed, type FeedFilter, type Message, type Story, whatChanged } from "./feed";
 import { prefersReducedMotion, useMedia, useNames, useQuiet } from "./hooks";
@@ -94,6 +98,8 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
   const [deciding, setDeciding] = useState<Decision | null>(null);
   const [merging, setMerging] = useState(false);
   const [help, setHelp] = useState(false);
+  const [macros, setMacros] = useState(false);
+  const [signing, setSigning] = useState(false);
   const [conflict, setConflict] = useState<string | null>(null);
   const wide = useMedia("(min-width: 1000px)");
   const [railChoice, setRailChoice] = useState<boolean | null>(null);
@@ -123,6 +129,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
     queryFn: ({ signal }) =>
       api.get<{ rows: MergeTicket[] }>(docPath("Ticket"), { filters: JSON.stringify(by), fields: "number,subject,status,customer_name,contact_email,opened_at", sort: "opened_at desc", limit: 50 }, signal).then((r) => r.rows),
   });
+  const tagsOf = useQuery({ queryKey: ["helpdesk", "tags", id], queryFn: ({ signal }) => api.get<{ tags: string[] }>(docPath("Ticket", id, "tags"), undefined, signal) });
   const feed = useMemo(() => (t ? buildFeed(t, audit.data?.events ?? [], name) : []), [t, audit.data, name]);
 
   const refresh = useCallback(() => {
@@ -302,12 +309,18 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
 
   const showRail = railChoice ?? wide;
   const hasReplies = !!index?.entities.some((e) => e.name === "SavedReply");
+  const hasMacros = !!index?.entities.some((e) => e.name === "SupportMacro") && meta.actions.some((a) => a.name === "apply_macro");
   const owner = t.assigned_to && t.assigned_to.toLowerCase() !== me.email.toLowerCase() ? name(t.assigned_to) : null;
   const who = requester(t);
-  const about = {
-    ticket: { number: t.number, subject: t.subject },
-    contact: { name: t.contact_name, company: t.customer_name, email: t.contact_email },
-    agent: { name: me.full_name, email: me.email },
+  const current: Current = {
+    status: t.status,
+    priority: t.priority,
+    assigned_to: t.assigned_to,
+    team: t._titles?.team ?? null,
+    ticket_type: t._titles?.ticket_type ?? null,
+    language: (t.language as string | null | undefined) ?? null,
+    tags: tagsOf.data?.tags ?? [],
+    name,
   };
   const canMerge = !!meta.actions.some((a) => a.name === "merge_tickets") && writable;
   const mergedInto = t.merged_into ? { id: t.merged_into, title: t._titles?.merged_into ?? tr("another ticket") } : null;
@@ -485,6 +498,11 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
       ) : (
         closed && <Alert tone="info">{tr("This ticket is closed for good. You can still read everything on it.")}</Alert>
       )}
+      {t.related_ticket && (
+        <Alert tone="info">
+          {placed(tr("This ticket follows up {p1}, which was closed for good when this arrived."), { p1: <Link to={`/t/${t.related_ticket}`}>{isolate(t._titles?.related_ticket ?? tr("an earlier ticket"))}</Link> })}
+        </Alert>
+      )}
       {waiting && (
         <Alert tone="warning">
           {tr("Outside the customer's entitlement: it waits for a Support Manager to approve the work. Nothing goes to the customer until then; internal notes can be written.")}
@@ -503,8 +521,11 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
               inputRef={input}
               rootRef={bottom}
               to={{ name: t.contact_name || t.customer_name || tr("the customer"), email: t.contact_email ?? null }}
+              cc={copyList(t.cc)}
               assignee={owner ? tr("{owner} has this ticket.", { owner }) : t.assigned_to ? null : tr("Nobody has this ticket yet.")}
-              about={about}
+              agent={me.email}
+              onMacros={hasMacros ? () => setMacros(true) : undefined}
+              onSignature={() => setSigning(true)}
               replies={hasReplies}
               conflict={conflict}
               onSend={send}
@@ -534,6 +555,8 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
         onDone={afterMerge}
       />
       <DecisionDialog decision={deciding} onClose={() => setDeciding(null)} onSubmit={decide} />
+      <MacroPicker ticket={{ id, number: t.number, current }} open={macros} onClose={() => setMacros(false)} onApplied={refresh} />
+      <SignatureDialog email={me.email} open={signing} onClose={() => setSigning(false)} />
       <Shortcuts open={help} onClose={() => setHelp(false)} title={tr("Keyboard shortcuts")} rows={SHORTCUTS} />
     </div>
   );
