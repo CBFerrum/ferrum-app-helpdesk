@@ -223,6 +223,7 @@ function Editor({ record, canWrite }: { record: Row | null; canWrite: boolean })
               </p>
               <p>{t("{n} views", { n: Number(record.views ?? 0) })}</p>
               <p>{helpfulShare(Number(record.helpful_count), Number(record.not_helpful_count)) ?? t("Nobody has said whether it helped yet.")}</p>
+              <p className="faint">{t("Views and votes count the portal and the public help centre together.")}</p>
               {record.slug ? (
                 <p>
                   {t("Address")}: <code>{isolate(String(record.slug))}</code>

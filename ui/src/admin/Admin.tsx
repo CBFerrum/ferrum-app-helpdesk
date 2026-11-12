@@ -8,6 +8,8 @@ import { api, docPath, isolate, t } from "@ferrum/client";
 import { useShellTitle } from "@ferrum/kit";
 import { Addresses } from "./Addresses";
 import { Agents } from "./Agents";
+import { Agreements } from "./Agreements";
+import { Brands } from "./Brands";
 import { Inbound } from "./Inbound";
 import { MacrosAdmin } from "./MacrosAdmin";
 import { Routing } from "./Routing";
@@ -17,6 +19,8 @@ import { StatePanel } from "@ferrum/kit";
 
 const SECTIONS = [
   { id: "addresses", get label() { return t("Support addresses"); }, Page: Addresses },
+  { id: "brands", get label() { return t("Brands"); }, Page: Brands },
+  { id: "agreements", get label() { return t("Service agreements"); }, Page: Agreements },
   { id: "inbound", get label() { return t("Inbound mail"); }, Page: Inbound },
   { id: "agents", get label() { return t("Agent profiles"); }, Page: Agents },
   { id: "tags", get label() { return t("Tags and tag rules"); }, Page: TagsAdmin },

@@ -28,7 +28,7 @@ export interface ReportView {
   question: string;
   /** The report's name, as the platform lists it. */
   report: string;
-  /** What it groups by first, then the other ways worth a click: the values the report's own Group By takes. */
+  /** What it groups by first, then the other ways worth a click: the values the report's own Group By takes. Empty: a report with no Group By. */
   group: string;
   also: string[];
   /** Whether the report counts over a period (the backlog is how it stands now). */
@@ -56,7 +56,7 @@ export const VIEWS: ReportView[] = [
     group: "Priority",
     also: ["Team", "Agent", "Ticket Type"],
     period: true,
-    get note() { return t("In working hours of the workspace's calendar (round the clock for a ticket without a target); time the clock was stopped is left out."); },
+    get note() { return t("In working hours of the calendar each ticket's agreement counts on, else the workspace's (round the clock for a ticket without a target); time the clock was stopped is left out."); },
   },
   {
     id: "backlog",
@@ -96,11 +96,22 @@ export const VIEWS: ReportView[] = [
     period: true,
     get note() { return t("Counted from the date the rating was given, and only for tickets that were rated."); },
   },
+  {
+    id: "articles",
+    get title() { return t("Help centre by article"); },
+    get question() { return t("Which articles are read, and do they help?"); },
+    report: "support_articles",
+    group: "",
+    also: [],
+    period: false,
+    get note() { return t("Views and votes are counted from the portal and from the public help centre. It is every article, as they stand now."); },
+  },
 ];
 
 /** Where a view opens: the platform's report, run at once, with the group and the period. */
 export function viewLink(v: ReportView, group: string, period: PeriodId, today: Date): string {
-  const sp = new URLSearchParams({ run: "1", group_by: group });
+  const sp = new URLSearchParams({ run: "1" });
+  if (group) sp.set("group_by", group);
   if (v.period) for (const [k, val] of Object.entries(periodOf(period, today))) sp.set(k, val);
   return `/r/${v.report}?${sp.toString()}`;
 }

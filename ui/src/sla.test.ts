@@ -39,8 +39,15 @@ describe("the target cards", () => {
 
   it("say what the target is in working time", () => {
     const [r, z] = cards({ ...base, response_state: "running", response_by: "2026-11-02T15:00:00Z", response_secs: 3600, resolution_secs: 14400, resolution_state: "paused" });
-    expect(r.detail).toContain("Target 1 h of working time");
-    expect(z.detail).toContain("Target 4 h of working time");
+    expect(r.detail).toContain("Target 1 h of working time on helpdesk_hours");
+    expect(z.detail).toContain("Target 4 h of working time on helpdesk_hours");
+  });
+
+  it("name the agreement's own calendar, not the workspace's, when it has one", () => {
+    const [r, z] = cards({ ...base, response_state: "running", response_secs: 3600, resolution_secs: 14400, resolution_state: "running", sla_calendar: "sla_gold" });
+    expect(r.detail).toContain("Target 1 h of working time on sla_gold");
+    expect(z.detail).toContain("on sla_gold");
+    expect(z.detail).not.toContain("helpdesk_hours");
   });
 
   it("have nothing to say without a target", () => {

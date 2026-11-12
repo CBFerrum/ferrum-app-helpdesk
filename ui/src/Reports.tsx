@@ -43,17 +43,19 @@ export function Reports() {
             {v.note && <p className="faint">{v.note}</p>}
             <p className="row">
               <Link className="btn btn-primary btn-md" to={viewLink(v, v.group, period, today)}>
-                {t("Open by {group}", { group: v.group })}
+                {v.group ? t("Open by {group}", { group: v.group }) : t("Open the report")}
               </Link>
               {!v.period && <span className="faint">{t("As it stands now")}</span>}
             </p>
-            <p className="row" aria-label={t("Other ways to group it")}>
-              {v.also.map((g) => (
-                <Link key={g} className="chip" to={viewLink(v, g, period, today)}>
-                  {isolate(g)}
-                </Link>
-              ))}
-            </p>
+            {v.also.length > 0 && (
+              <p className="row" aria-label={t("Other ways to group it")}>
+                {v.also.map((g) => (
+                  <Link key={g} className="chip" to={viewLink(v, g, period, today)}>
+                    {isolate(g)}
+                  </Link>
+                ))}
+              </p>
+            )}
           </li>
         ))}
       </ul>

@@ -14,6 +14,8 @@ export interface FieldSpec {
   options?: readonly string[];
   /** For `select`: what each is called, where it differs from what is stored. */
   optionLabels?: Record<string, string>;
+  /** For an optional `select`: what choosing nothing means, where "None" would mislead. */
+  noneLabel?: string;
   /** For `link`: the entity linked to. */
   to?: string;
   hint?: string;

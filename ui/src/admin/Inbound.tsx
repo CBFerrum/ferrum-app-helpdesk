@@ -18,6 +18,8 @@ export interface LogRow {
   outcome?: string | null;
   reason?: string | null;
   detail?: string | null;
+  /** The held mail's text: absent for a person outside the field group `held_mail`. */
+  body?: string | null;
   ticket?: string | null;
   _titles?: Record<string, string>;
 }
@@ -38,6 +40,17 @@ export function viewFilters(view: string): unknown[] | undefined {
   return view ? [["outcome", "in", view.split(",")]] : undefined;
 }
 
+/** What a held mail said, for the roles allowed to read it, as plain text (never drawn as markup). */
+function HeldBody({ body }: { body?: string | null }) {
+  if (body === undefined || body === null) return <span className="faint">{t("What the mail said is shown only to people given access to held mail.")}</span>;
+  return (
+    <details className="hd-held-body">
+      <summary>{t("Read the mail")}</summary>
+      {body.trim() ? <pre>{isolate(body)}</pre> : <p className="faint">{t("The mail has no text.")}</p>}
+    </details>
+  );
+}
+
 export function Inbound() {
   const qc = useQueryClient();
   const rights = useRights("InboundLog");
@@ -49,7 +62,7 @@ export function Inbound() {
     queryFn: ({ pageParam, signal }) =>
       api.get<{ rows: LogRow[]; total?: number }>(
         docPath("InboundLog"),
-        { fields: "received_at,from_address,to_address,subject,outcome,reason,detail,ticket", sort: "received_at desc", limit: PAGE, offset: pageParam, count: true, titles: true, filters: viewFilters(view) ? JSON.stringify(viewFilters(view)) : undefined },
+        { fields: "received_at,from_address,to_address,subject,outcome,reason,detail,body,ticket", sort: "received_at desc", limit: PAGE, offset: pageParam, count: true, titles: true, filters: viewFilters(view) ? JSON.stringify(viewFilters(view)) : undefined },
         signal,
       ),
     getNextPageParam: (last, pages) => {
@@ -95,6 +108,7 @@ export function Inbound() {
 
   return (
     <div className="stack">
+      <p className="faint">{t("Mail is held here until staff open a ticket from it or discard it. It is never released by itself, and a mail that staff released is not held again.")}</p>
       <div className="segmented" role="group" aria-label={t("Show")}>
         {VIEWS.map((v) => (
           <button key={v.id} type="button" aria-pressed={view === v.id} onClick={() => setView(v.id)}>
@@ -123,6 +137,8 @@ export function Inbound() {
                     {r.received_at ? ` · ${formatMoment(r.received_at, { dateStyle: "medium", timeStyle: "short" })}` : ""}
                   </span>
                   {r.detail && <span className="faint">{isolate(r.detail)}</span>}
+                  {r.reason === "Unverified sender" && <span className="faint">{t("The sender's mail server did not vouch for this mail, so it waits for staff.")}</span>}
+                  {r.outcome === "Held" && <HeldBody body={r.body} />}
                 </div>
                 <div className="hd-log-state">
                   <Badge tone={OUTCOME_TONES[r.outcome ?? ""] ?? "neutral"}>{isolate(r.outcome ?? "")}</Badge>

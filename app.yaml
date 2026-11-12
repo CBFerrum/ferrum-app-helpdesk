@@ -1,6 +1,6 @@
 id: helpdesk
 name: Helpdesk
-version: 0.10.2
+version: 0.10.3
 publisher: cbferrum
 summary: Tickets that customers email to, on the platform's service targets, routed by skill and shift, with macros, ratings by link, a help centre, warranty claims and maintenance visits
 description: README.md

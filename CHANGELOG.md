@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.10.3
+
+The interface gains the screens that 0.10.2 listed, built with Ferrum-Frontend (its checkout at `gapui/ferrum/web`). Nothing is changed on the server.
+
+- **Administration.** Support addresses show the Brand (a pick from Brands; the old `label` stays as a note called Label), whether Mail hands the address mail (`mail_registered`) and, when it does not, Mail's own reason (`registration_note`). A new Brands section lists and edits brands (name, name the customer sees, signature, header, footer) with a sample reply wrapped in what is typed, in the server's order. A new Service agreements section picks each agreement's Working Calendar from the platform's calendars (empty: the workspace's `helpdesk_hours`, said in words; a calendar that was deleted stays visible instead of being dropped) and links to the agreement's own form for targets and criteria. Mail that fails authentication (Hold Failed, Hold All Unverified, Accept) has a card of its own beside Unknown senders, one plain sentence for each option.
+- **The inbound log** shows a held mail's text, as plain text, to the roles that may read it (the field group `held_mail`), tells everyone else it is not theirs to read, says why mail from an unverified sender waits, and says staff alone release held mail.
+- **The ticket.** A message whose sender the mail server did not verify (`sender_unverified`) carries a small Sender not verified mark. The two target cards name the calendar they count on (`sla_calendar`, else `helpdesk_hours`), and the reports' note no longer assumes one calendar for all tickets.
+- **Reports and help centre.** Help Centre by Article is in the reports list (it has no grouping and no period, and opens at once); the article editor says that views and votes count the portal and the public page together.
+
+Not in this release: the screens were not run against a server; the field group's right is read from whether the server sends the text, not from the group itself; the agreement's targets, criteria and pauses stay in its own form (it has a table of targets); a Brands pick in a new address's form needs the Brand to exist first; 60 new words are in English until translated into Arabic and Hindi.
+
 ## 0.10.2
 
 Everything 0.10.0 gave up or worked around that the platform (App API 0.3.4) and Mail (0.20.0) now offer. Server side only: the interface is not rebuilt, and the screens that must follow are listed at the end. Needs platform 0.3.4 and, for mail, Mail 0.20.
