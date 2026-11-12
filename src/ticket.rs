@@ -72,6 +72,8 @@ pub struct Sla {
     ticket_type: Option<Uuid>,
     pause_on_hold: bool,
     pause_on_replied: bool,
+    /// The working calendar its targets count on, when it names one the workspace has.
+    calendar: Option<String>,
     /// priority → (response, resolution) in seconds of working time.
     targets: HashMap<String, (i64, i64)>,
 }
@@ -81,7 +83,7 @@ fn hours_to_secs(h: Decimal) -> i64 {
 }
 
 impl Sla {
-    fn from_doc(doc: &Doc) -> Option<Sla> {
+    fn from_doc(doc: &Doc, calendars: &std::collections::BTreeSet<String>) -> Option<Sla> {
         let targets = rows(doc, "priorities")
             .iter()
             .filter_map(|r| Some((s(r, "priority")?.to_string(), (hours_to_secs(d(r, "response_hours")), hours_to_secs(d(r, "resolution_hours"))))))
@@ -95,6 +97,7 @@ impl Sla {
             ticket_type: id(doc, "ticket_type"),
             pause_on_hold: b(doc, "pause_on_hold"),
             pause_on_replied: b(doc, "pause_on_replied"),
+            calendar: s(doc, "calendar").map(str::trim).filter(|c| calendars.contains(*c)).map(str::to_string),
             targets,
         })
     }
@@ -152,6 +155,7 @@ pub fn policy_fields(slas: &[Sla], groups: &[Uuid], doc: &Doc) -> Doc {
             out.insert("resolution_secs".into(), json!(resolution));
             out.insert("sla_pause_hold".into(), json!(x.pause_on_hold));
             out.insert("sla_pause_replied".into(), json!(x.pause_on_replied));
+            out.insert("sla_calendar".into(), x.calendar.as_ref().map_or(Value::Null, |c| json!(c)));
         }
         None => {
             out.insert("service_level_agreement".into(), Value::Null);
@@ -159,6 +163,7 @@ pub fn policy_fields(slas: &[Sla], groups: &[Uuid], doc: &Doc) -> Doc {
             out.insert("resolution_secs".into(), Value::Null);
             out.insert("sla_pause_hold".into(), json!(false));
             out.insert("sla_pause_replied".into(), json!(false));
+            out.insert("sla_calendar".into(), Value::Null);
         }
     }
     out
@@ -168,10 +173,11 @@ pub fn policy_fields(slas: &[Sla], groups: &[Uuid], doc: &Doc) -> Doc {
 async fn load_slas(k: &Kernel, ctx: &Ctx, tx: &mut Tx, keep: impl Fn(&Doc) -> bool) -> Result<Vec<Sla>> {
     let sctx = sys(ctx);
     let heads = k.find_tx(&sctx, tx, "ServiceLevelAgreement", &[Filter::eq("enabled", true)], Some("sla_name asc"), 1000).await?;
+    let calendars = crate::hours::names(tx, ctx.tenant).await?;
     let mut out = Vec::new();
     for head in heads.iter().filter(|h| keep(h)) {
         let Some(sla_id) = id(head, "id") else { continue };
-        out.extend(Sla::from_doc(&k.get_tx(&sctx, tx, "ServiceLevelAgreement", sla_id, false).await?));
+        out.extend(Sla::from_doc(&k.get_tx(&sctx, tx, "ServiceLevelAgreement", sla_id, false).await?, &calendars));
     }
     Ok(out)
 }
@@ -217,6 +223,13 @@ impl DocHook for SlaHook {
                     errors.push(FieldError::new("end_time", "must be after the start time; enter a night shift as one row per day").in_row("working_hours", i))
                 }
                 _ => {}
+            }
+        }
+        // A target that names a calendar the workspace lacks refuses every save of a ticket: the name must be one there is.
+        if let Some(name) = s(doc, "calendar").map(str::trim).filter(|c| !c.is_empty()) {
+            let there = crate::hours::names(hc.tx, hc.ctx.tenant).await?.contains(name);
+            if !there {
+                errors.push(FieldError::new("calendar", format!("the workspace has no working calendar {name:?} (Admin, Calendars)")));
             }
         }
         if !errors.is_empty() {
@@ -522,7 +535,8 @@ impl DocHook for TicketHook {
             }
         }
         let status = s(doc, "status").unwrap_or("Open").to_string();
-        if status == "Open" && old.as_ref().is_some_and(|o| s(o, "status") == Some("Resolved")) {
+        let reopened = status == "Open" && old.as_ref().is_some_and(|o| s(o, "status") == Some("Resolved"));
+        if reopened {
             set(doc, "reopen_count", json!(int(doc, "reopen_count") + 1));
             crate::routing::reroute_reopened(hc, doc).await?;
         }
@@ -573,10 +587,16 @@ impl DocHook for TicketHook {
         let (cust, team, ticket_type) = (id(doc, "customer"), id(doc, "team"), id(doc, "ticket_type"));
         let slas = load_slas(hc.kernel, hc.ctx, hc.tx, |h| applies(h, cust, &groups, team, ticket_type)).await?;
         let fields = policy_fields(&slas, &groups, doc);
-        if fields.get("response_secs").is_some_and(|v| !v.is_null()) {
+        // The workspace's own calendar is the one a ticket falls back to when its agreement names none.
+        if fields.get("response_secs").is_some_and(|v| !v.is_null()) && fields.get("sla_calendar").is_none_or(Value::is_null) {
             crate::hours::ensure(hc.kernel, hc.ctx, hc.tx).await?;
         }
         doc.extend(fields);
+        // The targets' clocks start when the ticket was opened (a backdated or imported one is due by its own opening),
+        // and again when a resolved ticket is reopened.
+        if reopened || ts(doc, "sla_start").is_none() {
+            set(doc, "sla_start", ts_value(if reopened { Utc::now().max(opened) } else { opened }));
+        }
         Ok(())
     }
 
@@ -1037,7 +1057,7 @@ mod tests {
             "priorities".into(),
             Value::Array(priorities.iter().map(|(p, r, z)| json!({"priority": p, "response_hours": r, "resolution_hours": z})).collect()),
         );
-        Sla::from_doc(&doc).unwrap()
+        Sla::from_doc(&doc, &Default::default()).unwrap()
     }
 
     fn ticket(fields: Value) -> Doc {

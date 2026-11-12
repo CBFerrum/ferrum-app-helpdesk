@@ -21,6 +21,7 @@
     - {name: survey_alert_at_or_below, type: int, default: 0, min: 0, max: 5, label: Tell the Lead at a Rating of or Below, description: "0 = never"}
     - {name: survey_alert_to, type: email, label: Lead Told About Bad Ratings}
     - {name: defaults_made, type: check, hidden: true, read_only: true, no_copy: true}
+    - {name: upkeep_done, type: data, max_length: 200, hidden: true, read_only: true, no_copy: true, description: "What the upkeep did once for this workspace when it was updated (calendars, counts, brands), so it is not done again over an administrator's changes"}
 
 - name: TicketType
   label: Ticket Type
@@ -102,7 +103,7 @@
   kind: master
   module: support
   title_field: sla_name
-  description: "Response and resolution targets per priority, counted in working time on the calendar helpdesk_hours (Admin, Calendars: hours, time zone with daylight saving, dated exceptions). The most specific enabled agreement applies: customer, then customer group (nearest), then team and ticket type, then the default one without criteria. A customer's support contract can name one that applies whatever else would."
+  description: "Response and resolution targets per priority, counted in working time on the agreement's own calendar, else on helpdesk_hours (Admin, Calendars: hours, time zone with daylight saving, dated exceptions). The most specific enabled agreement applies: customer, then customer group (nearest), then team and ticket type, then the default one without criteria. A customer's support contract can name one that applies whatever else would."
   fields:
     - {name: sla_name, type: data, label: Name, required: true, unique: true, in_list: true}
     - {name: enabled, type: check, default: true, in_list: true, in_filter: true}
@@ -110,7 +111,8 @@
     - {name: customer_group, type: link, to: CustomerGroup, in_list: true, description: "Applies to customers in this group and its sub-groups"}
     - {name: ticket_type, type: link, to: TicketType, in_list: true}
     - {name: team, type: link, to: SupportTeam, in_list: true, description: "Applies only to tickets of this team"}
-    - {name: time_zone_offset, type: int, label: Time Zone (UTC Offset in Minutes), default: 0, min: -720, max: 840, hidden: true, description: "Before 0.10, each agreement had its own hours. Targets now count on the working calendar helpdesk_hours (Admin, Calendars); this and the two tables below are read once, to make that calendar from the default agreement when the workspace has none"}
+    - {name: calendar, type: data, max_length: 64, in_list: true, label: Working Calendar, description: "The working calendar (Admin, Calendars: hours, a time zone with daylight saving, dated exceptions) this agreement's targets are counted on. Empty: the workspace's calendar helpdesk_hours. An agreement that had its own hours, holidays or time zone before 0.10 got a calendar made from them when the app was updated"}
+    - {name: time_zone_offset, type: int, label: Time Zone (UTC Offset in Minutes), default: 0, min: -720, max: 840, hidden: true, description: "What the agreement had before 0.10: hours, holidays and a fixed time zone. Kept, and read once when the app is updated, to make the agreement's calendar and the workspace's helpdesk_hours; the calendar is what counts now"}
     - {name: pause_on_hold, type: check, label: Pause While On Hold, default: true}
     - {name: pause_on_replied, type: check, label: Pause While Awaiting the Customer (Replied), default: true}
     - {name: priorities, type: table, of: SlaPriority, label: Targets, required: true}
@@ -228,6 +230,8 @@
     - {name: resolution_state, type: select, options: [running, paused, met, met_late, breached], read_only: true, no_copy: true, in_filter: true, label: Resolution Target}
     - {name: response_secs, type: int, read_only: true, no_copy: true, hidden: true, description: "Seconds of working time the agreement gives for a first response to this ticket's priority"}
     - {name: resolution_secs, type: int, read_only: true, no_copy: true, hidden: true}
+    - {name: sla_calendar, type: data, read_only: true, no_copy: true, hidden: true, description: "The working calendar of the agreement that applies, which both targets count on; empty: helpdesk_hours"}
+    - {name: sla_start, type: datetime, read_only: true, no_copy: true, hidden: true, description: "Where the targets' clocks start: the moment the ticket was opened (a backdated or imported ticket is due by its own opening), and the moment of a reopening"}
     - {name: sla_pause_hold, type: check, read_only: true, no_copy: true, hidden: true}
     - {name: sla_pause_replied, type: check, read_only: true, no_copy: true, hidden: true}
     - {name: status_history, type: json, read_only: true, hidden: true, no_copy: true}
@@ -267,9 +271,9 @@
     - {name: decline_outside_entitlement, label: Decline Work Outside Entitlement, permission: write, condition: "doc.entitlement_approval == 'Waiting'",
        params: [{name: reason, label: Why, type: data, required: true, description: "Why it is not worked: the customer is told once someone replies"}]}
   targets:
-    - {name: respond, label: First Response, calendar: helpdesk_hours, within: "doc.response_secs > 0 ? 'PT' + string(doc.response_secs) + 'S' : ''", pause_when: "(doc.status == 'On Hold' && doc.sla_pause_hold) || (doc.status == 'Replied' && doc.sla_pause_replied)",
+    - {name: respond, label: First Response, calendar: helpdesk_hours, calendar_field: sla_calendar, start_field: sla_start, within: "doc.response_secs > 0 ? 'PT' + string(doc.response_secs) + 'S' : ''", pause_when: "(doc.status == 'On Hold' && doc.sla_pause_hold) || (doc.status == 'Replied' && doc.sla_pause_replied)",
        met_when: "!isEmpty(doc.first_responded_at)", due_field: response_by, state_field: response_state}
-    - {name: resolve, label: Resolution, calendar: helpdesk_hours, within: "doc.resolution_secs > 0 ? 'PT' + string(doc.resolution_secs) + 'S' : ''", pause_when: "(doc.status == 'On Hold' && doc.sla_pause_hold) || (doc.status == 'Replied' && doc.sla_pause_replied)",
+    - {name: resolve, label: Resolution, calendar: helpdesk_hours, calendar_field: sla_calendar, start_field: sla_start, within: "doc.resolution_secs > 0 ? 'PT' + string(doc.resolution_secs) + 'S' : ''", pause_when: "(doc.status == 'On Hold' && doc.sla_pause_hold) || (doc.status == 'Replied' && doc.sla_pause_replied)",
        met_when: "doc.status == 'Resolved' || doc.status == 'Closed'", due_field: resolution_by, state_field: resolution_state}
   list: {columns: [number, subject, customer_name, priority, status, assigned_to, sla_status], sort: opened_at desc}
 
