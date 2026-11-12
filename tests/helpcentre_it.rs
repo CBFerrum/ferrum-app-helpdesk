@@ -4,12 +4,16 @@
 
 mod common;
 use common::*;
-use ferrum_kernel::published::Find;
+use ferrum_kernel::published::{Count, Counted, Find};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 
 #[test]
 fn the_help_centre() {
-    run(scenario());
+    run(async {
+        scenario().await;
+        an_older_list_gets_counting().await;
+    });
 }
 
 async fn scenario() {
@@ -64,6 +68,23 @@ async fn scenario() {
         "a draft has no page"
     );
     let _ = (&internal, &customers);
+    // ── the public page counts its visitors' views and votes, into the article's own fields ──
+    let slug = "how-to-reset-your-password-2";
+    let count = |visitor: &'static str, what: Count| {
+        let k = k.clone();
+        async move { k.published_count("help", "help-centre", slug, visitor, "203.0.113.5", what).await.unwrap() }
+    };
+    assert_eq!(count("v1", Count::View).await, Some(Counted::Counted));
+    assert_eq!(count("v1", Count::View).await, Some(Counted::Already), "once a visitor a day");
+    assert_eq!(count("v2", Count::View).await, Some(Counted::Counted));
+    assert_eq!(count("v1", Count::Vote(true)).await, Some(Counted::Counted));
+    assert_eq!(count("v1", Count::Vote(false)).await, Some(Counted::Counted), "another answer moves the vote");
+    let second = e.get("KbArticle", uid(&reset_again)).await;
+    assert_eq!((second["views"].clone(), second["helpful_count"].clone(), second["not_helpful_count"].clone()), (json!(2), json!(0), json!(1)));
+    assert_eq!(second["version"], reset_again["version"], "counted without a new version of the article");
+    let uncounted = k.published_count("help", "help-centre", &uid_slug(&draft), "v1", "203.0.113.5", Count::View).await.unwrap();
+    assert_eq!(uncounted, None, "a draft has no page to count");
+
     // An administrator takes it down: the upkeep does not make it again.
     k.add_customization(
         &ferrum_kernel::Ctx::system(e.tenant, k.registry.schema(e.tenant).await.unwrap()),
@@ -104,6 +125,91 @@ async fn scenario() {
     let after = e.get("KbArticle", reset_id).await;
     assert_eq!((after["helpful_count"].clone(), after["not_helpful_count"].clone()), (json!(1), json!(0)));
     assert!(call(&k, None, e.tenant, "GET", "portal/articles", Value::Null).await.is_err(), "signed in only: the public page is the platform's");
+
+    // ── the report by article: both ways in, together ──
+    let report = ferrum_domain::reports::run(&k, &e.admin, "support_articles", &HashMap::new()).await.unwrap();
+    let rows = report["rows"].as_array().unwrap();
+    let of = |title: &str, n: usize| rows.iter().filter(|r| r["title"] == json!(title)).nth(n).unwrap_or_else(|| panic!("{title} in {report}")).clone();
+    assert_eq!((rows.len(), report["totals"]["views"].clone(), report["totals"]["votes"].clone()), (5, json!(4), json!(2)));
+    let (liked, disliked) = (rows.iter().find(|r| r["helpful"] == json!(1)).unwrap(), rows.iter().find(|r| r["not_helpful"] == json!(1)).unwrap());
+    assert_eq!(
+        (liked["views"].clone(), liked["not_helpful"].clone(), liked["helpful_pct"].clone()),
+        (json!(2), json!(0), json!("100")),
+        "the portal's: two views, one vote"
+    );
+    assert_eq!(
+        (disliked["views"].clone(), disliked["helpful"].clone(), disliked["helpful_pct"].clone()),
+        (json!(2), json!(0), json!("0")),
+        "the public page's: two visitors, one vote"
+    );
+    assert_eq!((of("Warranty terms", 0)["views"].clone(), of("Warranty terms", 0)["votes"].clone()), (json!(0), json!(0)));
+    let published = ferrum_domain::reports::run(
+        &k,
+        &e.admin,
+        "support_articles",
+        &[("status".to_string(), "Published".to_string()), ("visibility".to_string(), "Customers Only".to_string())].into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(published["rows"].as_array().unwrap().len(), 1, "by status and visibility");
+    let agent = e.user("sam@acme.test", &["Support Agent"]).await;
+    assert!(ferrum_domain::reports::run(&k, &agent, "support_articles", &HashMap::new()).await.is_ok(), "agents read the help centre's numbers");
+}
+
+/// A workspace that was updated to 0.10.0: its help centre is a list that does not count. The upkeep makes it count, once, and keeps
+/// what an administrator changed in it.
+async fn an_older_list_gets_counting() {
+    let e = boot("help010", false, vec![]).await;
+    let k = e.k.clone();
+    let sctx = ferrum_kernel::Ctx::system(e.tenant, k.registry.schema(e.tenant).await.unwrap());
+    let category = uid(&e.list("KbCategory", json!({"category_name": "General"})).await[0]);
+    e.insert("KbArticle", json!({"title": "Pairing a router", "category": category.to_string(), "visibility": "Public", "status": "Published", "content": "Hold the button.", "summary": "About pairing"})).await;
+    // As 0.10.0 made it, with the one change an administrator made (seven rows, not a hundred), and the flag it left.
+    k.add_customization(
+        &sctx,
+        "KbArticle",
+        serde_json::from_value(
+            json!({"op": "publish_list", "list": {"name": "help-centre", "label": "Help centre", "description": "Answers to common questions",
+            "fields": ["title", "summary", "category", "published_at"], "detail": ["content"], "slug": "slug", "summary": "summary",
+            "filter": [["status", "=", "Published"], ["visibility", "=", "Public"]], "sort": ["published_at", "desc"], "limit": 7}}),
+        )
+        .unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    e.settings(json!({})).await;
+    let mut tx = k.db.tenant_tx(e.tenant).await.unwrap();
+    sqlx::query("update e_support_settings set defaults_made = true where tenant_id = $1").bind(e.tenant).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    let count = || {
+        let k = k.clone();
+        async move { k.published_count("help010", "help-centre", "pairing-a-router", "v1", "203.0.113.5", Count::View).await.unwrap() }
+    };
+    assert_eq!(count().await, None, "the list as it was does not count");
+    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    assert_eq!(count().await, Some(Counted::Counted), "now it counts");
+    let schema = k.registry.schema(e.tenant).await.unwrap();
+    let list = &schema.published_list("help-centre").expect("the list").list;
+    assert_eq!(
+        (list.limit, list.count_views.as_deref(), list.votes.as_ref().map(|v| (v.up.as_str(), v.down.as_str()))),
+        (Some(7), Some("views"), Some(("helpful_count", "not_helpful_count"))),
+        "the administrator's seven rows are kept"
+    );
+    // Once: an administrator who turns counting off is not overruled.
+    k.add_customization(
+        &sctx,
+        "KbArticle",
+        serde_json::from_value(json!({"op": "publish_list", "list": {"name": "help-centre", "label": "Help centre",
+        "fields": ["title"], "slug": "slug", "limit": 3}}))
+        .unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    let schema = k.registry.schema(e.tenant).await.unwrap();
+    assert_eq!(schema.published_list("help-centre").unwrap().list.count_views, None);
 }
 
 fn uid_slug(d: &ferrum_kernel::Doc) -> String {

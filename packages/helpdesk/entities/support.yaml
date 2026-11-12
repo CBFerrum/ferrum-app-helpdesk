@@ -8,6 +8,8 @@
        description: "A ticket from a customer whose contract has ended or run out of tickets, or who has none. Inform: it is worked as any other, marked so. Hold for Approval: it waits On Hold, with no reply to the customer, until a Support Manager approves the work or declines it, saying why"}
     - {name: unknown_senders, type: select, options: [Open Ticket, Hold for Review, Ignore], default: Open Ticket, required: true, label: Mail From Unknown Senders,
        description: "What mail to a support address does when its sender is no customer's address (or contact's) and is not writing on a ticket. Open Ticket: the sender is the requester, with no customer. Hold for Review: it waits in the Inbound Mail Log for staff to open a ticket from it or discard it. Ignore: it is logged only"}
+    - {name: unverified_senders, type: select, options: [Hold for Review, Accept], default: Hold for Review, required: true, label: Mail That Fails Authentication,
+       description: "Mail whose sender the mail server could not verify (DMARC or an aligned DKIM signature) from an address of a known customer, or of the requester or a copy on the ticket it answers. Hold for Review: it waits in the Inbound Mail Log for staff, so a forged sender can neither add to a customer's ticket nor open one in their name. Accept: it is taken as any other"}
     - {name: inbound_per_hour, type: int, default: 20, min: 0, max: 10000, label: Mail Taken From One Sender Per Hour, description: "More than this from one address in an hour is logged and not turned into tickets or messages; 0 = no limit"}
     - {name: inbound_log_days, type: int, default: 90, min: 1, max: 3650, label: Keep the Inbound Mail Log (Days)}
     - {name: at_risk_percent, type: int, default: 75, min: 1, max: 99, label: At Risk After (% of the Time), description: "A running target is At Risk when this share of the time between its start and its due moment has passed"}
@@ -238,7 +240,7 @@
     - {name: merged_into, type: link, to: Ticket, read_only: true, no_copy: true, in_filter: true, label: Merged Into, description: "Closed as a duplicate of this ticket, which holds its conversation now; a reply to this one lands there"}
     - {name: merged_at, type: datetime, read_only: true, no_copy: true}
     - {name: merged_by, type: email, read_only: true, no_copy: true}
-    - {name: mail_token, type: data, read_only: true, no_copy: true, hidden: true, description: "A secret in the subject of the mail sent about this ticket, so a reply is matched to it by something nobody can guess"}
+    - {name: mail_token, type: data, read_only: true, no_copy: true, hidden: true, index: true, description: "A secret in the subject of the mail sent about this ticket, so a reply is matched to it by something nobody can guess"}
     - {name: channel_address, type: link, to: SupportAddress, read_only: true, no_copy: true, in_filter: true, label: Support Address, description: "The support address the customer wrote to"}
     - {name: cc, type: text, no_copy: true, label: Copied, description: "Addresses copied on the customer's mail; replies to the customer are copied to them too"}
     - {name: related_ticket, type: link, to: Ticket, read_only: true, no_copy: true, label: Follows Up, description: "The closed ticket this one continues: mail arrived on a ticket that was closed"}

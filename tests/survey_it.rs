@@ -111,4 +111,15 @@ async fn scenario() {
     let by_team = ferrum_domain::reports::run(&k, &e.admin, "support_customer_satisfaction", &p("Team")).await.unwrap();
     assert_eq!(by_team["totals"]["rated"], json!(3));
     let _ = settings;
+
+    // ── someone who opted out of such mail is not asked, and is not tried again ──
+    let quiet = solve("Quiet", "quiet@cust.test", "sam@acme.test").await;
+    let chatty = solve("Chatty", "chatty@cust.test", "sam@acme.test").await;
+    k.set_message_opt_out(&e.admin, "quiet@cust.test", "email", true).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    drain(&k).await;
+    assert!(sent_to("quiet@cust.test").is_empty(), "opted out");
+    assert_eq!(sent_to("chatty@cust.test").len(), 1);
+    assert!(e.get("Ticket", quiet).await["survey_sent_at"].is_string() && e.get("Ticket", chatty).await["survey_sent_at"].is_string());
 }

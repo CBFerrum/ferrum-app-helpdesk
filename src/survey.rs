@@ -138,6 +138,12 @@ pub async fn send_due(k: &Kernel, ctx: &Ctx) -> Result<usize> {
         }
         let doc = k.get_tx(&sctx, &mut tx, "Ticket", ticket, false).await?;
         let Some(to) = s(&doc, "contact_email").map(str::to_string) else { continue };
+        // A request for feedback is not service mail: someone who opted out of such mail, or whose processing is
+        // restricted, is not asked (the ticket stays marked, so it is not tried again every few minutes).
+        if k.opted_out(&mut tx, ctx.tenant, "email", &to).await? {
+            tx.commit().await?;
+            continue;
+        }
         let spec = LinkSpec {
             actions: vec!["rate".into()],
             show: vec!["subject".into()],

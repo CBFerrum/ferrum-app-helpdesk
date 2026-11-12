@@ -118,22 +118,9 @@ pub async fn apply(hc: &mut HookCtx<'_>, ticket: &Doc, params: &Value) -> Result
     if !patch.is_empty() {
         hc.kernel.update_tx(hc.ctx, hc.tx, "Ticket", ticket_id, patch, None).await?;
     }
-    for tag in &add {
-        sqlx::query("insert into record_tag (tenant_id, entity, record_id, tag, created_by) values ($1, 'Ticket', $2, $3, $4) on conflict do nothing")
-            .bind(hc.ctx.tenant)
-            .bind(ticket_id)
-            .bind(tag)
-            .bind((!hc.ctx.user.is_nil()).then_some(hc.ctx.user))
-            .execute(&mut **hc.tx)
-            .await?;
-    }
-    if !remove.is_empty() {
-        sqlx::query("delete from record_tag where tenant_id = $1 and entity = 'Ticket' and record_id = $2 and tag = any($3)")
-            .bind(hc.ctx.tenant)
-            .bind(ticket_id)
-            .bind(&remove)
-            .execute(&mut **hc.tx)
-            .await?;
+    // As the person who pressed it, through the platform's call: whoever may change the ticket, tags kept lowercase, at most twenty.
+    if !add.is_empty() || !remove.is_empty() {
+        hc.kernel.tag_tx(hc.ctx, hc.tx, "Ticket", ticket_id, &add, &remove).await?;
     }
     let mut counted = Doc::new();
     counted.insert("uses".into(), json!(crate::int(&m, "uses") + 1));

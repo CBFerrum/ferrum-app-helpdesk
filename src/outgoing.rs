@@ -1,17 +1,18 @@
 //! A reply on its way to the customer: the email it becomes, and the files it carries.
 //!
-//! Where the Mail app is installed the reply is a `Communication` on the ticket, so Mail sends it with
-//! proper threading headers (In-Reply-To and References from the customer's last message), copies the
-//! ticket's CC and keeps it on the ticket's timeline; the customer's answer comes back to Mail and
-//! [`crate::inbound`]. Without Mail it goes through the platform's mail (`Kernel::queue_mail`), one
-//! HTML message to each address with no threading headers. Either way the subject carries the ticket's
-//! number and secret (`[TKT-2026-000123/…]`), which is what matches an answer to its ticket when no header
-//! does, and the wording around the agent's words is the message template `helpdesk.reply`, which the
-//! workspace edits. Files are the platform's stored files: an agent uploads one (`POST /api/files`),
-//! then names it in the message.
+//! Where the Mail app is installed the reply goes through `ferrum_app_comms::outbound::send`, on the ticket: with
+//! In-Reply-To and References from the conversation's own message ids, the ticket's CC, and a Reply-To that is the
+//! support address with the ticket's secret in it (`support+<secret>@acme.test`), so the customer's answer is matched
+//! to the ticket by the headers it carries, then by the address it was written to. The Message-ID Mail gave the
+//! message is kept on the conversation row. Without Mail it goes through the platform's mail
+//! (`Kernel::queue_mail`), one HTML message to each address with no threading headers. Either way the subject
+//! carries the ticket's number and secret (`[TKT-2026-000123/…]`), the last thing an answer is matched by when
+//! nothing else does, and the wording around the agent's words is the message template `helpdesk.reply`, which
+//! the workspace edits. Files are the platform's stored files: an agent uploads one (`POST /api/files`), then
+//! names it in the message, and the platform attaches it to the ticket (`Kernel::attach_files_tx`).
 
 use ferrum_domain::util::{b, id, rows, s, sys};
-use ferrum_kernel::{Ctx, Doc, Error, Filter, HookCtx, Kernel, Result, Tx};
+use ferrum_kernel::{Ctx, Doc, Error, Filter, HookCtx, Kernel, Result};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -165,9 +166,9 @@ pub fn file_ids(v: Option<&Value>) -> Vec<Uuid> {
     ids
 }
 
-/// The files a new message names, as the stored files describe them (what the client wrote about a file's
-/// name or size is not believed). Each must be a file this person uploaded and attached to nothing yet,
-/// or one already on this ticket; at most [`MAX_FILES`] and [`MAX_BYTES`] together.
+/// The files a new message names, attached to the ticket, as the stored files describe them (what the client wrote
+/// about a file's name or size is not believed). Each must be a file this person uploaded and attached to nothing
+/// yet, or one already on this ticket; at most [`MAX_FILES`] and [`MAX_BYTES`] together.
 pub async fn check_files(hc: &mut HookCtx<'_>, ticket: Uuid, wanted: &Value) -> Result<Vec<Value>> {
     if !wanted.is_array() {
         return Err(Error::field("attachments", "must be a list of the files uploaded"));
@@ -182,45 +183,20 @@ pub async fn check_files(hc: &mut HookCtx<'_>, ticket: Uuid, wanted: &Value) -> 
     if ids.is_empty() {
         return Ok(vec![]);
     }
-    type Stored = (Uuid, String, String, i64, Option<String>, Option<Uuid>, Option<Uuid>);
-    let rows: Vec<Stored> =
-        sqlx::query_as("select id, file_name, content_type, size_bytes, entity, record_id, created_by from file_object where tenant_id = $1 and id = any($2)")
-            .bind(hc.ctx.tenant)
-            .bind(&ids)
-            .fetch_all(&mut **hc.tx)
-            .await?;
-    let (mut out, mut total) = (Vec::new(), 0i64);
-    for wanted in &ids {
-        let usable = rows.iter().find(|r| {
-            r.0 == *wanted
-                && match (&r.4, r.5) {
-                    (Some(e), Some(rec)) => e == "Ticket" && rec == ticket,
-                    _ => hc.ctx.is_system || r.6 == Some(hc.ctx.user),
-                }
-        });
-        let Some((id, name, ctype, size, ..)) = usable else {
-            return Err(Error::field("attachments", format!("file {wanted} does not exist, is not yours, or belongs to something else")));
-        };
-        total += size;
-        out.push(json!({"id": id, "file_name": name, "content_type": ctype, "size": size}));
-    }
+    // The platform asks what attaching asks (whoever may change the ticket), accepts only this ticket's own files and the
+    // caller's loose uploads, and attaches the loose ones to the ticket.
+    // (Its refusals name the field `files`; the message's own is `attachments`.)
+    let described = hc.kernel.attach_files_tx(hc.ctx, hc.tx, &ids, "Ticket", ticket).await.map_err(|e| match e {
+        Error::Validation(fields) => Error::Validation(fields.into_iter().map(|f| ferrum_kernel::FieldError { field: "attachments".into(), ..f }).collect()),
+        // A ticket being created has no record to attach to yet.
+        Error::NotFound(_) => Error::field("attachments", "can be added once the ticket exists"),
+        other => other,
+    })?;
+    let total: i64 = described.iter().filter_map(|f| f.get("size").and_then(Value::as_i64)).sum();
     if total > MAX_BYTES {
         return Err(Error::field("attachments", format!("files are limited to {} MB together", MAX_BYTES >> 20)));
     }
-    Ok(out)
-}
-
-/// Puts the files that belonged to nothing yet on the ticket, so they list with it and follow its access.
-pub async fn attach(tx: &mut Tx, tenant: Uuid, ids: &[Uuid], ticket: Uuid) -> Result<()> {
-    if !ids.is_empty() {
-        sqlx::query("update file_object set entity = 'Ticket', record_id = $3 where tenant_id = $1 and id = any($2) and entity is null and record_id is null")
-            .bind(tenant)
-            .bind(ids)
-            .bind(ticket)
-            .execute(&mut **tx)
-            .await?;
-    }
-    Ok(())
+    Ok(described)
 }
 
 /// Renders the message template `helpdesk.reply` (the workspace's copy, else the package's) for a ticket and
@@ -252,12 +228,10 @@ fn plain(markdown: &str) -> String {
     markdown.lines().map(|l| l.trim_end().replace("**", "").replace('`', "")).collect::<Vec<_>>().join("\n")
 }
 
-/// After a ticket is saved: puts the files its new messages carry on the ticket, and sends the replies that
+/// After a ticket is saved: sends the replies that
 /// were marked `emailed` when they were checked, to the ticket's contact (and its CC), through Mail when it is
 /// installed. Done in the save's own transaction, so a reply that is refused sends nothing.
 pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Doc]) -> Result<()> {
-    let files: Vec<Uuid> = fresh.iter().flat_map(|m| file_ids(m.get("attachments"))).collect();
-    attach(hc.tx, hc.ctx.tenant, &files, ticket).await?;
     let Some(to) = s(doc, "contact_email").filter(|_| fresh.iter().any(|m| b(m, "emailed"))) else { return Ok(()) };
     let sctx = sys(hc.ctx);
     let number = s(doc, "number").unwrap_or("Ticket");
@@ -271,26 +245,28 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
         return Ok(());
     }
     let copies: Vec<String> = crate::inbound::addresses(s(doc, "cc")).into_iter().filter(|a| !own.contains(a)).collect();
-    // Threads onto the customer's latest message that came through Mail.
-    let parent = rows(doc, "conversation")
-        .iter()
-        .rev()
-        .find(|m| s(m, "author_kind") == Some("Customer") && s(m, "communication").is_some())
-        .and_then(|m| id(m, "communication"));
-    let account = match (via_mail, id(doc, "channel_address")) {
-        (true, Some(a)) => {
-            match hc.kernel.get_tx(&sctx, hc.tx, "SupportAddress", a, false).await.ok().and_then(|d| s(&d, "mail_account").map(str::to_string)) {
-                Some(name) => hc
-                    .kernel
-                    .find_tx(&sctx, hc.tx, "EmailAccount", &[Filter::eq("account_name", name)], None, 1)
-                    .await
-                    .ok()
-                    .and_then(|r| r.first().and_then(|d| id(d, "id"))),
-                None => None,
-            }
-        }
-        _ => None,
+    // Mail with what a send needs (0.20 and later); an older one carries the reply without threading, as the platform's mail does.
+    let through_mail = via_mail && hc.ctx.schema.entity("Communication").is_some_and(|c| c.field("reply_to_address").is_some());
+    let address = reply_address(hc, doc).await?;
+    let brand = match address.as_ref().and_then(|a| id(a, "brand")) {
+        Some(b) => hc.kernel.get_tx(&sctx, hc.tx, "SupportBrand", b, false).await.ok(),
+        None => None,
     };
+    let brand_name = brand.as_ref().and_then(|b| s(b, "display_name").or(s(b, "brand_name"))).map(str::to_string);
+    let account = match address.as_ref().and_then(|a| s(a, "mail_account")).map(str::to_string) {
+        Some(name) => hc
+            .kernel
+            .find_tx(&sctx, hc.tx, "EmailAccount", &[Filter::eq("account_name", name)], None, 1)
+            .await
+            .ok()
+            .and_then(|r| r.first().and_then(|d| id(d, "id"))),
+        None => None,
+    };
+    // Answers come back to the support address with the ticket's secret in it.
+    let reply_to =
+        if through_mail { address.as_ref().and_then(|a| s(a, "address")).zip(s(doc, "mail_token")).and_then(|(a, t)| crate::mail::tagged(a, t)) } else { None };
+    let reply_mailbox = reply_to.as_ref().map(|a| mailbox(brand_name.as_deref(), a));
+    let (in_reply_to, references) = threading(doc);
     for m in fresh.iter().filter(|m| b(m, "emailed")) {
         let ids = file_ids(m.get("attachments"));
         let names: Vec<String> = m
@@ -301,7 +277,7 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
             .filter_map(|f| f.get("file_name").and_then(Value::as_str).map(str::to_string))
             .collect();
         let body = s(m, "body").unwrap_or_default();
-        let signature = match s(m, "author") {
+        let agent_signature = match s(m, "author") {
             Some(agent) => hc
                 .kernel
                 .find_tx(&sctx, hc.tx, "AgentProfile", &[Filter::eq("agent", agent.to_lowercase())], None, 1)
@@ -310,8 +286,14 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
                 .and_then(|p| s(p, "signature").map(markdown_html)),
             None => None,
         };
-        let values =
-            json!({"body": markdown_html(body), "signature": signature, "link": link, "files": names.join(", "), "attached": can_attach && !ids.is_empty()});
+        // The agent's signature, then the brand's.
+        let brand_signature = brand.as_ref().and_then(|b| s(b, "signature")).map(markdown_html);
+        let signature = match (agent_signature, brand_signature) {
+            (None, None) => None,
+            (a, b) => Some(format!("{}{}", a.unwrap_or_default(), b.unwrap_or_default())),
+        };
+        let values = json!({"body": markdown_html(body), "signature": signature, "link": link, "files": names.join(", "), "attached": can_attach && !ids.is_empty(),
+            "brand": brand_name});
         // A template that is missing (a workspace not yet updated) or broken (edited) never stops a reply: the
         // agent's words go out in plain form, with the ticket's tag in the subject.
         let (title, html) = match render_reply(hc.kernel, &sctx, doc, &values).await {
@@ -322,33 +304,42 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
                 (subject(number, token, subject_line), format!("{}{}", markdown_html(body), signature.clone().unwrap_or_default()))
             }
         };
-        if via_mail {
-            let mut c = Doc::new();
-            for (f, v) in [
-                ("channel", json!("Email")),
-                ("direction", json!("Sent")),
-                ("subject", json!(title)),
-                ("content", json!(html)),
-                ("text_content", json!(plain(body))),
-                ("recipients", json!(to)),
-                ("cc", if copies.is_empty() { Value::Null } else { json!(copies.join(", ")) }),
-                ("reference_entity", json!("Ticket")),
-                ("reference_id", json!(ticket.to_string())),
-                ("reply_to", json!(parent.map(|p| p.to_string()))),
-                ("email_account", json!(account.map(|a| a.to_string()))),
-                ("attachments", m.get("attachments").cloned().unwrap_or_else(|| json!([]))),
-                ("headers", json!({"X-Ferrum-Helpdesk": number})),
-                ("seen", json!(true)),
-            ] {
-                c.insert(f.into(), v);
-            }
-            let sent = hc.kernel.insert_tx(&sctx, hc.tx, "Communication", c).await?;
-            if let Some(message) = id(m, "id") {
+        // What the brand puts before and after the reply, outside whatever the template says.
+        let html = match &brand {
+            Some(b) => format!("{}{html}{}", s(b, "header").map(markdown_html).unwrap_or_default(), s(b, "footer").map(markdown_html).unwrap_or_default()),
+            None => html,
+        };
+        if through_mail {
+            let message = ferrum_app_comms::outbound::Message {
+                to: vec![to.to_string()],
+                cc: copies.clone(),
+                subject: title,
+                html,
+                text: Some(plain(body)),
+                reference: Some(("Ticket".into(), ticket)),
+                account,
+                reply_to: reply_mailbox.clone(),
+                in_reply_to: in_reply_to.clone(),
+                references: references.clone(),
+                attachments: Some(m.get("attachments").cloned().unwrap_or_else(|| json!([]))),
+                headers: [("X-Ferrum-Helpdesk".to_string(), number.to_string())].into(),
+                ..Default::default()
+            };
+            // A name Mail will not take in a Reply-To (the checks are Mail's) is left off, the address stays.
+            let sent = match ferrum_app_comms::outbound::send(hc.kernel, &sctx, hc.tx, &message).await {
+                Err(Error::Invalid(_) | Error::Validation(_)) if reply_mailbox != reply_to => {
+                    ferrum_app_comms::outbound::send(hc.kernel, &sctx, hc.tx, &ferrum_app_comms::outbound::Message { reply_to: reply_to.clone(), ..message })
+                        .await?
+                }
+                other => other?,
+            };
+            // The Message-ID Mail gave it, so the customer's answer is found by it.
+            if let Some(row) = id(m, "id") {
                 sqlx::query("update e_ticket__conversation set message_id = $1, communication = $2 where tenant_id = $3 and id = $4")
-                    .bind(s(&sent, "message_id"))
-                    .bind(s(&sent, "id"))
+                    .bind(&sent.message_id)
+                    .bind(sent.communication.to_string())
                     .bind(hc.ctx.tenant)
-                    .bind(message)
+                    .bind(row)
                     .execute(&mut **hc.tx)
                     .await?;
             }
@@ -364,6 +355,45 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
         }
     }
     Ok(())
+}
+
+/// `Name <address>` for a Reply-To: the name as plain words (letters, digits, spaces, dots, dashes and underscores; nothing
+/// that could end the header or the name), else the address alone.
+fn mailbox(name: Option<&str>, address: &str) -> String {
+    let clean: String = name.unwrap_or_default().chars().filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '.' | '-' | '_')).collect();
+    let clean = clean.split_whitespace().collect::<Vec<_>>().join(" ");
+    if clean.is_empty() { address.to_string() } else { format!("{clean} <{address}>") }
+}
+
+/// The support address a reply is sent from: the one the customer wrote to, else one of the ticket's team, else any enabled one.
+async fn reply_address(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Option<Doc>> {
+    let sctx = sys(hc.ctx);
+    if let Some(a) = id(doc, "channel_address")
+        && let Ok(found) = hc.kernel.get_tx(&sctx, hc.tx, "SupportAddress", a, false).await
+        && b(&found, "enabled")
+    {
+        return Ok(Some(found));
+    }
+    let all = hc.kernel.find_tx(&sctx, hc.tx, "SupportAddress", &[Filter::eq("enabled", true)], Some("address asc"), 100).await?;
+    let team = id(doc, "team");
+    Ok(all.iter().find(|a| team.is_some() && id(a, "team") == team).or(all.first()).cloned())
+}
+
+/// In-Reply-To and References for a reply: the customer's latest message id (else the latest of any), and the ids of
+/// the conversation before it, oldest first, at most twenty; only what Mail takes as a message id.
+fn threading(doc: &Doc) -> (Option<String>, Vec<String>) {
+    let ids: Vec<(bool, String)> = rows(doc, "conversation")
+        .iter()
+        .filter_map(|m| Some((s(m, "author_kind") == Some("Customer"), ferrum_app_comms::outbound::message_id(s(m, "message_id")?).ok()?)))
+        .collect();
+    let latest = ids.iter().rev().find(|(customer, _)| *customer).or(ids.last()).map(|(_, m)| m.clone());
+    let mut chain: Vec<String> = Vec::new();
+    for (_, m) in &ids {
+        chain.retain(|c| c != m);
+        chain.push(m.clone());
+    }
+    let skip = chain.len().saturating_sub(20);
+    (latest, chain.split_off(skip))
 }
 
 /// Whether a new public reply goes out by email: the ticket has a contact address, the server has a
@@ -416,6 +446,32 @@ mod tests {
         assert_eq!(inline("Go to https://help.test/reset."), "Go to <a href=\"https://help.test/reset\">https://help.test/reset</a>.");
         assert_eq!(inline("not-a-link xhttps://nope"), "not-a-link xhttps://nope");
         assert_eq!(inline("2 * 3 * 4 and a_b_c"), "2 * 3 * 4 and a_b_c");
+    }
+
+    #[test]
+    fn a_reply_answers_the_customers_latest_message_and_carries_the_chain() {
+        let doc = json!({"conversation": [
+            {"author_kind": "Customer", "message_id": "c1@cust.test"},
+            {"author_kind": "Agent", "message_id": "a1@acme.test"},
+            {"author_kind": "Customer", "message_id": "c2@cust.test"},
+            {"author_kind": "Agent", "message_id": "a2@acme.test"},
+            {"author_kind": "Customer", "message_id": "not an id\r\nBcc: x@y.test"},
+            {"author_kind": "Agent", "body": "no id"}]});
+        let (reply_to, chain) = threading(doc.as_object().unwrap());
+        assert_eq!(reply_to.as_deref(), Some("c2@cust.test"), "the customer's latest message with an id, never header text");
+        assert_eq!(chain, ["c1@cust.test", "a1@acme.test", "c2@cust.test", "a2@acme.test"]);
+        assert_eq!(threading(json!({"conversation": []}).as_object().unwrap()), (None, vec![]));
+        let many: Vec<Value> = (0..30).map(|i| json!({"author_kind": "Agent", "message_id": format!("m{i}@acme.test")})).collect();
+        let (last, chain) = threading(json!({"conversation": many}).as_object().unwrap());
+        assert_eq!((last.as_deref(), chain.len(), chain[0].as_str()), (Some("m29@acme.test"), 20, "m10@acme.test"));
+    }
+
+    #[test]
+    fn a_reply_to_names_the_brand_in_plain_words_only() {
+        assert_eq!(mailbox(Some("Acme Support"), "support+k3@acme.test"), "Acme Support <support+k3@acme.test>");
+        assert_eq!(mailbox(Some("Acme, \"Inc\" <x@y.test>"), "s@acme.test"), "Acme Inc xy.test <s@acme.test>", "nothing that ends a name or a header");
+        assert_eq!(mailbox(Some("\r\n"), "s@acme.test"), "s@acme.test");
+        assert_eq!(mailbox(None, "s@acme.test"), "s@acme.test");
     }
 
     #[test]
