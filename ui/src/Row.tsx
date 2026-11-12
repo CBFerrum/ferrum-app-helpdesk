@@ -40,7 +40,10 @@ export const Row = memo(function Row({ t, now, me, who, picked, current, writabl
       <input type="checkbox" className="hd-pick" checked={picked} aria-label={tr("Select {value}", { value: t.number ?? "ticket" })} onChange={(e) => onPick(t.id, (e.nativeEvent as MouseEvent).shiftKey)} />
       <Link className="hd-row-main" to={`/t/${t.id}`} state={carried}>
         <span className="hd-row-subject">{t.subject || tr("No subject")}</span>
-        <span className="hd-row-meta">{isolate([t.number, requester(t), t.channel && t.channel !== "Email" ? t.channel : null].filter(Boolean).join(" · "))}</span>
+        <span className="hd-row-meta">
+          {isolate([t.number, requester(t), t.channel && t.channel !== "Email" ? t.channel : null].filter(Boolean).join(" · "))}
+          {t.routed_by && t._titles?.routed_by ? <span className="faint">{` · ${tr("placed by {rule}", { rule: t._titles.routed_by })}`}</span> : null}
+        </span>
         {t.last_message_preview && (
           <span className="hd-row-preview">
             {speaker === "Team" && <span className="faint">{tr("Team:")} </span>}

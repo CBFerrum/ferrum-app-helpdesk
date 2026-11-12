@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { effects, findMacros, type Macro, sendsReply, stepsProblem } from "./macros";
+import { effects, findMacros, type Macro, sendsReply, stepLine, stepsProblem } from "./macros";
 
 const now = { status: "Open", priority: "Medium", assigned_to: "raj@acme.test", team: "Billing", ticket_type: "Question", language: null, tags: ["vip"], name: (e: string) => (e === "raj@acme.test" ? "Raj Rao" : e) };
 
@@ -65,5 +65,13 @@ describe("a macro's steps before saving", () => {
     expect(stepsProblem([])).toBe("A macro needs at least one step.");
     expect(stepsProblem([{ step: "Add Tag", value: " " }])).toBe("Step 1: Add Tag needs a value.");
     expect(stepsProblem([{ step: "Assign To", value: "" }, { step: "Add Tag", value: "x" }])).toBeNull();
+  });
+});
+
+describe("a step in a line", () => {
+  it("names the step and its value, and shortens a long text", () => {
+    expect(stepLine({ step: "Set Status", value: "Resolved" })).toBe("Set Status: Resolved");
+    expect(stepLine({ step: "Assign To", value: "" })).toBe("Assign To");
+    expect(stepLine({ step: "Public Reply", value: "w".repeat(200) }).length).toBeLessThan(100);
   });
 });

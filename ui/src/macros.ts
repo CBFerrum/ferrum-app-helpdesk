@@ -166,3 +166,9 @@ export function stepsProblem(steps: MacroStep[]): string | null {
   }
   return null;
 }
+
+/** One step as a line of words, for where it is not read against a ticket (a bulk confirmation): "Set Status: Resolved". */
+export function stepLine(s: MacroStep): string {
+  const v = (s.value ?? "").trim();
+  return v ? `${s.step}: ${v.length > 80 ? `${v.slice(0, 80).trimEnd()}…` : v}` : s.step;
+}

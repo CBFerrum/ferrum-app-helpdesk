@@ -1354,3 +1354,40 @@ a.hd-file:focus-visible {
   font-size: var(--text-sm);
   font-weight: 600;
 }
+
+/* The queues' narrower views (by target, by tag) and what placed a ticket. */
+
+.hd-side-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: var(--control-h-sm);
+  padding: 0.125rem 0.5rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: start;
+  cursor: pointer;
+}
+
+.hd-side-link:hover {
+  background: var(--surface-2);
+}
+
+.hd-side-link[aria-pressed="true"] {
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.hd-side-link .hd-count {
+  margin-inline-start: auto;
+}
+
+.hd-routed {
+  font-size: var(--text-sm);
+}

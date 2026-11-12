@@ -36,6 +36,8 @@ import {
   sortTickets,
   START,
   step,
+  TARGET_PICKS,
+  targetFilter,
   type Ticket,
   toggle,
   workload,
@@ -43,6 +45,9 @@ import {
 } from "./inbox";
 import { command, isTyping } from "./keys";
 import { MergeDialog } from "./Merge";
+import { stepLine, sendsReply, type Macro } from "./macros";
+import { useMacros } from "./MacroPicker";
+import { useTagDefs } from "./Tags";
 import { Queues } from "./Queues";
 import { LoadFailed } from "./states";
 import { ResolveDialog } from "./Resolve";
@@ -50,7 +55,7 @@ import { Row } from "./Row";
 import { Shortcuts } from "./Shortcuts";
 
 const FIELDS =
-  "number,subject,status,priority,channel,team,customer_name,contact_name,contact_email,assigned_to,sla_status,response_by,resolution_by,first_responded_at,opened_at,last_customer_message_at,last_agent_message_at,last_message_preview,version";
+  "number,subject,status,priority,channel,team,customer_name,contact_name,contact_email,assigned_to,sla_status,response_by,resolution_by,first_responded_at,opened_at,last_customer_message_at,last_agent_message_at,last_message_preview,routed_by,routed_at,response_state,resolution_state,version";
 /** How many tickets one request brings. */
 const PAGE = 100;
 /** Where a person's saved filters are kept (their preferences, which only they can read). */
@@ -210,8 +215,22 @@ export function HelpdeskHome() {
   });
   const countOf: Partial<Record<QueueId, number>> = Object.fromEntries(queues.flatMap((q, i) => (counts[i]?.data === undefined ? [] : [[q.id, counts[i].data]])));
 
+  // The targets that need an eye, each with how many open tickets are in that state.
+  const targetIds = ["response:breached", "resolution:breached", "response:paused", "resolution:paused"];
+  const targetCounts = useQueries({
+    queries: targetIds.map((id) => ({
+      queryKey: ["helpdesk", "queue", "count", "target", id],
+      enabled: ready,
+      staleTime: 30_000,
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        api.get<{ total?: number }>("/api/v1/Ticket", { filters: JSON.stringify([["status", "in", ACTIVE], targetFilter(id)]), fields: "id", limit: 1, count: true }, signal).then((r) => r.total ?? 0),
+    })),
+  });
+  const tagDefs = useTagDefs();
+  const macros = useMacros(!!entity && can(entity.permissions, "write"));
+
   const list = useInfiniteQuery({
-    queryKey: ["helpdesk", "queue", "list", state.queue, state.sort === "newest", state.q, state.priority, state.team, state.channel, state.assignee, who.me, who.teams.join()],
+    queryKey: ["helpdesk", "queue", "list", state.queue, state.sort === "newest", state.q, state.priority, state.team, state.channel, state.assignee, state.tag, state.target, who.me, who.teams.join()],
     enabled: ready,
     initialPageParam: 0,
     queryFn: ({ pageParam, signal }) =>
@@ -221,6 +240,7 @@ export function HelpdeskHome() {
           filters: JSON.stringify([...queueFilters(state.queue, who), ...refineFilters(state)]),
           search: state.q || undefined,
           fields: FIELDS,
+          titles: true,
           sort: `opened_at ${state.sort === "newest" ? "desc" : "asc"}`,
           limit: PAGE,
           offset: pageParam,
@@ -331,9 +351,9 @@ export function HelpdeskHome() {
   const hold = (t: Ticket) => void change(t, { status: "On Hold" }, tr("{value} is on hold", { value: t.number ?? "Ticket" }));
 
   /** Many tickets in one request, each in its own transaction: those that fail stay selected, with why. */
-  const bulk = async (ids: string[], values: Record<string, unknown>, done: string): Promise<boolean> => {
+  const bulkOp = async (ids: string[], op: Record<string, unknown>, done: string): Promise<boolean> => {
     try {
-      const res = await api.post<BulkResult>(docPath("Ticket", "_bulk"), { ids, op: "update", values });
+      const res = await api.post<BulkResult>(docPath("Ticket", "_bulk"), { ids, ...op }, { idempotencyKey: newKey() });
       const told = describeBulk(done, res, (id) => numbers.get(id) ?? tr("A ticket"));
       toast(told.message, told.bad ? "error" : "success");
       setPicked(new Set(told.left));
@@ -343,6 +363,22 @@ export function HelpdeskHome() {
       toast(errorMessage(e), "error");
       return false;
     }
+  };
+  const bulk = (ids: string[], values: Record<string, unknown>, done: string) => bulkOp(ids, { op: "update", values }, done);
+  /** A macro on every selected ticket, each in its own transaction (all of its steps or none): said first if it writes to customers. */
+  const applyMacro = async (m: Macro) => {
+    const ids = chosen;
+    const steps = await qc.fetchQuery({ queryKey: ["helpdesk", "macro", m.id], staleTime: 60_000, queryFn: ({ signal }) => api.get<Macro>(docPath("SupportMacro", m.id), undefined, signal) }).then((x) => x.steps ?? []).catch((e) => {
+      toast(errorMessage(e), "error");
+      return null;
+    });
+    if (!steps) return;
+    const ok = await confirmDialog({
+      title: tr("Apply {macro} to {value} tickets?", { macro: m.macro_name, value: ids.length }),
+      message: `${steps.map(stepLine).join(" · ")}. ${sendsReply(steps) ? tr("It sends each customer a reply, which cannot be taken back.") : tr("Nothing is sent to customers.")} ${tr("A ticket that refuses a step is left as it was, and stays selected.")}`,
+      confirmLabel: sendsReply(steps) ? tr("Apply and send the replies") : tr("Apply macro"),
+    });
+    if (ok) void bulkOp(ids, { op: "action", action: "apply_macro", params: { macro: m.id } }, tr("{macro} applied", { macro: m.macro_name }));
   };
   const chosen = [...picked];
   const target = (): string[] => (picked.size ? chosen : cursor ? [cursor] : []);
@@ -440,7 +476,7 @@ export function HelpdeskHome() {
     <ListSkeleton rows={8} />
   ) : !shown.length ? (
     refined ? (
-      <StatePanel kind="no-matches" title={tr("No ticket matches")} clearLabel={tr("Clear the filters")} onClear={() => update({ q: "", priority: "", team: "", channel: "", assignee: "" })}>
+      <StatePanel kind="no-matches" title={tr("No ticket matches")} clearLabel={tr("Clear the filters")} onClear={() => update({ q: "", priority: "", team: "", channel: "", assignee: "", tag: "", target: "" })}>
         {placed(tr("Nothing in {p1} fits these filters."), { p1: isolate(queue.label.toLowerCase()) })}
       </StatePanel>
     ) : (
@@ -515,6 +551,10 @@ export function HelpdeskHome() {
           name={name}
           onPerson={(email) => update({ queue: "open", assignee: state.assignee.toLowerCase() === email.toLowerCase() ? "" : email })}
           showMore={wide || more}
+          tags={(tagDefs.data ?? []).map((d) => ({ tag: d.tag_name, colour: d.colour }))}
+          onTag={(tag) => update({ queue: "open", tag: state.tag.toLowerCase() === tag.toLowerCase() ? "" : tag })}
+          targets={targetIds.map((id, i) => ({ id, label: TARGET_PICKS.find((p) => p.id === id)?.label ?? id, count: targetCounts[i]?.data }))}
+          onTarget={(id) => update({ queue: "open", target: state.target === id ? "" : id })}
         />
         <section className="hd-list" aria-label={tr("The queue")}>
           <div className="hd-toolbar">
@@ -556,6 +596,24 @@ export function HelpdeskHome() {
               <option value="">{tr("Any channel")}</option>
               {CHANNELS.map((c) => (
                 <option key={c}>{isolate(c)}</option>
+              ))}
+            </select>
+            {(tagDefs.data?.length ?? 0) > 0 && (
+              <select className="select" aria-label={tr("Tag")} value={state.tag} onChange={(e) => update({ tag: e.target.value })}>
+                <option value="">{tr("Any tag")}</option>
+                {tagDefs.data?.map((d) => (
+                  <option key={d.tag_name} value={d.tag_name}>
+                    {isolate(d.tag_name)}
+                  </option>
+                ))}
+              </select>
+            )}
+            <select className="select" aria-label={tr("Target state")} value={state.target} onChange={(e) => update({ target: e.target.value })}>
+              <option value="">{tr("Any target state")}</option>
+              {TARGET_PICKS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {isolate(p.label)}
+                </option>
               ))}
             </select>
             <select className="select" aria-label={tr("Order")} value={state.sort} onChange={(e) => update({ sort: e.target.value as InboxState["sort"] })}>
@@ -607,6 +665,32 @@ export function HelpdeskHome() {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => setResolving(chosen)}>{tr("Resolve…")}</DropdownMenuItem>
               </Choose>
+              {(tagDefs.data?.length ?? 0) > 0 && (
+                <Choose label={tr("Tag")}>
+                  <DropdownMenuLabel>{tr("Add the tag")}</DropdownMenuLabel>
+                  {tagDefs.data?.map((d) => (
+                    <DropdownMenuItem key={`add-${d.tag_name}`} onSelect={() => void bulkOp(chosen, { op: "add_tags", tags: [d.tag_name] }, tr("Tagged {tag}", { tag: d.tag_name }))}>
+                      {isolate(d.tag_name)}
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel>{tr("Remove the tag")}</DropdownMenuLabel>
+                  {tagDefs.data?.map((d) => (
+                    <DropdownMenuItem key={`rm-${d.tag_name}`} onSelect={() => void bulkOp(chosen, { op: "remove_tags", tags: [d.tag_name] }, tr("Untagged {tag}", { tag: d.tag_name }))}>
+                      {isolate(d.tag_name)}
+                    </DropdownMenuItem>
+                  ))}
+                </Choose>
+              )}
+              {(macros.data?.length ?? 0) > 0 && (
+                <Choose label={tr("Macro")}>
+                  {macros.data?.map((m) => (
+                    <DropdownMenuItem key={m.id} onSelect={() => void applyMacro(m)}>
+                      {isolate(m.macro_name)}
+                    </DropdownMenuItem>
+                  ))}
+                </Choose>
+              )}
               {writable && (
                 <Button size="sm" disabled={picked.size < 2} title={picked.size < 2 ? tr("Select two or more tickets of one customer") : undefined} onClick={() => setMerging(true)}>
                   {tr("Merge…")}
