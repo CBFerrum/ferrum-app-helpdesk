@@ -291,6 +291,7 @@ CHANGELOG.md  what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.8.2** | Rebuilt on the tuned design system: better menu icons, a lighter first page, a visible scroll cue, cleaner print. |
 | **0.8.1** | The redesigned interface: the upgraded design system, shaped loading, told-apart states. |
 | **0.8.0** | Work outside a customer's entitlement can wait for a Support Manager's approval (Support Settings), with no reply to the customer until it is approved or declined, saying why. |
 | **0.7.13** | Its reports' names in Arabic and Hindi. |
