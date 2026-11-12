@@ -182,4 +182,54 @@ async fn scenario() {
     say(&e, answered, json!({"author_kind": "Agent", "author": "bo@acme.test", "body": "On it"})).await;
     ferrum_app_helpdesk::maintenance(&k).await.unwrap();
     assert_eq!(e.get("Ticket", answered).await["assigned_to"], json!("bo@acme.test"));
+
+    // ── unanswered time is working time, on the calendar of the ticket's agreement ──
+    // A calendar open for one hour two days ago and six hours on Mondays: a ticket that has waited two days of the clock has waited at most seven working hours.
+    let day = (chrono::Utc::now() - chrono::Duration::days(2)).date_naive();
+    let calendar: ferrum_kernel::Calendar =
+        serde_json::from_value(json!({"name": "sla_once", "zone": "UTC", "weekends": ["tue", "wed", "thu", "fri", "sat", "sun"],
+        "holidays": [], "revision": 0, "hours": {"mon": [["00:00", "06:00"]]}, "exceptions": {day.to_string(): {"open": true, "hours": [["16:00", "17:00"]]}}}))
+        .unwrap();
+    k.set_logic_calendar(&e.admin, &calendar).await.unwrap();
+    let agreement = uid(&e
+        .insert(
+            "ServiceLevelAgreement",
+            json!({"sla_name": "Once", "team": team.to_string(), "calendar": "sla_once",
+            "priorities": [{"priority": "Medium", "response_hours": "4", "resolution_hours": "8"}]}),
+        )
+        .await);
+    let off_hours = uid(&e
+        .insert("Ticket", json!({"subject": "Waited off hours", "contact_email": "off@x.test", "assigned_to": "ann@acme.test", "team": team.to_string()}))
+        .await);
+    assert_eq!(e.get("Ticket", off_hours).await["sla_calendar"], json!("sla_once"));
+    let since = format!("{day}T16:00:00Z");
+    let waited = || {
+        let (k, tenant, since) = (k.clone(), e.tenant, since.clone());
+        async move {
+            let mut tx = k.db.tenant_tx(tenant).await.unwrap();
+            sqlx::query("update e_ticket set opened_at = $2::timestamptz, last_customer_message_at = $2::timestamptz where id = $1")
+                .bind(off_hours)
+                .bind(since)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+        }
+    };
+    waited().await;
+    e.update("SupportSettings", settings, json!({"reassign_unanswered_hours": 10, "max_reassignments": 3})).await;
+    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    let kept = e.get("Ticket", off_hours).await;
+    assert_eq!(
+        (kept["assigned_to"].clone(), kept["reassigned_count"].clone()),
+        (json!("ann@acme.test"), json!(0)),
+        "two days by the clock, at most seven hours by the agreement's calendar, against ten"
+    );
+    // On the workspace's own calendar (open all day, every day) the same wait is two days of working time.
+    e.update("ServiceLevelAgreement", agreement, json!({"calendar": null})).await;
+    waited().await;
+    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    let moved = e.get("Ticket", off_hours).await;
+    assert!(moved["assigned_to"].is_string() && moved["assigned_to"] != json!("ann@acme.test"), "gone to the next agent: {}", moved["assigned_to"]);
+    assert_eq!(moved["reassigned_count"], json!(1));
 }
