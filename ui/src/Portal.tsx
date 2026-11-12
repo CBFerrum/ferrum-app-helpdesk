@@ -7,7 +7,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-quer
 import { type FormEvent, lazy, Suspense, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, errorMessage, t as tr, isolate } from "@ferrum/client";
-import { Badge, Button, Field, Icon, ListSkeleton, Markdown, ReaderSkeleton, StatePanel, toast, useShellTitle } from "@ferrum/kit";
+import { Badge, Button, Field, Icon, ListSkeleton, Markdown, ReaderSkeleton, Spinner, StatePanel, toast, useShellTitle } from "@ferrum/kit";
 import { LoadFailed } from "./states";
 import { STATUS_TONES } from "./tones";
 import { fileSize } from "./feed";
@@ -147,7 +147,7 @@ export function PortalNewTicket() {
           <Field label={tr("Subject")} htmlFor="hd-subject">
             <input id="hd-subject" className="input" required maxLength={300} value={subject} onChange={(e) => setSubject(e.target.value)} />
           </Field>
-          <Suspense fallback={null}>
+          <Suspense fallback={<Spinner label={tr("Looking for articles")} />}>
             <Suggestions subject={subject} />
           </Suspense>
           <Field label={tr("What happened?")} htmlFor="hd-description">
