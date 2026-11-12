@@ -70,6 +70,7 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
             }
             let ctx = Ctx::system(tenant, schema);
             hours::ensure_for_tenant(k, &ctx).await?;
+            hours::recreate(k, &ctx).await?;
             help::ensure_defaults(k, &ctx).await?;
             let refreshed = ticket::refresh_slas(k, &ctx).await? + ticket::refresh_verdicts(k, &ctx).await?;
             survey::send_due(k, &ctx).await?;
@@ -87,6 +88,28 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
         }
     }
     first_error.map_or(Ok(()), Err)
+}
+
+/// Whether the upkeep already did `what` once for this workspace (`SupportSettings.upkeep_done`, a list of words).
+pub(crate) async fn done(k: &Kernel, ctx: &Ctx, tx: &mut Tx, what: &str) -> Result<bool> {
+    let settings = k.find_tx(&ferrum_domain::util::sys(ctx), tx, "SupportSettings", &[], None, 1).await?;
+    Ok(settings.first().and_then(|d| d.get("upkeep_done")).and_then(Value::as_str).is_some_and(|l| l.split(',').any(|w| w.trim() == what)))
+}
+
+/// Records that the upkeep did `what`, in the transaction that did it.
+pub(crate) async fn mark(k: &Kernel, ctx: &Ctx, tx: &mut Tx, what: &str) -> Result<()> {
+    let sctx = ferrum_domain::util::sys(ctx);
+    let settings = k.find_tx(&sctx, tx, "SupportSettings", &[], None, 1).await?;
+    let list = settings.first().and_then(|d| d.get("upkeep_done")).and_then(Value::as_str).unwrap_or_default();
+    let mut v = Doc::new();
+    v.insert("upkeep_done".into(), Value::String(if list.is_empty() { what.to_string() } else { format!("{list},{what}") }));
+    match settings.first().and_then(|d| ferrum_domain::util::id(d, "id")) {
+        Some(row) => k.set_values_tx(&sctx, tx, "SupportSettings", row, v).await?,
+        None => {
+            k.insert_tx(&sctx, tx, "SupportSettings", v).await?;
+        }
+    }
+    Ok(())
 }
 
 /// A whole-number field (missing or empty reads as 0).
