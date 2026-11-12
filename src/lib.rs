@@ -2,13 +2,20 @@
 //!
 //! Hooks are registered per entity, so a tenant without the `support` package never runs them.
 
+mod help;
+mod hours;
+pub mod inbound;
 mod kb;
+mod macros;
+mod mailhook;
 mod merge;
 mod outgoing;
 mod replies;
 mod reports;
+mod routing;
 mod site;
-mod sla;
+mod survey;
+mod tags;
 mod ticket;
 mod visits;
 mod warranty;
@@ -30,7 +37,15 @@ pub fn register(hooks: &mut HookRegistry) {
         .register("SavedReply", Arc::new(replies::ReplyHook))
         .register("WarrantyClaim", Arc::new(warranty::ClaimHook))
         .register("MaintenanceSchedule", Arc::new(visits::ScheduleHook))
-        .register("MaintenanceVisit", Arc::new(visits::VisitHook));
+        .register("MaintenanceVisit", Arc::new(visits::VisitHook))
+        .register("TicketTag", Arc::new(tags::TagHook))
+        .register("TagRule", Arc::new(tags::RuleHook))
+        .register("SupportAddress", Arc::new(inbound::AddressHook))
+        .register("InboundLog", Arc::new(inbound::LogHook));
+    // Mail's records are Mail's: this runs only where Helpdesk is installed, and only reads the message Mail is saving.
+    hooks.scoped(&["helpdesk".to_string()], |h| {
+        h.register("Communication", Arc::new(mailhook::CommunicationHook));
+    });
     hooks.add_site("helpdesk", Arc::new(site::HelpdeskSite));
 }
 
@@ -54,8 +69,11 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
                 return Ok(());
             }
             let ctx = Ctx::system(tenant, schema);
-            let refreshed = ticket::refresh_slas(k, &ctx).await?;
-            let escalated = ticket::escalate(k, &ctx).await?;
+            hours::ensure_for_tenant(k, &ctx).await?;
+            help::ensure_defaults(k, &ctx).await?;
+            let refreshed = ticket::refresh_slas(k, &ctx).await? + ticket::refresh_verdicts(k, &ctx).await?;
+            survey::send_due(k, &ctx).await?;
+            let escalated = ticket::escalate(k, &ctx).await? + routing::reassign_unanswered(k, &ctx).await?;
             let closed = ticket::auto_close(k, &ctx).await?;
             if refreshed + escalated + closed > 0 {
                 tracing::info!(%tenant, refreshed, escalated, closed, "support maintenance");

@@ -9,7 +9,10 @@ pub struct ReplyHook;
 
 #[async_trait]
 impl DocHook for ReplyHook {
-    async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, _params: &Value) -> Result<Option<Value>> {
+    async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
+        if name == "render" {
+            return crate::macros::render_reply(hc, doc, params).await.map(Some);
+        }
         if name != "used" {
             return Ok(None);
         }

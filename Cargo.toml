@@ -13,6 +13,7 @@ ferrum-meta = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
 ferrum-domain = { git = "https://github.com/CBFerrum/Ferrum", branch = "main" }
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
+minijinja = "2"
 rust_decimal = { version = "1.43", features = ["serde-with-str", "maths"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

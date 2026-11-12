@@ -17,7 +17,7 @@ use uuid::Uuid;
 pub struct SupportReports;
 
 /// Groupings: label → SQL over the ticket `a`, its team `tm`, type `tt` and agreement `sl`.
-const GROUPS: [(&str, &str); 8] = [
+const GROUPS: [(&str, &str); 9] = [
     ("Status", "a.status"),
     ("Priority", "a.priority"),
     ("Team", "coalesce(tm.team_name, 'No Team')"),
@@ -26,6 +26,7 @@ const GROUPS: [(&str, &str); 8] = [
     ("Channel", "a.channel"),
     ("Customer", "coalesce(a.customer_name, a.contact_email, 'Unknown')"),
     ("SLA", "coalesce(sl.sla_name, 'No SLA')"),
+    ("Month", "to_char(coalesce(a.rated_at, a.resolved_at, a.opened_at), 'YYYY-MM')"),
 ];
 
 fn group_param(default: &str) -> Value {
@@ -49,13 +50,18 @@ fn period_of(ctx: &Ctx, p: &Params<'_>) -> Result<(NaiveDate, NaiveDate)> {
 
 /// `select <columns> from` the caller's visible tickets with their team, type and agreement.
 fn tickets(ctx: &Ctx, columns: &str) -> Result<QueryBuilder<Postgres>> {
+    tickets_with(ctx, columns, "")
+}
+
+/// [`tickets`] with more joins (`rt` for a ticket's tags, one row each).
+fn tickets_with(ctx: &Ctx, columns: &str, joins: &str) -> Result<QueryBuilder<Postgres>> {
     let ent = ctx.schema.entity("Ticket").ok_or_else(|| Error::NotFound("Ticket".into()))?;
     let scope = row_scope(ctx, ent, Action::Read)?;
     let mut qb = QueryBuilder::new(format!(
         "select {columns} from e_ticket a \
          left join e_support_team tm on tm.tenant_id = a.tenant_id and tm.id = a.team \
          left join e_ticket_type tt on tt.tenant_id = a.tenant_id and tt.id = a.ticket_type \
-         left join e_service_level_agreement sl on sl.tenant_id = a.tenant_id and sl.id = a.service_level_agreement \
+         left join e_service_level_agreement sl on sl.tenant_id = a.tenant_id and sl.id = a.service_level_agreement {joins} \
          where a.tenant_id = "
     ));
     qb.push_bind(ctx.tenant);
@@ -262,7 +268,7 @@ async fn satisfaction(ctx: &Ctx, p: &Params<'_>, tx: &mut Tx) -> Result<Value> {
                    count(*) filter (where a.satisfaction_rating = 4), count(*) filter (where a.satisfaction_rating = 5)";
     let rated = |qb: &mut QueryBuilder<Postgres>| {
         qb.push(" and a.satisfaction_rating is not null");
-        within(qb, "a.resolved_at", span);
+        within(qb, "coalesce(a.rated_at, a.resolved_at)", span);
     };
     let mut grouped = tickets(ctx, &format!("{expr}, {columns}"))?;
     rated(&mut grouped);
@@ -289,6 +295,118 @@ async fn satisfaction(ctx: &Ctx, p: &Params<'_>, tx: &mut Tx) -> Result<Value> {
     }))
 }
 
+/// The groupings of the volume report: the ticket's own, and its tags (a ticket counts under each).
+fn volume_groups() -> Vec<&'static str> {
+    GROUPS.iter().map(|(l, _)| *l).chain(["Tag"]).collect()
+}
+
+type VolumeRow = (String, i64, i64, i64, i64);
+
+/// Tickets opened in the period by channel, tag, customer, team, agent, type, priority or month: how many, how many solved, how many
+/// were reopened and how many missed a target.
+async fn volume(ctx: &Ctx, p: &Params<'_>, tx: &mut Tx) -> Result<Value> {
+    let span = period_of(ctx, p)?;
+    let want = p.str("group_by").unwrap_or("Channel");
+    let (label, expr, joins) = if want.eq_ignore_ascii_case("Tag") {
+        ("Tag", "coalesce(rt.tag, 'No Tag')", "left join record_tag rt on rt.tenant_id = a.tenant_id and rt.entity = 'Ticket' and rt.record_id = a.id")
+    } else {
+        let (l, e) = grouping(p, "Channel")?;
+        (l, e, "")
+    };
+    let mut qb = tickets_with(
+        ctx,
+        &format!(
+            "{expr}, count(distinct a.id), count(distinct a.id) filter (where a.resolved_at is not null), count(distinct a.id) filter (where a.reopen_count > 0), \
+             count(distinct a.id) filter (where a.sla_status = 'Breached')"
+        ),
+        joins,
+    )?;
+    within(&mut qb, "a.opened_at", span);
+    qb.push(" group by 1 order by 2 desc, 1");
+    let data: Vec<VolumeRow> = qb.build_query_as().fetch_all(&mut **tx).await?;
+    let mut totals = (0, 0, 0, 0);
+    let rows: Vec<Value> = data
+        .into_iter()
+        .map(|(g, n, z, r, b)| {
+            totals = (totals.0 + n, totals.1 + z, totals.2 + r, totals.3 + b);
+            json!({"group": g, "tickets": n, "resolved": z, "reopened": r, "breached": b})
+        })
+        .collect();
+    Ok(json!({
+        "columns": [col("group", label, "data"), col("tickets", "Tickets", "int"), col("resolved", "Resolved", "int"), col("reopened", "Reopened", "int"), col("breached", "SLA Breached", "int")],
+        "rows": rows,
+        // A ticket with several tags is counted under each, so a tag's total is not the number of tickets.
+        "totals": {"tickets": totals.0, "resolved": totals.1, "reopened": totals.2, "breached": totals.3},
+        "meta": meta(span, label),
+    }))
+}
+
+type BacklogRow = (String, i64, i64, i64, i64, i64, i64, i64, Option<Decimal>);
+
+/// The tickets still being worked on, by how long they have been open, by status, agent, team or priority.
+async fn backlog(ctx: &Ctx, p: &Params<'_>, tx: &mut Tx) -> Result<Value> {
+    let (label, expr) = grouping(p, "Status")?;
+    let age = "extract(epoch from now() - a.opened_at) / 86400";
+    let mut qb = tickets(
+        ctx,
+        &format!(
+            "{expr}, count(*), count(*) filter (where {age} < 1), count(*) filter (where {age} >= 1 and {age} < 3), count(*) filter (where {age} >= 3 and {age} < 7), \
+             count(*) filter (where {age} >= 7 and {age} < 14), count(*) filter (where {age} >= 14 and {age} < 30), count(*) filter (where {age} >= 30), \
+             round(max({age})::numeric, 1)"
+        ),
+    )?;
+    qb.push(" and a.status in ('Open', 'Replied', 'On Hold') group by 1 order by 2 desc, 1");
+    let data: Vec<BacklogRow> = qb.build_query_as().fetch_all(&mut **tx).await?;
+    let keys = ["open", "under_1", "d1_3", "d3_7", "d7_14", "d14_30", "over_30"];
+    let mut totals = [0i64; 7];
+    let rows: Vec<Value> = data
+        .into_iter()
+        .map(|(g, n, a, b, c, d, e, f, oldest)| {
+            let mut row = json!({"group": g, "oldest_days": dec(oldest)});
+            for ((k, t), x) in keys.iter().zip(totals.iter_mut()).zip([n, a, b, c, d, e, f]) {
+                row[*k] = json!(x);
+                *t += x;
+            }
+            row
+        })
+        .collect();
+    Ok(json!({
+        "columns": [col("group", label, "data"), col("open", "Open Tickets", "int"), col("under_1", "Under 1 Day", "int"), col("d1_3", "1 to 3 Days", "int"),
+            col("d3_7", "3 to 7 Days", "int"), col("d7_14", "7 to 14 Days", "int"), col("d14_30", "14 to 30 Days", "int"), col("over_30", "Over 30 Days", "int"),
+            col("oldest_days", "Oldest (Days)", "decimal")],
+        "rows": rows,
+        "totals": keys.iter().zip(totals).map(|(k, t)| (k.to_string(), json!(t))).collect::<serde_json::Map<_, _>>(),
+        "meta": {"group_by": label},
+    }))
+}
+
+type ReopenRow = (String, i64, i64, i64);
+
+/// How often solved tickets come back: of the tickets opened in the period that were ever solved, how many were reopened, and how many times.
+async fn reopens(ctx: &Ctx, p: &Params<'_>, tx: &mut Tx) -> Result<Value> {
+    let span = period_of(ctx, p)?;
+    let (label, expr) = grouping(p, "Agent")?;
+    let mut qb = tickets(ctx, &format!("{expr}, count(*), count(*) filter (where a.reopen_count > 0), coalesce(sum(a.reopen_count), 0)::bigint"))?;
+    qb.push(" and (a.resolved_at is not null or a.reopen_count > 0)");
+    within(&mut qb, "a.opened_at", span);
+    qb.push(" group by 1 order by 3 desc, 1");
+    let data: Vec<ReopenRow> = qb.build_query_as().fetch_all(&mut **tx).await?;
+    let mut totals = (0, 0, 0);
+    let rows: Vec<Value> = data
+        .into_iter()
+        .map(|(g, solved, back, times)| {
+            totals = (totals.0 + solved, totals.1 + back, totals.2 + times);
+            json!({"group": g, "solved": solved, "reopened": back, "reopens": times, "reopen_pct": pct(back, solved)})
+        })
+        .collect();
+    Ok(json!({
+        "columns": [col("group", label, "data"), col("solved", "Tickets Solved", "int"), col("reopened", "Reopened", "int"), col("reopens", "Times Reopened", "int"), col("reopen_pct", "Reopen Rate %", "decimal")],
+        "rows": rows,
+        "totals": {"solved": totals.0, "reopened": totals.1, "reopens": totals.2, "reopen_pct": pct(totals.1, totals.0)},
+        "meta": meta(span, label),
+    }))
+}
+
 #[async_trait]
 impl ReportSource for SupportReports {
     fn catalog(&self) -> Vec<Value> {
@@ -301,6 +419,13 @@ impl ReportSource for SupportReports {
             entry("support_response_times", "Response & Resolution Times", [span(), vec![group_param("Priority")]].concat()),
             entry("support_agent_workload", "Agent Workload", vec![json!({"name": "team", "label": "Support Team", "type": "link", "to": "SupportTeam"})]),
             entry("support_customer_satisfaction", "Customer Satisfaction", [span(), vec![group_param("Agent")]].concat()),
+            entry("support_backlog", "Backlog by Age", vec![group_param("Status")]),
+            entry(
+                "support_volume",
+                "Ticket Volume",
+                [span(), vec![json!({"name": "group_by", "label": "Group By", "type": "select", "options": volume_groups(), "default": "Channel"})]].concat(),
+            ),
+            entry("support_reopens", "Reopen Rate", [span(), vec![group_param("Agent")]].concat()),
         ]
     }
 
@@ -313,6 +438,9 @@ impl ReportSource for SupportReports {
             "support_response_times" => times(ctx, &p, &mut tx).await,
             "support_agent_workload" => workload(ctx, &p, &mut tx).await,
             "support_customer_satisfaction" => satisfaction(ctx, &p, &mut tx).await,
+            "support_backlog" => backlog(ctx, &p, &mut tx).await,
+            "support_volume" => volume(ctx, &p, &mut tx).await,
+            "support_reopens" => reopens(ctx, &p, &mut tx).await,
             _ => Err(Error::NotFound(format!("report {name}"))),
         };
         tx.rollback().await?;
