@@ -3,6 +3,7 @@
 //! Hooks are registered per entity, so a tenant without the `support` package never runs them.
 
 mod kb;
+mod merge;
 mod outgoing;
 mod replies;
 mod reports;
