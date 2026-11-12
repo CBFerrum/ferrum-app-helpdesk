@@ -173,7 +173,7 @@ impl Env {
     }
     pub async fn user(&self, email: &str, roles: &[&str]) -> Ctx {
         let roles: Vec<String> = roles.iter().map(|r| r.to_string()).collect();
-        let id = self.k.create_user(&self.admin, email, email, Some(PASSWORD), &roles, false).await.expect("user");
+        let id = self.k.create_user(&self.admin, email, email, None, &roles, false).await.expect("user");
         self.k.load_ctx(self.tenant, id, None, "it".into()).await.expect("ctx")
     }
     /// A portal person (outside the workspace): holds no role.

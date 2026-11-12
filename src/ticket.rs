@@ -653,6 +653,9 @@ impl DocHook for TicketHook {
         } {
             return decide_outside_entitlement(hc, doc, approve, params).await.map(Some);
         }
+        if name == "apply_macro" {
+            return crate::macros::apply(hc, doc, params).await.map(Some);
+        }
         if name == "merge_tickets" {
             return crate::merge::merge(hc, doc, params).await.map(Some);
         }
