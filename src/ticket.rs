@@ -311,6 +311,11 @@ pub const ASSIGNED: &str = "helpdesk.assigned";
 pub const REPLY: &str = "helpdesk.reply";
 pub const SLA: &str = "helpdesk.sla";
 
+/// A notification to the agent signed in with `email` that a customer rated their ticket (the reply kind).
+pub async fn notify_agent_public(tx: &mut Tx, tenant: Uuid, email: &str, title: &str, ticket: Uuid) -> Result<()> {
+    notify_agent(tx, tenant, email, REPLY, title, ticket).await
+}
+
 /// A notification of `kind` for the user signed in with `email`, if there is one.
 async fn notify_agent(tx: &mut Tx, tenant: Uuid, email: &str, kind: &str, title: &str, ticket: Uuid) -> Result<()> {
     let user: Option<Uuid> = sqlx::query_scalar("select id from app_user where tenant_id = $1 and email = $2 and is_active")
@@ -422,8 +427,12 @@ impl DocHook for TicketHook {
             && s(o, "status") == Some("Closed")
         {
             // Final, checked before anything else so the refusal is the first thing said.
-            let changed =
-                hc.entity.def.fields.iter().any(|f| !matches!(f.name.as_str(), "satisfaction_rating" | "feedback") && o.get(&f.name) != doc.get(&f.name));
+            let changed = hc
+                .entity
+                .def
+                .fields
+                .iter()
+                .any(|f| !matches!(f.name.as_str(), "satisfaction_rating" | "feedback" | "rated_at") && o.get(&f.name) != doc.get(&f.name));
             return if changed {
                 Err(Error::invalid("a closed ticket is final: only the satisfaction rating and feedback can still be recorded; open a new ticket instead"))
             } else {
@@ -652,6 +661,9 @@ impl DocHook for TicketHook {
             _ => None,
         } {
             return decide_outside_entitlement(hc, doc, approve, params).await.map(Some);
+        }
+        if name == "rate" {
+            return crate::survey::rate(hc, doc, params).await.map(Some);
         }
         if name == "apply_macro" {
             return crate::macros::apply(hc, doc, params).await.map(Some);

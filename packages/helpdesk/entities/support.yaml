@@ -259,6 +259,8 @@
        params: [{name: numbers, label: Tickets to merge, type: text, required: true, description: "The numbers of the duplicates, separated by commas or lines. They must be this customer's; their conversation, files, watchers and tags move here, and they close as merged"}]}
     - {name: apply_macro, label: Apply a Macro, permission: write, condition: "doc.status != 'Closed'",
        params: [{name: macro, label: Macro, type: link, to: SupportMacro, required: true, description: "Its steps run in order on this ticket, all or none"}]}
+    - {name: rate, label: Rate the Help, permission: read, condition: "(doc.status == 'Resolved' || doc.status == 'Closed') && !(doc.satisfaction_rating > 0)",
+       params: [{name: rating, label: "How did we do? (1 to 5)", type: int, required: true, description: "1 is poor, 5 is excellent"}, {name: feedback, label: Comment, type: text}]}
     - {name: make_warranty_claim, label: Create Warranty Claim, permission: write, condition: "doc.item != null && doc.customer != null"}
     - {name: approve_outside_entitlement, label: Approve Work Outside Entitlement, permission: write, condition: "doc.entitlement_approval == 'Waiting'",
        params: [{name: reason, label: Why, type: data, required: true, description: "Why this customer's ticket is worked though their contract does not cover it"}]}

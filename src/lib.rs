@@ -13,6 +13,7 @@ mod replies;
 mod reports;
 mod routing;
 mod site;
+mod survey;
 mod tags;
 mod ticket;
 mod visits;
@@ -69,6 +70,7 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
             let ctx = Ctx::system(tenant, schema);
             hours::ensure_for_tenant(k, &ctx).await?;
             let refreshed = ticket::refresh_slas(k, &ctx).await? + ticket::refresh_verdicts(k, &ctx).await?;
+            survey::send_due(k, &ctx).await?;
             let escalated = ticket::escalate(k, &ctx).await? + routing::reassign_unanswered(k, &ctx).await?;
             let closed = ticket::auto_close(k, &ctx).await?;
             if refreshed + escalated + closed > 0 {

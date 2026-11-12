@@ -75,6 +75,28 @@ impl DocHook for MailStub {
     }
 }
 
+/// Mail the server sent through its own mailer, in order: (to, subject, html).
+pub static SENT: std::sync::Mutex<Vec<(String, String, String)>> = std::sync::Mutex::new(Vec::new());
+
+struct Captured;
+
+#[async_trait]
+impl ferrum_kernel::Mailer for Captured {
+    async fn send(&self, to: &str, subject: &str, html: &str) -> Result<()> {
+        SENT.lock().unwrap().push((to.into(), subject.into(), html.into()));
+        Ok(())
+    }
+}
+
+/// Sends what is queued, as the server's dispatcher would.
+pub async fn drain(k: &Kernel) {
+    while k.dispatch_outbox_once().await.unwrap() > 0 {}
+}
+
+pub fn sent_to(to: &str) -> Vec<(String, String, String)> {
+    SENT.lock().unwrap().iter().filter(|m| m.0 == to).cloned().collect()
+}
+
 pub struct Env {
     pub k: Arc<Kernel>,
     pub admin: Ctx,
@@ -111,7 +133,7 @@ pub async fn boot(slug: &str, mail: bool, extra: Vec<ferrum_meta::Package>) -> E
         hooks.register("Communication", Arc::new(MailStub));
     }
     let settings = KernelSettings { secret_key: Some(SecretKey::new([7u8; 32])), public_url: Some("https://help.example.test".into()), ..Default::default() };
-    let k = Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot");
+    let k = Kernel::boot(db, catalog, hooks, settings, Some(Arc::new(Captured))).await.expect("boot");
     ferrum_domain::maintenance(&k).await.expect("partitions");
     k.set_file_store(Arc::new(MemFiles::default()));
     let mut packages = vec!["helpdesk".to_string()];

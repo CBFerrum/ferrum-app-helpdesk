@@ -310,13 +310,9 @@ async fn rate(k: &Kernel, user: &Ctx, ticket: Uuid, body: &Map<String, Value>) -
     with_retry(|| async {
         let mut tx = k.db.tenant_tx(user.tenant).await?;
         let t = own(k, &sctx, &mut tx, user, ticket, true).await?;
-        if !matches!(s(&t, "status"), Some("Resolved" | "Closed")) {
-            return Err(Error::invalid("a ticket is rated once it is resolved"));
-        }
-        let mut patch = Doc::new();
-        patch.insert("satisfaction_rating".into(), json!(rating));
-        patch.insert("feedback".into(), json!(feedback));
-        let saved = k.update_tx(&sctx, &mut tx, "Ticket", ticket, patch, None).await?;
+        // Once, and what a low rating does (reopens, tells a lead) is the settings'.
+        crate::survey::record(k, user, &mut tx, &t, rating, feedback.clone()).await?;
+        let saved = k.get_tx(&sctx, &mut tx, "Ticket", ticket, false).await?;
         let view = detail(&mut tx, user, &saved).await?;
         tx.commit().await?;
         Ok(view)

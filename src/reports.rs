@@ -17,7 +17,7 @@ use uuid::Uuid;
 pub struct SupportReports;
 
 /// Groupings: label → SQL over the ticket `a`, its team `tm`, type `tt` and agreement `sl`.
-const GROUPS: [(&str, &str); 8] = [
+const GROUPS: [(&str, &str); 9] = [
     ("Status", "a.status"),
     ("Priority", "a.priority"),
     ("Team", "coalesce(tm.team_name, 'No Team')"),
@@ -26,6 +26,7 @@ const GROUPS: [(&str, &str); 8] = [
     ("Channel", "a.channel"),
     ("Customer", "coalesce(a.customer_name, a.contact_email, 'Unknown')"),
     ("SLA", "coalesce(sl.sla_name, 'No SLA')"),
+    ("Month", "to_char(coalesce(a.rated_at, a.resolved_at, a.opened_at), 'YYYY-MM')"),
 ];
 
 fn group_param(default: &str) -> Value {
@@ -262,7 +263,7 @@ async fn satisfaction(ctx: &Ctx, p: &Params<'_>, tx: &mut Tx) -> Result<Value> {
                    count(*) filter (where a.satisfaction_rating = 4), count(*) filter (where a.satisfaction_rating = 5)";
     let rated = |qb: &mut QueryBuilder<Postgres>| {
         qb.push(" and a.satisfaction_rating is not null");
-        within(qb, "a.resolved_at", span);
+        within(qb, "coalesce(a.rated_at, a.resolved_at)", span);
     };
     let mut grouped = tickets(ctx, &format!("{expr}, {columns}"))?;
     rated(&mut grouped);
