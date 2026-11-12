@@ -46,6 +46,17 @@ fn refused<T: std::fmt::Debug>(r: &Result<T>, field: &str) -> bool {
     matches!(r, Err(Error::Validation(e)) if e.iter().any(|f| f.field == field))
 }
 
+/// Two moments within two seconds: the platform's targets take their own clock a moment after a hook does.
+fn near(a: DateTime<Utc>, b: DateTime<Utc>) -> bool {
+    (a - b).num_milliseconds().abs() < 2000
+}
+
+/// Marks the targets past their due moment, as the minute loop does, and brings the fields the inbox reads up to date.
+async fn sweep(k: &Kernel) {
+    k.sweep_targets_at(Utc::now()).await.unwrap();
+    ferrum_app_helpdesk::maintenance(k).await.unwrap();
+}
+
 /// Time a ticket spent waiting (replied, on hold, resolved before a reopening), from its timeline.
 fn waited(doc: &Doc) -> Duration {
     let tl: Vec<(String, DateTime<Utc>)> =
@@ -148,13 +159,19 @@ impl T {
         self.try_insert(entity, v).await.unwrap_or_else(|e| panic!("insert {entity}: {e:?}"))
     }
     async fn try_insert(&self, entity: &str, v: Value) -> Result<Doc> {
-        self.k.insert(&self.ctx, entity, obj(v)).await
+        let saved = self.k.insert(&self.ctx, entity, obj(v)).await?;
+        self.fresh(entity, saved).await
+    }
+    /// A ticket as stored after its save: the service level the inbox reads is brought up to date just after the save itself.
+    async fn fresh(&self, entity: &str, saved: Doc) -> Result<Doc> {
+        if entity == "Ticket" { self.k.get(&self.ctx, entity, uid(&saved), false).await } else { Ok(saved) }
     }
     async fn update(&self, entity: &str, id: Uuid, v: Value) -> Doc {
         self.try_update(entity, id, v).await.unwrap_or_else(|e| panic!("update {entity}: {e:?}"))
     }
     async fn try_update(&self, entity: &str, id: Uuid, v: Value) -> Result<Doc> {
-        self.k.update(&self.ctx, entity, id, obj(v), None).await
+        let saved = self.k.update(&self.ctx, entity, id, obj(v), None).await?;
+        self.fresh(entity, saved).await
     }
     async fn get(&self, entity: &str, id: Uuid) -> Doc {
         self.k.get(&self.ctx, entity, id, false).await.unwrap_or_else(|e| panic!("get {entity}: {e:?}"))
@@ -196,6 +213,20 @@ impl T {
     async fn sql(&self, sql: &'static str, id: Uuid) {
         let mut tx = self.k.db.tenant_tx(self.ctx.tenant).await.unwrap();
         sqlx::query(sql).bind(id).execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+    }
+    /// The workspace's settings record with `v` set: the one there is (the upkeep makes it), else a new one.
+    async fn settings(&self, v: Value) -> Doc {
+        match self.list("SupportSettings", json!({})).await.unwrap().first() {
+            Some(d) => self.update("SupportSettings", uid(d), v).await,
+            None => self.insert("SupportSettings", v).await,
+        }
+    }
+    /// Runs a statement that takes the workspace as `$1`, as the engine.
+    async fn exec(&self, sql: &'static str) {
+        let mut tx = self.k.db.tenant_tx(self.ctx.tenant).await.unwrap();
+        sqlx::query("select set_config('ferrum.system', 'on', true)").execute(&mut *tx).await.unwrap();
+        sqlx::query(sql).bind(self.ctx.tenant).execute(&mut *tx).await.unwrap();
         tx.commit().await.unwrap();
     }
     /// Titles of a user's in-app notifications, oldest first.
@@ -374,6 +405,9 @@ async fn scenario() {
 
     // ───────────── tickets: routing and SLAs on business hours ─────────────
     // Friday 23 October 17:00 IST; Monday 26 is the Standard agreement's holiday.
+    // The platform's targets start their clock when the ticket is saved: this one is saved as of when it was opened.
+    let friday: DateTime<Utc> = "2026-10-23T11:30:00Z".parse().unwrap();
+    k.pin_clock(Some(friday));
     let t1 =
         t.insert("Ticket", json!({"subject": "Cannot log in", "customer": bob.to_string(), "priority": "High", "opened_at": "2026-10-23T11:30:00Z"})).await;
     let t1id = uid(&t1);
@@ -381,22 +415,40 @@ async fn scenario() {
     assert_eq!((t1["team"].clone(), t1["assigned_to"].clone()), (json!(l1.to_string()), json!("a1@sd.test")));
     assert_eq!(t1["contact_email"], json!("bob@example.test"), "taken from the customer");
     assert_eq!(t1["service_level_agreement"], json!(standard.to_string()));
-    assert_eq!(t1["response_by"], json!("2026-10-27T06:30:00.000Z"), "1h on Friday, the holiday skipped, 3h on Tuesday");
+    assert_eq!(
+        t1["response_by"],
+        json!("2026-10-27T06:30:00.000Z"),
+        "1h on Friday, the holiday skipped, 3h on Tuesday, on the calendar made from the default agreement"
+    );
     assert_eq!(t1["resolution_by"], json!("2026-10-28T09:30:00.000Z"));
+    assert_eq!(
+        (t1["response_state"].clone(), t1["resolution_state"].clone()),
+        (json!("running"), json!("running")),
+        "the breach is the platform's, marked by its minute loop"
+    );
+    k.pin_clock(None);
+    sweep(&k).await;
+    let t1 = t.get("Ticket", t1id).await;
     assert_eq!((t1["sla_status"].clone(), t1["response_breached"].clone(), t1["resolution_breached"].clone()), (json!("Breached"), json!(true), json!(true)));
+    assert_eq!((t1["response_state"].clone(), t1["resolution_state"].clone()), (json!("breached"), json!("breached")));
     let created = t.events(t1id).await;
     assert_eq!(created[0].0, "Ticket.created");
-    assert_eq!(
-        (created[0].2["assigned_to"].clone(), created[0].2["sla_status"].clone()),
-        (json!("a1@sd.test"), json!("Breached")),
-        "automations see the routed ticket"
-    );
+    assert_eq!(created[0].2["assigned_to"], json!("a1@sd.test"), "automations see the routed ticket");
+    assert!(created.iter().any(|e| e.0 == "Ticket.updated" && e.2["response_state"] == json!("breached")), "the breach raises the ticket's updated event");
+    assert_eq!(k.sweep_targets_at(Utc::now()).await.unwrap(), 0, "recorded once");
     assert!(refused(&t.try_update("Ticket", t1id, json!({"opened_at": "2026-10-22T10:00:00Z"})).await, "opened_at"));
     assert!(refused(&t.try_insert("Ticket", json!({"subject": "From the future", "opened_at": format!("{}T00:00:00Z", day(2))})).await, "opened_at"));
-    assert_eq!(t.notifications(agent.ctx.user).await, ["TKT-2026-000001 Cannot log in was assigned to you"], "the assignee is told in the app");
+    assert_eq!(
+        t.notifications(agent.ctx.user).await,
+        ["TKT-2026-000001 Cannot log in was assigned to you", "SLA breached on TKT-2026-000001 Cannot log in"],
+        "the assignee is told in the app, and of the breach once"
+    );
+    k.pin_clock(Some(friday));
     let nudged = t.say(t1id, json!({"author_kind": "Customer", "body": "Any news?"})).await.unwrap();
+    k.pin_clock(None);
     assert_eq!((nudged["status"].clone(), nudged["sla_status"].clone()), (json!("Open"), json!("Breached")));
 
+    k.pin_clock(Some(friday));
     let t2 =
         t.insert("Ticket", json!({"subject": "Invoice copy", "customer": zed.to_string(), "priority": "Medium", "opened_at": "2026-10-23T11:30:00Z"})).await;
     let t2id = uid(&t2);
@@ -404,14 +456,18 @@ async fn scenario() {
     assert_eq!(t2["service_level_agreement"], json!(group_sla.to_string()), "the customer group's agreement");
     assert_eq!(
         (t2["response_by"].clone(), t2["resolution_by"].clone()),
-        (json!("2026-10-26T03:30:00.000Z"), json!("2026-10-27T11:30:00.000Z")),
-        "08:00-20:00 IST, no holiday"
+        (json!("2026-10-27T06:30:00.000Z"), json!("2026-10-29T08:30:00.000Z")),
+        "the group's 4 and 24 hours, on the one calendar (a group's own hours are not a thing any more)"
     );
+    k.pin_clock(Some(friday));
     let t2 = t.update("Ticket", t2id, json!({"priority": "Low"})).await;
+    k.pin_clock(None);
     assert_eq!(t2["service_level_agreement"], json!(standard.to_string()), "the group agreement sets no Low target");
     assert_eq!((t2["response_by"].clone(), t2["resolution_by"].clone()), (json!("2026-10-28T09:30:00.000Z"), json!("2026-11-06T10:30:00.000Z")));
     assert_eq!(t2["assigned_to"], json!("a2@sd.test"), "assignment happens once");
 
+    // From here tickets are opened now: the workspace's calendar is made round the clock, so the deadlines are plain elapsed time.
+    t.exec("update logic_calendar set zone = 'UTC', weekends = '{}', holidays = '{}', hours = null, revision = revision + 1 where tenant_id = $1 and name = 'helpdesk_hours'").await;
     let t3 = t
         .insert(
             "Ticket",
@@ -423,7 +479,7 @@ async fn scenario() {
     assert_eq!(t3["assigned_to"], json!("a4@sd.test"), "a3 is inactive");
     assert_eq!(t3["service_level_agreement"], json!(premium.to_string()), "the customer's own agreement beats its group's");
     let opened = ts(&t3["opened_at"]);
-    assert_eq!((ts(&t3["response_by"]), ts(&t3["resolution_by"])), (opened + h(1), opened + h(4)), "round the clock");
+    assert!(near(ts(&t3["response_by"]), opened + h(1)) && near(ts(&t3["resolution_by"]), opened + h(4)), "round the clock");
     assert_eq!(t3["sla_status"], json!("On Track"));
 
     let mut next = Vec::new();
@@ -468,27 +524,30 @@ async fn scenario() {
         t.update("SupportTeam", chat, json!({"members": [member("c1@sd.test"), member("c2@sd.test"), member("c3@sd.test"), member("c4@sd.test")]})).await;
     assert_eq!(chat_team["members"][3]["active"], json!(true), "a member added later is active");
 
-    // An imported ticket that has been on hold for 4 hours, 1 of its 2 response hours used.
+    // A ticket that was opened 5 hours ago and has been on hold for 4 of them, 1 of its 2 response hours used (saved as of when it
+    // happened: the platform's clock starts when a ticket is saved).
     let sys = T { k: k.clone(), ctx: Ctx::system(tenant, k.registry.schema(tenant).await.unwrap()) };
     let now = Utc::now().trunc_subsecs(0);
     let ago = |d: Duration| (now - d).to_rfc3339();
+    k.pin_clock(Some(now - h(5)));
     let t4 = sys
         .insert(
             "Ticket",
-            json!({"subject": "Imported: VPN drops", "customer": acme.to_string(), "priority": "Medium", "status": "On Hold", "team": l1.to_string(),
-                   "assigned_to": "a1@sd.test", "opened_at": ago(h(5)), "status_history": [{"status": "Open", "at": ago(h(5))}, {"status": "On Hold", "at": ago(h(4))}]}),
+            json!({"subject": "Imported: VPN drops", "customer": acme.to_string(), "priority": "Medium", "team": l1.to_string(), "assigned_to": "a1@sd.test", "opened_at": ago(h(5))}),
         )
         .await;
     let t4id = uid(&t4);
+    k.pin_clock(Some(now - h(4)));
+    let t4 = sys.update("Ticket", t4id, json!({"status": "On Hold"})).await;
+    k.pin_clock(None);
     assert_eq!(
-        (t4["response_by"].clone(), t4["resolution_by"].clone(), t4["sla_status"].clone()),
-        (Value::Null, Value::Null, json!("On Track")),
+        (t4["response_by"].clone(), t4["resolution_by"].clone(), t4["sla_status"].clone(), t4["response_state"].clone()),
+        (Value::Null, Value::Null, json!("On Track"), json!("paused")),
         "deadlines wait while paused"
     );
     let resumed = t.update("Ticket", t4id, json!({"status": "Open"})).await;
     let back = ts(&resumed["status_history"].as_array().unwrap().last().unwrap()["at"]);
-    assert_eq!((ts(&resumed["response_by"]), ts(&resumed["resolution_by"])), (back + h(1), back + h(7)), "the remaining time runs from the resume");
-    assert!((n("4")..n("4.1")).contains(&dec(&resumed["paused_hours"])), "{}", resumed["paused_hours"]);
+    assert!(near(ts(&resumed["response_by"]), back + h(1)) && near(ts(&resumed["resolution_by"]), back + h(7)), "the remaining time runs from the resume");
 
     // ───────────── the conversation drives the status ─────────────
     let made = t.action("Ticket", t3id, "make_warranty_claim", json!({})).await;
@@ -510,7 +569,7 @@ async fn scenario() {
     let answered = t.say(t3id, json!({"author_kind": "Customer", "body": "It still reboots."})).await.unwrap();
     assert_eq!(answered["status"], json!("Open"), "the customer's reply hands the ticket back");
     assert_eq!(answered["conversation"][2]["author"], json!("it@acme.test"));
-    assert_eq!(ts(&answered["resolution_by"]), opened + h(4) + waited(&answered), "time waiting for the customer is added");
+    assert!(near(ts(&answered["resolution_by"]), opened + h(4) + waited(&answered)), "time waiting for the customer is added");
     let mut edited = answered["conversation"].as_array().cloned().unwrap();
     edited[0]["body"] = json!("We fixed it already.");
     assert!(refused(&t.try_update("Ticket", t3id, json!({ "conversation": edited })).await, "body"), "sent messages are a record");
@@ -520,7 +579,7 @@ async fn scenario() {
     let held = t.update("Ticket", t3id, json!({"status": "On Hold"})).await;
     assert_eq!((held["resolution_by"].clone(), held["sla_status"].clone()), (Value::Null, json!("On Track")));
     let resumed = t.update("Ticket", t3id, json!({"status": "Open"})).await;
-    assert_eq!(ts(&resumed["resolution_by"]), opened + h(4) + waited(&resumed), "paused time is added back");
+    assert!(near(ts(&resumed["resolution_by"]), opened + h(4) + waited(&resumed)), "paused time is added back");
     assert!(refused(&t.try_update("Ticket", t3id, json!({"status": "Resolved"})).await, "resolution_details"));
     assert!(refused(&t.try_update("Ticket", t3id, json!({"satisfaction_rating": 5})).await, "satisfaction_rating"), "no rating before the resolution");
     let resolved = t.update("Ticket", t3id, json!({"status": "Resolved", "resolution_details": "Rolled the firmware back to 1.2."})).await;
@@ -529,7 +588,7 @@ async fn scenario() {
     assert!(refused(&t.try_update("Ticket", t3id, json!({"satisfaction_rating": 6})).await, "satisfaction_rating"));
     let reopened = t.say(t3id, json!({"author_kind": "Customer", "body": "It happened again this morning."})).await.unwrap();
     assert_eq!((reopened["status"].clone(), reopened["resolved_at"].clone(), reopened["sla_status"].clone()), (json!("Open"), Value::Null, json!("On Track")));
-    assert_eq!(ts(&reopened["resolution_by"]), opened + h(4) + waited(&reopened), "the time it sat resolved does not count");
+    assert!(near(ts(&reopened["resolution_by"]), opened + h(4) + waited(&reopened)), "the time it sat resolved does not count");
     t.update("Ticket", t3id, json!({"status": "Resolved", "satisfaction_rating": 4, "feedback": "Quick help"})).await;
     let closed = t.update("Ticket", t3id, json!({"status": "Closed"})).await;
     assert!(closed["closed_at"].is_string());
@@ -672,19 +731,19 @@ async fn scenario() {
     assert!(matches!(t.k.run_action(&t.ctx, "MaintenanceSchedule", msid, "make_visit", json!({})).await, Err(Error::Invalid(_))));
 
     // ───────────── maintenance: breaches flagged, resolved tickets closed ─────────────
-    t.sql("update e_ticket set opened_at = opened_at - interval '7 days' where id = $1", t5).await;
-    // Saturday 24 October: its 16-hour Low target ran out on Wednesday 28 (Monday 26 is a holiday).
-    t.sql("update e_ticket set opened_at = '2026-10-24T00:00:00Z' where id = $1", t10).await;
+    // Time passes for the platform's targets: T5's targets ran out a week ago; T10's 16-hour Low response ran out yesterday.
+    t.sql("update record_target set due_at = due_at - interval '7 days' where record_id = $1", t5).await;
+    t.sql("update record_target set due_at = now() - interval '1 day' where record_id = $1 and target = 'respond'", t10).await;
     let flagged_before = t.events(t5).await.iter().filter(|e| e.1).count();
-    ferrum_app_helpdesk::maintenance(&k).await.expect("maintenance");
+    sweep(&k).await;
     let t5doc = t.get("Ticket", t5).await;
     assert_eq!((t5doc["sla_status"].clone(), t5doc["response_breached"].clone()), (json!("Breached"), json!(true)));
-    assert_eq!(t5doc["version"], urgent[0]["version"], "derived values do not invalidate an open form");
     let flagged: Vec<_> = t.events(t5).await.into_iter().filter(|e| e.1).collect();
-    assert_eq!(flagged.len(), flagged_before + 1, "the breach is published for automations and webhooks");
-    assert_eq!((flagged[0].0.as_str(), flagged[0].2["sla_status"].clone()), ("Ticket.updated", json!("Breached")));
-    ferrum_app_helpdesk::maintenance(&k).await.expect("maintenance again");
+    assert_eq!(flagged.len(), flagged_before + 2, "each target's breach is published for automations and webhooks, once");
+    assert!(flagged.iter().all(|e| e.0 == "Ticket.updated") && flagged.iter().any(|e| e.2["response_state"] == json!("breached")));
+    sweep(&k).await;
     assert_eq!(t.events(t5).await.iter().filter(|e| e.1).count(), flagged.len(), "idempotent");
+    assert_eq!(t.get("Ticket", t5).await["version"], t5doc["version"], "what the inbox reads is brought up to date without a new version");
     let told = t.notifications(agent.ctx.user).await;
     assert_eq!(told.iter().filter(|n| n.ends_with("was assigned to you")).count(), 4, "T1, T8, T10 and the imported one: {told:?}");
     assert_eq!(told.iter().filter(|n| n.starts_with("The customer replied on TKT-2026-000001")).count(), 1, "{told:?}");
@@ -697,7 +756,7 @@ async fn scenario() {
     let t2doc = t.get("Ticket", t2id).await;
     assert_eq!((t2doc["status"].clone(), t2doc["closed_at"].is_string()), (json!("Closed"), true), "resolved for over 7 days");
     assert_eq!(t.get("Ticket", t9).await["status"], json!("Resolved"), "still in the grace period");
-    t.insert("SupportSettings", json!({"auto_close_days": 30})).await;
+    t.settings(json!({"auto_close_days": 30})).await;
     t.update("Ticket", t8, json!({"status": "Resolved", "resolution_details": "Done"})).await;
     t.sql("update e_ticket set resolved_at = resolved_at - interval '8 days' where id = $1", t8).await;
     ferrum_app_helpdesk::maintenance(&k).await.expect("maintenance");
@@ -909,7 +968,9 @@ async fn portal(k: &Arc<Kernel>) {
         .await
         .is_err()
     );
+    k.pin_clock(Some(now - Duration::days(3)));
     let first = t.insert("Ticket", open_ticket("Covered one", now - Duration::days(3))).await;
+    k.pin_clock(None);
     assert_eq!((first["entitlement"].as_str(), first["support_contract"].as_str()), (Some("Covered"), Some(contract.to_string().as_str())));
     assert_eq!(first["service_level_agreement"], json!(tight.to_string()), "the contract's agreement applies, whatever else would");
     t.insert("Ticket", open_ticket("Covered two", now)).await;
@@ -917,7 +978,7 @@ async fn portal(k: &Arc<Kernel>) {
     assert_eq!(third["entitlement"], json!("Exhausted"), "said, not refused: an agent decides");
 
     // ───────────── work outside entitlement waits for approval, where the workspace says so (FEO-030) ─────────────
-    let settings = t.insert("SupportSettings", json!({"outside_entitlement": "Hold for Approval"})).await;
+    let settings = t.settings(json!({"outside_entitlement": "Hold for Approval"})).await;
     let helper = t.user("helper@sd.test", &["Support Agent"], &[]).await;
     let approver = t.user("approver@sd.test", &["Support Manager"], &[]).await;
     let held = t.insert("Ticket", open_ticket("Past the contract", now)).await;
@@ -958,7 +1019,8 @@ async fn portal(k: &Arc<Kernel>) {
     .await;
     t.insert("EscalationRule", json!({"rule_name": "Switched off", "level": 3, "trigger": "Breached", "enabled": false, "assign_to": "nobody@sd.test"})).await;
     let late = uid(&first);
-    assert_eq!(t.get("Ticket", late).await["sla_status"], json!("Breached"));
+    k.sweep_targets_at(Utc::now()).await.unwrap();
+    assert_eq!(t.get("Ticket", late).await["response_state"], json!("breached"), "the platform marked it");
     ferrum_app_helpdesk::maintenance(k).await.unwrap();
     let once = t.get("Ticket", late).await;
     assert_eq!((once["escalation_level"].as_i64(), once["assigned_to"].as_str()), (Some(1), None), "the first rule, and only it");
@@ -1042,7 +1104,8 @@ async fn replies_and_files(k: &Arc<Kernel>) {
     drain(k).await;
     let mails = sent_to("ada@shop.test");
     assert_eq!(mails.len(), 1, "{mails:?}");
-    assert_eq!(mails[0].1, format!("Re: [{number}] Printer jam <urgent>"), "the subject names the ticket");
+    let token = t.get("Ticket", ticket).await["mail_token"].as_str().unwrap().to_string();
+    assert_eq!(mails[0].1, format!("Re: [{number}/{token}] Printer jam <urgent>"), "the subject names the ticket and carries its secret");
     let html = &mails[0].2;
     assert!(html.contains("<strong>rear tray</strong>") && html.contains("<a href=\"https://help.example.test/g\">the guide</a>"), "{html}");
     assert!(html.contains("&lt;b&gt;now&lt;/b&gt;") && !html.contains("<b>"), "what an agent typed is text: {html}");
@@ -1198,8 +1261,4 @@ async fn replies_and_files(k: &Arc<Kernel>) {
     assert_eq!(raj.action("SavedReply", thanks, "used", json!({})).await["uses"], json!(2), "counted for everyone it is shared with");
     assert!(priya.try_update("SavedReply", thanks, json!({"body": "changed"})).await.is_err(), "a shared reply is its writer's and the managers' to change");
     assert_eq!(boss.update("SavedReply", thanks, json!({"body": "Hi {{customer.first_name}}"})).await["body"], json!("Hi {{customer.first_name}}"));
-}
-
-fn n(s: &str) -> Decimal {
-    Decimal::from_str(s).unwrap()
 }

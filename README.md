@@ -31,7 +31,7 @@ together; and answers your team writes once become knowledge base articles custo
 | 🖥️ Interface | its own, at `/helpdesk/` |
 | 🗃️ Records | 19 entities in 2 packages |
 | 👥 Roles | 3: Support Agent, Support Manager, Knowledge Base Editor |
-| 📊 Reports | 5 |
+| 📊 Reports | 8 |
 | 🧪 Tests | 23 Rust tests, 1 interface test file |
 
 
@@ -50,8 +50,8 @@ Email, portal, phone, chat and web forms, with conversations, statuses and satis
 ### 🔀 Merging duplicates
 Tickets of one customer merge into one: conversation in time order, each message marked with where it came from, with files, watchers and tags; the duplicates close as merged and their customer's replies land on the survivor. A merge is not undone.
 
-### ⏱️ SLAs on business hours
-Working hours, holidays and time zones; pausing statuses; response and resolution breach tracking.
+### ⏱️ Targets on the platform's clock
+First response and resolution are Ferrum's service targets on a working calendar the workspace owns (hours, time zone with daylight saving, dated exceptions); agreements by priority, customer, group or team; the clock stops while the customer is asked; each breach recorded once and raising the ticket's updated event.
 
 </td>
 </tr>
@@ -79,7 +79,7 @@ Claims checked against serial-number deliveries; maintenance schedules and visit
 <td width="50%" valign="top">
 
 ### 📊 Service reports
-Ticket summary, SLA compliance, response and resolution times, agent workload, satisfaction.
+Ticket summary, SLA compliance, response and resolution times, agent workload, satisfaction by agent, team and month, backlog by age, volume by channel, tag or customer, and the reopen rate.
 
 </td>
 </tr>
@@ -143,6 +143,16 @@ flowchart LR
 Everything Helpdesk adds is ordinary Ferrum metadata and Rust: its records get lists, forms,
 search, permissions, an audit trail, exports and the REST and MCP APIs for free, so AI agents work
 with them under the same rules as people.
+
+### Customers writing to support
+
+Add a **Support Address** for each address customers write to (support@, billing@), mapped to a team, and have the Mail app receive that mailbox. Mail stores each received message as a Communication; Helpdesk's hook on that record turns it into a ticket or a message on the ticket it answers, and puts the Communication on the ticket. Do not set the mailbox's "create records" option: Helpdesk's addresses do that. Replies go out through Mail as Communications on the ticket.
+
+Mail does not yet offer what a complete integration needs, so, until it does:
+
+- **Headers of received mail.** Mail keeps none of a received message's headers. Helpdesk reads `headers` on the Communication when it is there (the names Mail's own validation already allows: Auto-Submitted, Precedence, List-Id, List-Unsubscribe, X-...), and without it recognises noise by the sender's address only. Mail should store those headers (and the Delivered-To address) when it receives a message.
+- **A Reply-To.** Mail's `headers` cannot carry one, so a reply's route back is the subject's tag and the threading headers. Mail should let the app that queues a message name its Reply-To (or an address pattern per account).
+- **A registration instead of a hook.** The hook on Mail's `Communication` is an observer of Mail's own record, inside Mail's transaction. An explicit registration (an address or account an app receives, with the parsed message handed to it) would let the app refuse mail before Mail stores it and keep Mail's tables to Mail.
 
 ### What it adds to Ferrum
 
@@ -294,6 +304,7 @@ CHANGELOG.md  what changed in each version
 
 | Version | Highlights |
 |---|---|
+| **0.10.0** | Customers write to support addresses and it lands in the ticket (new ticket or a reply matched by headers or the subject's secret, copies and files kept, loops and noise logged), targets on the platform's clock, tags and private notes, routing by skill, language and shift, macros and filled-in replies, ratings by a signed link, a help centre, and backlog, volume and reopen reports. |
 | **0.9.1** | Screens for merging tickets: select tickets in the inbox or tick a customer's other tickets on one, choose the one that stays, and read what moves; a merged ticket links to the survivor and its messages say where they came from. |
 | **0.9.0** | Merge duplicate tickets: the conversation, files, watchers and tags move to the surviving ticket, the duplicate closes as merged and a customer's reply to it lands on the survivor. |
 | **0.8.2** | Rebuilt on the tuned design system: better menu icons, a lighter first page, a visible scroll cue, cleaner print. |

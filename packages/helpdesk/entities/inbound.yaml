@@ -1,0 +1,54 @@
+- name: SupportAddress
+  label: Support Address
+  kind: master
+  module: support
+  title_field: address
+  description: "An address customers write to: support@ for everyone, or one per team or brand. Mail the Mail app receives for it becomes a new ticket of its team, or a message on the ticket it answers."
+  fields:
+    - {name: address, type: email, required: true, unique: true, in_list: true}
+    - {name: label, type: data, in_list: true, label: Brand, description: "What the customer knows this address by, for the mail's wording"}
+    - {name: team, type: link, to: SupportTeam, in_list: true, in_filter: true, description: "New tickets from this address go to this team (its assignment rules then pick the agent)"}
+    - {name: default_priority, type: select, options: [Low, Medium, High, Urgent], default: Medium}
+    - {name: ticket_type, type: link, to: TicketType}
+    - {name: mail_account, type: data, label: Mail Account, description: "The name of the Mail account replies to tickets of this address go out from, so the customer's reply comes back to the address they wrote to; empty: Mail's default outgoing account"}
+    - {name: enabled, type: check, default: true, in_list: true, in_filter: true}
+  list: {columns: [address, label, team, enabled], sort: address asc}
+
+- name: InboundLog
+  label: Inbound Mail Log
+  label_plural: Inbound Mail Log
+  kind: master
+  module: support
+  title_field: subject
+  search_fields: [from_address, subject]
+  description: "What became of each mail addressed to a support address: a ticket, a message, or why it was not either. Mail held for review waits here."
+  fields:
+    - {name: received_at, type: datetime, read_only: true, in_list: true, index: true, default_expr: now}
+    - {name: from_address, type: data, read_only: true, in_list: true, in_filter: true, max_length: 320}
+    - {name: to_address, type: data, read_only: true, max_length: 320, description: "The support address it was for"}
+    - {name: subject, type: data, read_only: true, max_length: 300, in_list: true}
+    - {name: message_id, type: data, read_only: true, index: true, max_length: 500}
+    - {name: outcome, type: select, options: [Ticket Created, Added to Ticket, Held, Ignored, Failed], read_only: true, required: true, in_list: true, in_filter: true}
+    - {name: reason, type: select, options: [Automatic reply, Bounce, Mailing list, Own address, Rate limit, Unknown sender, Duplicate, Discarded by staff, Error], read_only: true, in_list: true, in_filter: true}
+    - {name: detail, type: data, read_only: true, max_length: 500, description: "The header or error that decided it"}
+    - {name: ticket, type: link, to: Ticket, read_only: true, in_list: true}
+    - {name: payload, type: json, read_only: true, hidden: true, no_copy: true, description: "The held mail, kept until staff release or discard it"}
+  actions:
+    - {name: release, label: Open a Ticket From It, permission: write, condition: "doc.outcome == 'Held'"}
+    - {name: discard, label: Discard, permission: write, condition: "doc.outcome == 'Held'"}
+  list: {columns: [received_at, from_address, subject, outcome, reason, ticket], sort: received_at desc}
+
+- name: AgentProfile
+  label: Agent Profile
+  kind: master
+  module: support
+  title_field: agent
+  owner_fields: [agent]
+  description: "What assignment rules and replies know of an agent: the skills and languages they cover, the working calendar they are on shift by, and the signature their replies end with."
+  fields:
+    - {name: agent, type: email, required: true, unique: true, in_list: true, description: "The address the agent signs in with"}
+    - {name: display_name, type: data, in_list: true}
+    - {name: skills, type: data, max_length: 500, in_list: true, description: "Comma-separated tags: billing, hardware, en, hi. A rule that asks for a skill or the ticket's language gives tickets only to agents who have it"}
+    - {name: shift_calendar, type: data, max_length: 64, in_list: true, description: "The name of a working calendar (Admin, Calendars). The agent is given tickets only while it is open; empty: always on shift"}
+    - {name: signature, type: markdown, max_length: 2000, description: "Ends each public reply this agent sends"}
+  list: {columns: [agent, display_name, skills, shift_calendar], sort: agent asc}
