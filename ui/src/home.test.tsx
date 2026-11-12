@@ -91,6 +91,12 @@ describe("the inbox", () => {
     expect(draw({ rows: [ticket("1", { routed_by: "r1", _titles: { routed_by: "Billing by skill" } })] })).toContain("placed by Billing by skill");
   });
 
+  it("links to the reports, and to the help centre and administration where the person may open them", () => {
+    const html = draw({ rows: [ticket("1")] });
+    expect(html).toContain('href="/reports"');
+    expect(html).not.toContain('href="/admin"');
+  });
+
   it("says a queue is empty in words, not with a blank page", () => {
     expect(draw()).toContain("Nothing assigned to you is open. Well done.");
     expect(draw({ url: "/?queue=alerts" })).toContain("No ticket is at risk of missing its SLA.");
