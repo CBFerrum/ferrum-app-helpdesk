@@ -526,6 +526,19 @@ export function HelpdeskHome() {
           <button type="button" className="icon-btn" aria-label={tr("Keyboard shortcuts")} title={tr("Keyboard shortcuts (?)")} onClick={() => setHelp(true)}>
             <Icon name="list" />
           </button>
+          <Link className="btn btn-default btn-md" to="/reports">
+            {tr("Reports")}
+          </Link>
+          {index?.entities.some((e) => e.name === "KbArticle") && (
+            <Link className="btn btn-default btn-md" to="/help">
+              {tr("Help centre")}
+            </Link>
+          )}
+          {index?.entities.some((e) => e.name === "SupportAddress" && can(e.permissions, "read")) && (
+            <Link className="btn btn-default btn-md" to="/admin">
+              {tr("Administration")}
+            </Link>
+          )}
           {entity && can(entity.permissions, "create") && (
             <Link className="btn btn-primary btn-md" to="e/Ticket/new">
               <Icon name="plus" />
