@@ -257,6 +257,8 @@
   actions:
     - {name: merge_tickets, label: Merge Tickets Into This One, permission: write, condition: "doc.status != 'Closed'",
        params: [{name: numbers, label: Tickets to merge, type: text, required: true, description: "The numbers of the duplicates, separated by commas or lines. They must be this customer's; their conversation, files, watchers and tags move here, and they close as merged"}]}
+    - {name: apply_macro, label: Apply a Macro, permission: write, condition: "doc.status != 'Closed'",
+       params: [{name: macro, label: Macro, type: link, to: SupportMacro, required: true, description: "Its steps run in order on this ticket, all or none"}]}
     - {name: make_warranty_claim, label: Create Warranty Claim, permission: write, condition: "doc.item != null && doc.customer != null"}
     - {name: approve_outside_entitlement, label: Approve Work Outside Entitlement, permission: write, condition: "doc.entitlement_approval == 'Waiting'",
        params: [{name: reason, label: Why, type: data, required: true, description: "Why this customer's ticket is worked though their contract does not cover it"}]}
@@ -276,7 +278,7 @@
   module: support
   title_field: title
   search_fields: [body]
-  description: "A reply written once, inserted from a ticket's composer. These are filled in from the ticket: {{customer.first_name}}, {{customer.name}}, {{customer.company}}, {{ticket.number}}, {{ticket.subject}}, {{agent.first_name}} and {{agent.name}}."
+  description: "A reply written once, inserted from a ticket's composer. The workspace's own merge fields are filled in from the ticket by the action Fill In for a Ticket: {{customer.first_name}}, {{customer.name}}, {{customer.company}}, {{ticket.number}}, {{ticket.subject}}, {{ticket.priority}}, {{ticket.status}}, {{ticket.link}}, {{agent.first_name}} and {{agent.name}}. A field that does not exist is left empty."
   fields:
     - {name: title, type: data, required: true, max_length: 120, in_list: true}
     - {name: scope, type: select, options: [Personal, Team, Everyone], required: true, default: Personal, in_list: true, in_filter: true, description: "Personal: only you. Team: the team's members. Everyone: every agent"}
@@ -285,6 +287,8 @@
     - {name: uses, type: int, label: Times Used, default: 0, read_only: true, no_copy: true, in_list: true}
   actions:
     - {name: used, label: Count a Use, permission: read}
+    - {name: render, label: Fill In for a Ticket, permission: read, read_only: true,
+       params: [{name: ticket, label: Ticket, type: link, to: Ticket, required: true}]}
   list: {columns: [title, scope, team, uses], sort: uses desc}
 
 - name: KbCategory

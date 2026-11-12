@@ -5,6 +5,7 @@
 mod hours;
 pub mod inbound;
 mod kb;
+mod macros;
 mod mailhook;
 mod merge;
 mod outgoing;

@@ -27,8 +27,8 @@
   label: Macro Step
   kind: child
   fields:
-    - {name: step, type: select, options: [Set Status, Set Priority, Set Team, Assign To, Set Type, Set Language, Add Tag, Remove Tag, Public Reply, Private Note], required: true, in_list: true}
-    - {name: value, type: text, in_list: true, max_length: 20000, description: "What the step sets: a status, a priority, a team's name, an agent's address, a type's name, a tag. For a reply or note, its text (merge fields as in a saved reply)"}
+    - {name: step, type: select, options: [Set Status, Set Priority, Set Team, Assign To, Set Type, Set Language, Set Resolution, Add Tag, Remove Tag, Public Reply, Private Note], required: true, in_list: true}
+    - {name: value, type: text, in_list: true, max_length: 20000, description: "What the step sets: a status, a priority, a team's name, an agent's address, a type's name, a tag. For a reply, a note or a resolution, its text (merge fields as in a saved reply)"}
 
 - name: SupportMacro
   label: Macro
