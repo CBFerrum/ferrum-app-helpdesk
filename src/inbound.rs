@@ -11,10 +11,12 @@
 //! * A reply is matched to its ticket by the Message-ID it answers (In-Reply-To, References), then by the ticket's
 //!   secret in the address it was written to (`support+<secret>@…`, the Reply-To of what Helpdesk sends), and
 //!   last by the ticket's number and secret in the subject tag the app puts in outgoing mail. Never by subject text alone.
-//!   The secret is made from the ticket with the server's key ([`ticket_token`]) and kept nowhere: whoever reads
-//!   tickets, through the API, an export, a report or the audit trail, cannot write as the customer. The ticket keeps a
-//!   keyed hash of it (`mail_token_hash`) to be found by it; mail sent before 0.11.0 carries the secret those releases
-//!   kept in the ticket's `mail_token` column, which is still read for it.
+//!   The secret is made from the ticket with a key from Helpdesk's own key in the vault ([`ticket_token`]) and kept
+//!   nowhere: whoever reads tickets, through the API, an export, a report or the audit trail, cannot write as the
+//!   customer. Its hash is recorded when the ticket is made and as mail goes (`helpdesk_mail_token`), to find the ticket
+//!   by. Mail 0.11 sent
+//!   carries a secret made with the server's key (its hash recorded by upkeep, and matched with that key meanwhile);
+//!   mail sent before 0.11.0 carries the secret those releases kept in the ticket's `mail_token` column, still read for it.
 //! * Mail the mail server could not verify (`x-ferrum-auth: unverified`) from a known customer, or from the requester
 //!   or a copy of the ticket it answers, is held for review when Support Settings say (the default): a forged
 //!   sender must not read or steer a ticket.
@@ -146,20 +148,64 @@ pub fn tag(subject: &str) -> Option<(String, String)> {
     None
 }
 
-/// The secret in the subject tag and the Reply-To of the mail sent about a ticket: made from the ticket with the
-/// server's key, so it is the same every time and nobody without the key can make it, and kept nowhere. None without
-/// the server's key: replies are then matched by the mail they answer alone.
-pub fn ticket_token(k: &Kernel, tenant: Uuid, ticket: Uuid) -> Option<String> {
-    k.settings.secret_key.as_ref().map(|key| token_with(key, tenant, ticket))
+/// The secret in the subject tag and the Reply-To of the mail sent about a ticket: made from the ticket with a key from
+/// Helpdesk's own key in the vault (`keys.rs`), so nobody without it can make it, and kept nowhere: the ticket is found
+/// by its hash, recorded when the ticket is made and as mail goes ([`sent_with`]). None while the vault is closed:
+/// replies are then matched by the mail they answer alone.
+pub async fn ticket_token(k: &Kernel, tenant: Uuid, ticket: Uuid) -> Result<Option<String>> {
+    crate::keys::mail_token(k, tenant, ticket).await
 }
 
+/// Records that mail about `ticket` carries `token`, by a hash of the workspace and the secret (SHA-256), so that a reply
+/// carrying it finds the ticket in this workspace and in no copy of it under another id (a sandbox): `kind` `vault` for
+/// this release's secrets, `server` for those 0.11 made with the server's key.
+pub(crate) async fn sent_with(tx: &mut Tx, tenant: Uuid, ticket: Uuid, token: &str, kind: &str) -> Result<()> {
+    sqlx::query(
+        "insert into helpdesk_mail_token (tenant_id, token_hash, ticket, kind) \
+         values ($1, encode(sha256(convert_to($1::text || '/' || $2, 'UTF8')), 'hex'), $3, $4) on conflict (tenant_id, token_hash) do nothing",
+    )
+    .bind(tenant)
+    .bind(token)
+    .bind(ticket)
+    .bind(kind)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// The secret 0.11 made with the server's key (`settings.secret_key`, which the platform is making its own): mail it
+/// sent still carries it.
 fn token_with(key: &SecretKey, tenant: Uuid, ticket: Uuid) -> String {
     key.fingerprint("helpdesk mail token", &format!("{tenant}/{ticket}"))[..32].to_string()
 }
 
-/// What the ticket keeps to be found by its secret: a keyed hash of it (`mail_token_hash`).
-pub fn token_hash(key: &SecretKey, token: &str) -> String {
+/// What 0.11 kept on the ticket to find it by such a secret: a keyed hash of it (`mail_token_hash`).
+fn token_hash(key: &SecretKey, token: &str) -> String {
     key.fingerprint("helpdesk mail token hash", token)
+}
+
+/// Upkeep: the secrets 0.11 put in the mail it sent (made with the server's key, and with each key it had retired),
+/// recorded by their hashes for each ticket it sent mail about (`mail_token_hash`), so that replies carrying them find
+/// their ticket without the server's key once the platform keeps it to itself. A batch a round, each ticket once.
+pub(crate) async fn carry(k: &Kernel, tenant: Uuid) -> Result<usize> {
+    if k.settings.secret_key.is_none() {
+        return Ok(0);
+    }
+    let mut tx = k.db.tenant_tx(tenant).await?;
+    let tickets: Vec<Uuid> = sqlx::query_scalar(
+        "select t.id from e_ticket t where t.tenant_id = $1 and t.mail_token_hash is not null and not exists \
+         (select 1 from helpdesk_mail_token m where m.tenant_id = t.tenant_id and m.ticket = t.id and m.kind = 'server') order by t.id limit 500",
+    )
+    .bind(tenant)
+    .fetch_all(&mut *tx)
+    .await?;
+    for &t in &tickets {
+        for key in keys(k) {
+            sent_with(&mut tx, tenant, t, &token_with(key, tenant, t), "server").await?;
+        }
+    }
+    tx.commit().await?;
+    Ok(tickets.len())
 }
 
 /// The server's key, then the keys being rotated out: mail sent before a rotation carries what an older one made.
@@ -264,12 +310,23 @@ async fn matching_ticket(k: &Kernel, tx: &mut Tx, tenant: Uuid, mail: &Inbound) 
     if found.is_none()
         && let Some(token) = mail.token.as_deref().filter(|t| (8..=64).contains(&t.len()) && t.chars().all(|c| c.is_ascii_alphanumeric()))
     {
-        let hashes: Vec<String> = keys(k).map(|key| token_hash(key, token)).collect();
-        found = sqlx::query_scalar("select id from e_ticket where tenant_id = $1 and mail_token_hash = any($2) limit 1")
-            .bind(tenant)
-            .bind(&hashes)
-            .fetch_optional(&mut **tx)
-            .await?;
+        // By the hash of the secret, recorded as the mail carrying it went (and, for 0.11's, by upkeep).
+        found = sqlx::query_scalar(
+            "select ticket from helpdesk_mail_token where tenant_id = $1 and token_hash = encode(sha256(convert_to($1::text || '/' || $2, 'UTF8')), 'hex')",
+        )
+        .bind(tenant)
+        .bind(token)
+        .fetch_optional(&mut **tx)
+        .await?;
+        // 0.11's, not yet recorded: while the server's key is the apps' to use.
+        if found.is_none() {
+            let hashes: Vec<String> = keys(k).map(|key| token_hash(key, token)).collect();
+            found = sqlx::query_scalar("select id from e_ticket where tenant_id = $1 and mail_token_hash = any($2) limit 1")
+                .bind(tenant)
+                .bind(&hashes)
+                .fetch_optional(&mut **tx)
+                .await?;
+        }
         if found.is_none() && kept_tokens(tx).await? {
             found = sqlx::query_scalar("select id from e_ticket where tenant_id = $1 and mail_token = $2")
                 .bind(tenant)
@@ -284,7 +341,16 @@ async fn matching_ticket(k: &Kernel, tx: &mut Tx, tenant: Uuid, mail: &Inbound) 
         let ticket: Option<Uuid> =
             sqlx::query_scalar("select id from e_ticket where tenant_id = $1 and number = $2").bind(tenant).bind(number).fetch_optional(&mut **tx).await?;
         if let Some(t) = ticket {
-            let mut ours = keys(k).any(|key| same(&token_with(key, tenant, t), &token));
+            let mut ours: bool = sqlx::query_scalar(
+                "select exists (select 1 from helpdesk_mail_token where tenant_id = $1 and ticket = $2 \
+                 and token_hash = encode(sha256(convert_to($1::text || '/' || $3, 'UTF8')), 'hex'))",
+            )
+            .bind(tenant)
+            .bind(t)
+            .bind(&token)
+            .fetch_one(&mut **tx)
+            .await?;
+            ours = ours || keys(k).any(|key| same(&token_with(key, tenant, t), &token));
             if !ours && kept_tokens(tx).await? {
                 let kept: Option<String> =
                     sqlx::query_scalar("select mail_token from e_ticket where tenant_id = $1 and id = $2").bind(tenant).bind(t).fetch_one(&mut **tx).await?;

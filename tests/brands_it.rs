@@ -78,11 +78,11 @@ async fn scenario() {
     assert!(html.find("Sam").is_some_and(|s| we < Some(s) && Some(s) < sign), "the agent's signature comes before the brand's: {html}");
     assert_eq!(
         to_ada["reply_to_address"],
-        json!(format!("Acme Help <support+{}@acme.test>", common::token(&e, uid(&b)))),
+        json!(format!("Acme Help <support+{}@acme.test>", common::token(&e, uid(&b)).await)),
         "answers go to the brand, tagged with the ticket's secret"
     );
     let to_bob = sent.iter().find(|m| m["recipients"] == json!("bob@cust.test")).expect("the unbranded reply");
-    assert_eq!(to_bob["reply_to_address"].as_str().unwrap(), format!("plain+{}@acme.test", common::token(&e, uid(&unbranded))));
+    assert_eq!(to_bob["reply_to_address"].as_str().unwrap(), format!("plain+{}@acme.test", common::token(&e, uid(&unbranded)).await));
     assert!(!to_bob["content"].as_str().unwrap().contains("Acme Help"), "no brand, no wrapper");
     // A name that is not plain words is cut to what is, and a brand of nothing but such characters falls back to the address.
     e.update("SupportBrand", brand, json!({"display_name": "\"<>,;"})).await;
@@ -90,7 +90,7 @@ async fn scenario() {
     let sent = e.list("Communication", json!({"direction": "Sent", "recipients": "ada@cust.test"})).await;
     assert_eq!(sent.len(), 2);
     let second = sent.iter().find(|m| m["content"].as_str().unwrap().contains("Second reply")).unwrap();
-    assert_eq!(second["reply_to_address"], json!(format!("support+{}@acme.test", common::token(&e, uid(&c)))));
+    assert_eq!(second["reply_to_address"], json!(format!("support+{}@acme.test", common::token(&e, uid(&c)).await)));
     // The second reply threads onto the first: In-Reply-To is the customer's message, References carry the whole chain.
     assert_eq!(second["in_reply_to"], json!("b1@cust.test"));
     assert!(second["mail_references"].as_str().unwrap().contains(to_ada["message_id"].as_str().unwrap()), "{second:?}");

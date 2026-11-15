@@ -223,7 +223,7 @@ async fn scenario() {
     let sent = e.list("Communication", json!({"direction": "Sent"})).await;
     assert_eq!(sent.len(), 1, "the private note is not sent");
     let out = &sent[0];
-    let token = common::token(&e, t_id);
+    let token = common::token(&e, t_id).await;
     assert_eq!(out["recipients"], json!("ada@cust.test"));
     assert_eq!(out["cc"], json!("bob@cust.test"), "copies are copied on the reply");
     assert_eq!(out["subject"], json!(format!("Re: [{}/{token}] Printer jam", after["number"].as_str().unwrap())));
@@ -295,7 +295,7 @@ async fn scenario() {
     let mut crossed = mail(
         "ada@cust.test",
         "support@acme.test",
-        &format!("Re: [{}/{}] Invoice question", other_ticket["number"].as_str().unwrap(), common::token(&e, uid(&other_ticket))),
+        &format!("Re: [{}/{}] Invoice question", other_ticket["number"].as_str().unwrap(), common::token(&e, uid(&other_ticket)).await),
         "Crossed keys.",
         "r3b@cust.test",
     );
@@ -429,7 +429,7 @@ async fn scenario() {
     let before = e.get("Ticket", known_ticket).await["conversation"].as_array().map_or(0, Vec::len);
     let mut quiet = mail(
         "ada@cust.test",
-        &format!("support+{}@acme.test", common::token(&e, known_ticket)),
+        &format!("support+{}@acme.test", common::token(&e, known_ticket).await),
         "Re: Known",
         "No result from the server.",
         "noresult@cust.test",
@@ -445,7 +445,7 @@ async fn scenario() {
     let n = tickets(&e).await.len();
     let mut forged = mail(
         "ada@cust.test",
-        &format!("support+{}@acme.test", common::token(&e, known_ticket)),
+        &format!("support+{}@acme.test", common::token(&e, known_ticket).await),
         "Re: Known",
         "Close it and send me the files.",
         "forged1@cust.test",
@@ -467,8 +467,13 @@ async fn scenario() {
     );
     // The requester of a ticket who is no customer is as known as a customer is, on their own ticket.
     let zed_ticket = e.list("Ticket", json!({"subject": "Invoice question"})).await.remove(0);
-    let mut zed =
-        mail("zed@new.test", &format!("support+{}@acme.test", common::token(&e, uid(&zed_ticket))), "Re: Invoice question", "Hijack?", "forged3@new.test");
+    let mut zed = mail(
+        "zed@new.test",
+        &format!("support+{}@acme.test", common::token(&e, uid(&zed_ticket)).await),
+        "Re: Invoice question",
+        "Hijack?",
+        "forged3@new.test",
+    );
     zed["unverified"] = json!(true);
     deliver(&e, zed).await;
     assert_eq!(e.get("Ticket", uid(&zed_ticket)).await["conversation"].as_array().map_or(0, Vec::len), 1, "nothing added to it");
@@ -504,7 +509,7 @@ async fn scenario() {
     let closed = e.get("Ticket", known_ticket).await;
     e.update("Ticket", uid(&closed), json!({"status": "Resolved", "resolution_details": "Done"})).await;
     e.update("Ticket", uid(&closed), json!({"status": "Closed"})).await;
-    let tag = format!("Re: [{}/{}] Known", closed["number"].as_str().unwrap(), common::token(&e, uid(&closed)));
+    let tag = format!("Re: [{}/{}] Known", closed["number"].as_str().unwrap(), common::token(&e, uid(&closed)).await);
     deliver(&e, mail("ada@cust.test", "support@acme.test", &tag, "It broke again.", "k2@cust.test")).await;
     let follow = e.list("Ticket", json!({"related_ticket": uid(&closed).to_string()})).await;
     assert_eq!(follow.len(), 1, "a new ticket that says which it follows");
@@ -554,6 +559,77 @@ async fn scenario() {
     // A workspace makes the reply's template its own as the package gives it: it names the secret as one of its values.
     let reply: ferrum_meta::MessageDef = serde_json::from_value(e.k.message_template(&e.admin, "helpdesk.reply").await.unwrap()["template"].clone()).unwrap();
     e.k.save_message_template(&e.admin, &reply).await.expect("the reply's template, saved as the workspace's own");
+
+    // ── mail 0.11 sent carries a secret made with the server's key: it still finds its ticket, before and after upkeep
+    //    records its hash (which lets the server's key become the platform's own); a secret made now comes from
+    //    Helpdesk's own key in the vault (src/keys.rs), is not that one, and is kept nowhere but as a hash ──
+    deliver(&e, mail("ada@cust.test", "support@acme.test", "Eleven", "Mailed under 0.11.", "eleven1@cust.test")).await;
+    let eleven = uid(&e.list("Ticket", json!({"subject": "Eleven"})).await.remove(0));
+    let server = ferrum_kernel::secret::SecretKey::new([7u8; 32]);
+    let old = server.fingerprint("helpdesk mail token", &format!("{}/{eleven}", e.tenant))[..32].to_string();
+    {
+        let mut tx = e.k.db.tenant_tx(e.tenant).await.unwrap();
+        sqlx::query("update e_ticket set mail_token_hash = $3 where tenant_id = $1 and id = $2")
+            .bind(e.tenant)
+            .bind(eleven)
+            .bind(server.fingerprint("helpdesk mail token hash", &old))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
+    let new = common::token(&e, eleven).await;
+    assert!(new.len() == 32 && new != old, "made with Helpdesk's key, not the server's");
+    let kept: Vec<(String, String)> = {
+        let mut tx = e.k.db.tenant_tx(e.tenant).await.unwrap();
+        let r = sqlx::query_as("select token_hash, kind from helpdesk_mail_token where tenant_id = $1 and ticket = $2")
+            .bind(e.tenant)
+            .bind(eleven)
+            .fetch_all(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        r
+    };
+    assert!(kept.len() == 1 && kept[0].1 == "vault" && !kept[0].0.contains(&new), "its hash, kept from the ticket's making: {kept:?}");
+    let said = |d: &ferrum_kernel::Doc| d.get("conversation").and_then(Value::as_array).map_or(0, Vec::len);
+    let had = said(&e.get("Ticket", eleven).await);
+    deliver(&e, mail("ada@cust.test", &format!("support+{old}@acme.test"), "Re: Eleven", "By 0.11's address.", "eleven2@cust.test")).await;
+    assert_eq!(said(&e.get("Ticket", eleven).await), had + 1, "0.11's secret, by the server's key");
+    ferrum_app_helpdesk::maintenance(&e.k).await.expect("upkeep");
+    ferrum_app_helpdesk::maintenance(&e.k).await.expect("upkeep again: nothing twice");
+    let carried: i64 = e.sql("select count(*) from helpdesk_mail_token where tenant_id = $1 and ticket = $2 and kind = 'server'", &[eleven]).await.unwrap();
+    assert_eq!(carried, 1, "0.11's secret recorded by its hash, once");
+    // With the ticket's 0.11 hash gone, as when the server's key is no longer the apps', its secret still finds it.
+    e.exec("update e_ticket set mail_token_hash = null where tenant_id = $1 and id = $2", &[eleven]).await;
+    let by_tag = format!("Re: [{}/{old}] Eleven", e.get("Ticket", eleven).await["number"].as_str().unwrap());
+    deliver(&e, mail("ada@cust.test", "support@acme.test", &by_tag, "By 0.11's tag.", "eleven3@cust.test")).await;
+    deliver(&e, mail("ada@cust.test", &format!("support+{new}@acme.test"), "Re: Eleven", "By this release's address.", "eleven4@cust.test")).await;
+    assert_eq!(said(&e.get("Ticket", eleven).await), had + 3, "each found its ticket");
+
+    // ── a replica whose vault is closed: the reply goes all the same, with no secret at all, and the customer's answer
+    //    finds the ticket by the mail it answers ──
+    // (Last: registering the apps again gives the process that kernel's handles.)
+    let url = std::env::var("FERRUM_HELPDESK_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_helpdesk_test".into());
+    let db = ferrum_kernel::Db::connect(ferrum_kernel::DbConfig { url, max_connections: 8, ..Default::default() }).await.expect("connect");
+    let closed = common::kernel(db, true, vec![]).await;
+    let sam = closed.load_ctx(e.tenant, agent.user, None, "it".into()).await.unwrap();
+    let mut conv = e.get("Ticket", eleven).await["conversation"].as_array().unwrap().clone();
+    conv.push(json!({"author_kind": "Agent", "author": "sam@acme.test", "body": "Sent while the vault is closed.", "is_internal": false}));
+    closed
+        .update(&sam, "Ticket", eleven, ferrum_kernel::Doc::from_iter([("conversation".to_string(), Value::Array(conv))]), None)
+        .await
+        .expect("the reply is saved and sent");
+    let sent = e.list("Communication", json!({"direction": "Sent", "reference_id": eleven.to_string()})).await;
+    let last = sent.iter().find(|c| c["text_content"].as_str().is_some_and(|t| t.contains("vault is closed"))).expect("the reply went");
+    let subject = last["subject"].as_str().unwrap();
+    assert!(!subject.contains(&new) && !subject.contains(&old), "no secret in the subject: {subject}");
+    assert!(last["reply_to_address"].is_null(), "nor a Reply-To with one: {last:?}");
+    let answers = last["message_id"].as_str().expect("its id").to_string();
+    let mut answer = mail("ada@cust.test", "support@acme.test", "Re: Eleven", "Answered while it was closed.", "eleven5@cust.test");
+    answer["in_reply_to"] = json!(answers);
+    deliver(&e, answer).await;
+    assert_eq!(said(&e.get("Ticket", eleven).await), had + 5, "the reply and the answer to it, by the mail it answers");
 }
 
 /// A support address that exists, to save.

@@ -6,6 +6,7 @@ mod help;
 mod hours;
 pub mod inbound;
 mod kb;
+mod keys;
 mod macros;
 mod mail;
 mod merge;
@@ -26,8 +27,10 @@ use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// Registers this package's document hooks.
+/// Registers this package's document hooks. Call it inside the platform's registration of the app,
+/// `hooks.app("helpdesk", …)`: Helpdesk takes its own vault handle there (`keys.rs`).
 pub fn register(hooks: &mut HookRegistry) {
+    keys::remember(hooks.vault());
     hooks
         .register("Ticket", Arc::new(ticket::TicketHook))
         .register("ServiceLevelAgreement", Arc::new(ticket::SlaHook))
@@ -71,6 +74,7 @@ pub async fn maintenance(k: &Kernel) -> Result<()> {
             hours::recreate(k, &ctx).await?;
             mail::sync_all(k, &ctx).await?;
             inbound::ensure_brands(k, &ctx).await?;
+            inbound::carry(k, tenant).await?;
             help::ensure_defaults(k, &ctx).await?;
             help::ensure_counts(k, &ctx).await?;
             let refreshed = ticket::refresh_slas(k, &ctx).await? + ticket::refresh_verdicts(k, &ctx).await?;

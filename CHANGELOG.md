@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.12.0
+
+Helpdesk 0.4.0. Needs a platform with the vault (Ferrum `8e6b1f0` or later). A database change
+(`helpdesk/002_mail_tokens.sql`: the table `helpdesk_mail_token`) is applied at startup; nothing existing moves. No
+interface change.
+
+- **The secret in a ticket's mail comes from Helpdesk's own key.** 0.11 made it with the server's key
+  (`settings.secret_key`), which the platform is making its own. It is now made from the ticket with a key derived from
+  Helpdesk's key in the workspace's vault (32 hexadecimal digits, as before), the same each time while that key's version
+  stands, and kept nowhere. What finds the ticket by it is a SHA-256 of the workspace and the secret, recorded when the
+  ticket is made and again as mail carrying it goes (`helpdesk_mail_token`): after Helpdesk's key is rotated (`ferrum task vault_rotate level:owner …
+  owner:helpdesk`) the next mail carries a new secret, and mail sent before still finds its ticket by its own. The
+  ticket's `mail_token_hash` (0.11's keyed hash) is no longer written.
+- **Mail already sent keeps finding its ticket.** A secret 0.11 made with the server's key is still matched with that
+  key, and upkeep records its hash for every ticket 0.11 kept one for (with each retired key too), once, so that it keeps
+  matching when the server's key is no longer the apps' to use. The secret releases before 0.11.0 kept in the ticket's
+  `mail_token` column is still read for it. The build before this one, should it run on the same database, matches the
+  secrets it made as before, and the mail this release sends by the mail it answers.
+- **When the vault is closed** (an installation with nothing to open its root with), mail about a ticket goes without a
+  secret, as on a server without a key: a customer's answer finds the ticket by the mail it answers. No secret is made
+  another way.
+- **A sandbox** has keys of its own: the hashes copied with it cover the live workspace's id, so the secrets in the live
+  workspace's mail find nothing in the copy; the copy's own mail carries its own secrets.
+- **A workspace moved to another installation**: its recorded hashes travel with it, so mail already sent keeps finding
+  its tickets there; the secrets made from then on come from the new installation's vault.
+- **For other apps' tests**: Helpdesk takes its vault handle as it registers, so register it as the server does,
+  `hooks.app("helpdesk", &[], ferrum_app_helpdesk::register)`; called outside that, the kernel refuses to boot.
+  `inbound::ticket_token` is now asynchronous and says when the vault gives no secret.
+- **Tests.** Every suite opens the vault and registers the apps as the server does. A new part of the inbound suite: a
+  secret is made with Helpdesk's key, is not 0.11's, and is kept only as a hash; 0.11's secret finds its ticket by the
+  server's key and, once upkeep has recorded it (once), without it, by address and by tag; a replica whose vault is
+  closed sends the reply without a secret, and the answer finds the ticket by the mail it answers.
+
 ## 0.11.0
 
 Helpdesk 0.3.0. A ticket no longer carries the secret that lets a reply into it.
