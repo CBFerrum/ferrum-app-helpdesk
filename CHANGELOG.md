@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.11.0
+
+Helpdesk 0.3.0. A ticket no longer carries the secret that lets a reply into it.
+
+- **The secret in a ticket's mail is made, not kept.** The secret in the subject tag (`[TKT-2026-000123/…]`) and in the
+  Reply-To (`support+…@`) of the mail sent about a ticket was a field of the ticket (`mail_token`), so whoever could
+  read tickets, through the API, an export, a report or the audit trail, could write a reply into any of them as its
+  customer. It is now made from the ticket with the server's key (the same each time, 32 letters and digits) and kept
+  nowhere. The ticket keeps a keyed hash of it (`mail_token_hash`, hidden), by which a reply written to the tagged
+  address finds it; a subject tag is checked against the ticket whose number it gives. After the server's key changes,
+  mail sent before still finds its ticket by its tag (the key being rotated out makes its secret) and by the mail it
+  answers. A server without a key (development only) gives no secret: replies are then matched by the mail they
+  answer.
+- **Upgrading.** Nothing to do. Mail sent before carries the secrets the tickets kept: their column stays in the
+  database, no longer a field (so no longer shown), and a reply carrying one still finds its ticket. A ticket keeps the
+  hash from its next save on, which every reply that is mailed makes first. The reply's template (`helpdesk.reply`)
+  names the secret as one of its values, `values.token`; a workspace's own copy that names `doc.mail_token` keeps
+  sending as before, and when it is next edited the check says the ticket has no such field, to be written
+  `values.token`. A server of the release before, still running during the upgrade, gives the tickets it makes a kept
+  secret again, which this release still reads.
+- **What still carries it:** the mail itself, and the Mail app's copy of what was sent (its subject and Reply-To), which
+  whoever may read the sent mail reads.
+- **Tests.** Every suite's kernel has a server key, as a production server must.
+
 ## 0.10.3
 
 The interface gains the screens that 0.10.2 listed, built with Ferrum-Frontend (its checkout at `gapui/ferrum/web`). Nothing is changed on the server.
