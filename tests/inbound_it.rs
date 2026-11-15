@@ -187,7 +187,9 @@ async fn scenario() {
         (json!(support.to_string()), json!("It jams on page two."), json!("bob@cust.test"))
     );
     assert!(t["assigned_to"].as_str().is_some_and(|a| a.ends_with("@acme.test")), "the team's rule picked an agent: {}", t["assigned_to"]);
-    assert!(t["mail_token"].as_str().is_some_and(|k| k.len() >= 12) && t["channel_address"].is_string());
+    assert!(t["channel_address"].is_string());
+    // The secret in the mail sent about it is no field of the ticket: what reads tickets cannot write as the customer.
+    assert!(t.get("mail_token").is_none(), "the ticket shows the secret of its mail: {:?}", t.get("mail_token"));
     let msgs = t["conversation"].as_array().unwrap();
     assert_eq!(msgs.len(), 1, "the message carries the files and the mail's id");
     assert_eq!(
@@ -221,10 +223,28 @@ async fn scenario() {
     let sent = e.list("Communication", json!({"direction": "Sent"})).await;
     assert_eq!(sent.len(), 1, "the private note is not sent");
     let out = &sent[0];
-    let token = after["mail_token"].as_str().unwrap().to_string();
+    let token = common::token(&e, t_id);
     assert_eq!(out["recipients"], json!("ada@cust.test"));
     assert_eq!(out["cc"], json!("bob@cust.test"), "copies are copied on the reply");
     assert_eq!(out["subject"], json!(format!("Re: [{}/{token}] Printer jam", after["number"].as_str().unwrap())));
+    // The secret the mail carries is the ticket's own and no part of it: not its API answer, not what an export writes of
+    // it (the platform's export is each record read whole, as the system), not its audit trail.
+    let system = ferrum_kernel::Ctx::system(e.tenant, e.k.registry.schema(e.tenant).await.unwrap());
+    for doc in [e.k.get(&agent, "Ticket", t_id, false).await.unwrap(), e.k.get(&system, "Ticket", t_id, false).await.unwrap()] {
+        assert!(!Value::Object(doc).to_string().contains(&token), "the ticket shows the secret of its mail");
+    }
+    let all = e.k.list(&system, "Ticket", &ferrum_kernel::ListQuery::default()).await.unwrap().rows;
+    assert!(!all.is_empty() && !serde_json::to_string(&all).unwrap().contains(&token), "a list of tickets shows it");
+    let trail: Vec<String> = {
+        let mut tx = e.k.db.tenant_tx(e.tenant).await.unwrap();
+        sqlx::query_scalar("select coalesce(diff::text, '') from audit_event where tenant_id = $1 and entity = 'Ticket' and record_id = $2")
+            .bind(e.tenant)
+            .bind(t_id)
+            .fetch_all(&mut *tx)
+            .await
+            .unwrap()
+    };
+    assert!(!trail.is_empty() && trail.iter().all(|d| !d.contains(&token)), "the ticket's audit trail holds it: {trail:?}");
     assert_eq!(
         out["reply_to_address"],
         json!(format!("Acme Support <support+{token}@acme.test>")),
@@ -275,7 +295,7 @@ async fn scenario() {
     let mut crossed = mail(
         "ada@cust.test",
         "support@acme.test",
-        &format!("Re: [{}/{}] Invoice question", other_ticket["number"].as_str().unwrap(), other_ticket["mail_token"].as_str().unwrap()),
+        &format!("Re: [{}/{}] Invoice question", other_ticket["number"].as_str().unwrap(), common::token(&e, uid(&other_ticket))),
         "Crossed keys.",
         "r3b@cust.test",
     );
@@ -409,7 +429,7 @@ async fn scenario() {
     let before = e.get("Ticket", known_ticket).await["conversation"].as_array().map_or(0, Vec::len);
     let mut quiet = mail(
         "ada@cust.test",
-        &format!("support+{}@acme.test", e.get("Ticket", known_ticket).await["mail_token"].as_str().unwrap()),
+        &format!("support+{}@acme.test", common::token(&e, known_ticket)),
         "Re: Known",
         "No result from the server.",
         "noresult@cust.test",
@@ -425,7 +445,7 @@ async fn scenario() {
     let n = tickets(&e).await.len();
     let mut forged = mail(
         "ada@cust.test",
-        &format!("support+{}@acme.test", e.get("Ticket", known_ticket).await["mail_token"].as_str().unwrap()),
+        &format!("support+{}@acme.test", common::token(&e, known_ticket)),
         "Re: Known",
         "Close it and send me the files.",
         "forged1@cust.test",
@@ -447,13 +467,8 @@ async fn scenario() {
     );
     // The requester of a ticket who is no customer is as known as a customer is, on their own ticket.
     let zed_ticket = e.list("Ticket", json!({"subject": "Invoice question"})).await.remove(0);
-    let mut zed = mail(
-        "zed@new.test",
-        &format!("support+{}@acme.test", zed_ticket["mail_token"].as_str().unwrap()),
-        "Re: Invoice question",
-        "Hijack?",
-        "forged3@new.test",
-    );
+    let mut zed =
+        mail("zed@new.test", &format!("support+{}@acme.test", common::token(&e, uid(&zed_ticket))), "Re: Invoice question", "Hijack?", "forged3@new.test");
     zed["unverified"] = json!(true);
     deliver(&e, zed).await;
     assert_eq!(e.get("Ticket", uid(&zed_ticket)).await["conversation"].as_array().map_or(0, Vec::len), 1, "nothing added to it");
@@ -489,7 +504,7 @@ async fn scenario() {
     let closed = e.get("Ticket", known_ticket).await;
     e.update("Ticket", uid(&closed), json!({"status": "Resolved", "resolution_details": "Done"})).await;
     e.update("Ticket", uid(&closed), json!({"status": "Closed"})).await;
-    let tag = format!("Re: [{}/{}] Known", closed["number"].as_str().unwrap(), closed["mail_token"].as_str().unwrap());
+    let tag = format!("Re: [{}/{}] Known", closed["number"].as_str().unwrap(), common::token(&e, uid(&closed)));
     deliver(&e, mail("ada@cust.test", "support@acme.test", &tag, "It broke again.", "k2@cust.test")).await;
     let follow = e.list("Ticket", json!({"related_ticket": uid(&closed).to_string()})).await;
     assert_eq!(follow.len(), 1, "a new ticket that says which it follows");
@@ -512,6 +527,33 @@ async fn scenario() {
         erased[0]
     );
     assert!(erased[0]["body"].is_null() && erased[0]["payload"].is_null(), "the held mail's words go with the sender: {:?}", erased[0]);
+
+    // ── mail sent before 0.11.0 carries the secret the ticket kept then (its column stays): it still finds the ticket ──
+    // Ada has written more than the hourly limit by now: none for what follows.
+    e.update("SupportSettings", settings, json!({"inbound_per_hour": 0})).await;
+    deliver(&e, mail("ada@cust.test", "support@acme.test", "Old printer", "Before the upgrade.", "old1@cust.test")).await;
+    let old = e.list("Ticket", json!({"subject": "Old printer"})).await.remove(0);
+    {
+        let mut tx = e.k.db.tenant_tx(e.tenant).await.unwrap();
+        sqlx::raw_sql("alter table e_ticket add column if not exists mail_token text").execute(&mut *tx).await.unwrap();
+        sqlx::query("update e_ticket set mail_token = 'k3j9x2m1q7aa8888' where tenant_id = $1 and id = $2")
+            .bind(e.tenant)
+            .bind(uid(&old))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
+    let said = |d: &ferrum_kernel::Doc| d.get("conversation").and_then(Value::as_array).map_or(0, Vec::len);
+    let had = said(&e.get("Ticket", uid(&old)).await);
+    deliver(&e, mail("ada@cust.test", "support+k3j9x2m1q7aa8888@acme.test", "Re: Old printer", "By the old address.", "old2@cust.test")).await;
+    let by_tag = format!("Re: [{}/k3j9x2m1q7aa8888] Old printer", old["number"].as_str().unwrap());
+    deliver(&e, mail("ada@cust.test", "support@acme.test", &by_tag, "By the old tag.", "old3@cust.test")).await;
+    assert_eq!(said(&e.get("Ticket", uid(&old)).await), had + 2, "both found the ticket by the secret it had");
+    assert!(e.list("Ticket", json!({"subject": "Re: Old printer"})).await.is_empty(), "neither opened a ticket of its own");
+    // A workspace makes the reply's template its own as the package gives it: it names the secret as one of its values.
+    let reply: ferrum_meta::MessageDef = serde_json::from_value(e.k.message_template(&e.admin, "helpdesk.reply").await.unwrap()["template"].clone()).unwrap();
+    e.k.save_message_template(&e.admin, &reply).await.expect("the reply's template, saved as the workspace's own");
 }
 
 /// A support address that exists, to save.

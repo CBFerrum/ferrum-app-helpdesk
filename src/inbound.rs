@@ -11,6 +11,10 @@
 //! * A reply is matched to its ticket by the Message-ID it answers (In-Reply-To, References), then by the ticket's
 //!   secret in the address it was written to (`support+<secret>@…`, the Reply-To of what Helpdesk sends), and
 //!   last by the ticket's number and secret in the subject tag the app puts in outgoing mail. Never by subject text alone.
+//!   The secret is made from the ticket with the server's key ([`ticket_token`]) and kept nowhere: whoever reads
+//!   tickets, through the API, an export, a report or the audit trail, cannot write as the customer. The ticket keeps a
+//!   keyed hash of it (`mail_token_hash`) to be found by it; mail sent before 0.11.0 carries the secret those releases
+//!   kept in the ticket's `mail_token` column, which is still read for it.
 //! * Mail the mail server could not verify (`x-ferrum-auth: unverified`) from a known customer, or from the requester
 //!   or a copy of the ticket it answers, is held for review when Support Settings say (the default): a forged
 //!   sender must not read or steer a ticket.
@@ -24,6 +28,7 @@
 use crate::site::customer_of;
 use async_trait::async_trait;
 use ferrum_domain::util::{b, id, rows, s, sys};
+use ferrum_kernel::secret::SecretKey;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, HookCtx, Kernel, Result, Tx};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -141,9 +146,35 @@ pub fn tag(subject: &str) -> Option<(String, String)> {
     None
 }
 
-/// A new secret for a ticket's subject tag.
-pub fn new_token() -> String {
-    Uuid::new_v4().simple().to_string()[..16].to_string()
+/// The secret in the subject tag and the Reply-To of the mail sent about a ticket: made from the ticket with the
+/// server's key, so it is the same every time and nobody without the key can make it, and kept nowhere. None without
+/// the server's key: replies are then matched by the mail they answer alone.
+pub fn ticket_token(k: &Kernel, tenant: Uuid, ticket: Uuid) -> Option<String> {
+    k.settings.secret_key.as_ref().map(|key| token_with(key, tenant, ticket))
+}
+
+fn token_with(key: &SecretKey, tenant: Uuid, ticket: Uuid) -> String {
+    key.fingerprint("helpdesk mail token", &format!("{tenant}/{ticket}"))[..32].to_string()
+}
+
+/// What the ticket keeps to be found by its secret: a keyed hash of it (`mail_token_hash`).
+pub fn token_hash(key: &SecretKey, token: &str) -> String {
+    key.fingerprint("helpdesk mail token hash", token)
+}
+
+/// The server's key, then the keys being rotated out: mail sent before a rotation carries what an older one made.
+fn keys(k: &Kernel) -> impl Iterator<Item = &SecretKey> {
+    k.settings.secret_key.iter().chain(&k.settings.retired_secret_keys)
+}
+
+/// Whether the ticket table still has the column 0.10 and earlier kept each ticket's secret in (`mail_token`), which
+/// mail they sent carries: a database they wrote to has it, a new one never had it.
+async fn kept_tokens(tx: &mut Tx) -> Result<bool> {
+    Ok(sqlx::query_scalar(
+        "select exists (select 1 from information_schema.columns where table_schema = current_schema() and table_name = 'e_ticket' and column_name = 'mail_token')",
+    )
+    .fetch_one(&mut **tx)
+    .await?)
 }
 
 fn same(a: &str, b: &str) -> bool {
@@ -219,7 +250,7 @@ async fn policy(k: &Kernel, sctx: &Ctx, tx: &mut Tx) -> Result<Policy> {
 /// The ticket a mail answers, by the strongest key it carries: the Message-ID it answers (of mail we sent, or of
 /// what the customer sent before), the ticket Mail already threaded it onto, the secret in the address it was written
 /// to, and last the number and secret in its subject. A merged ticket leads to the one that stayed.
-async fn matching_ticket(tx: &mut Tx, tenant: Uuid, mail: &Inbound) -> Result<Option<Uuid>> {
+async fn matching_ticket(k: &Kernel, tx: &mut Tx, tenant: Uuid, mail: &Inbound) -> Result<Option<Uuid>> {
     let mut found = None;
     let wanted: Vec<String> = mail.in_reply_to.iter().chain(mail.references.iter()).map(|m| m.trim().trim_matches(['<', '>']).to_string()).collect();
     if !wanted.is_empty() {
@@ -233,18 +264,34 @@ async fn matching_ticket(tx: &mut Tx, tenant: Uuid, mail: &Inbound) -> Result<Op
     if found.is_none()
         && let Some(token) = mail.token.as_deref().filter(|t| (8..=64).contains(&t.len()) && t.chars().all(|c| c.is_ascii_alphanumeric()))
     {
-        found =
-            sqlx::query_scalar("select id from e_ticket where tenant_id = $1 and mail_token = $2").bind(tenant).bind(token).fetch_optional(&mut **tx).await?;
+        let hashes: Vec<String> = keys(k).map(|key| token_hash(key, token)).collect();
+        found = sqlx::query_scalar("select id from e_ticket where tenant_id = $1 and mail_token_hash = any($2) limit 1")
+            .bind(tenant)
+            .bind(&hashes)
+            .fetch_optional(&mut **tx)
+            .await?;
+        if found.is_none() && kept_tokens(tx).await? {
+            found = sqlx::query_scalar("select id from e_ticket where tenant_id = $1 and mail_token = $2")
+                .bind(tenant)
+                .bind(token)
+                .fetch_optional(&mut **tx)
+                .await?;
+        }
     }
     if found.is_none()
         && let Some((number, token)) = tag(&mail.subject)
     {
-        let row: Option<(Uuid, Option<String>)> = sqlx::query_as("select id, mail_token from e_ticket where tenant_id = $1 and number = $2")
-            .bind(tenant)
-            .bind(number)
-            .fetch_optional(&mut **tx)
-            .await?;
-        found = row.filter(|(_, stored)| stored.as_deref().is_some_and(|t| same(t, &token))).map(|(i, _)| i);
+        let ticket: Option<Uuid> =
+            sqlx::query_scalar("select id from e_ticket where tenant_id = $1 and number = $2").bind(tenant).bind(number).fetch_optional(&mut **tx).await?;
+        if let Some(t) = ticket {
+            let mut ours = keys(k).any(|key| same(&token_with(key, tenant, t), &token));
+            if !ours && kept_tokens(tx).await? {
+                let kept: Option<String> =
+                    sqlx::query_scalar("select mail_token from e_ticket where tenant_id = $1 and id = $2").bind(tenant).bind(t).fetch_one(&mut **tx).await?;
+                ours = kept.is_some_and(|kept| same(&kept, &token));
+            }
+            found = ours.then_some(t);
+        }
     }
     for _ in 0..10 {
         let Some(t) = found else { break };
@@ -356,7 +403,7 @@ async fn run(k: &Kernel, ctx: &Ctx, tx: &mut Tx, mail: &Inbound, held: Option<Uu
         }
     }
     let name = mail.from_name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| from.split('@').next().unwrap_or_default().to_string());
-    let matched = matching_ticket(tx, tenant, mail).await?;
+    let matched = matching_ticket(k, tx, tenant, mail).await?;
     let mut existing = None;
     if let Some(t) = matched {
         let status: Option<String> =

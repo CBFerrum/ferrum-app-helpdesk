@@ -207,6 +207,11 @@ impl Env {
     }
 }
 
+/// The secret in the mail sent about a ticket, as the server makes it.
+pub fn token(e: &Env, ticket: Uuid) -> String {
+    ferrum_app_helpdesk::inbound::ticket_token(&e.k, e.tenant, ticket).expect("the server has a key")
+}
+
 /// Runs a suite's scenario the way the server runs: a thread with room for unoptimized hook chains.
 pub fn run<F: std::future::Future<Output = ()> + Send + 'static>(scenario: F) {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().thread_stack_size(16 << 20).build().unwrap();

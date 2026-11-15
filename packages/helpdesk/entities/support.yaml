@@ -241,7 +241,7 @@
     - {name: merged_into, type: link, to: Ticket, read_only: true, no_copy: true, in_filter: true, label: Merged Into, description: "Closed as a duplicate of this ticket, which holds its conversation now; a reply to this one lands there"}
     - {name: merged_at, type: datetime, read_only: true, no_copy: true}
     - {name: merged_by, type: email, read_only: true, no_copy: true}
-    - {name: mail_token, type: data, read_only: true, no_copy: true, hidden: true, index: true, description: "A secret in the subject of the mail sent about this ticket, so a reply is matched to it by something nobody can guess"}
+    - {name: mail_token_hash, type: data, read_only: true, no_copy: true, hidden: true, index: true, description: "What finds the ticket by the secret in the subject and Reply-To of the mail sent about it: the secret is made from the ticket with the server's key and kept nowhere, this is a keyed hash of it, which nobody can turn back into the secret"}
     - {name: channel_address, type: link, to: SupportAddress, read_only: true, no_copy: true, in_filter: true, label: Support Address, description: "The support address the customer wrote to"}
     - {name: cc, type: text, no_copy: true, label: Copied, description: "Addresses copied on the customer's mail; replies to the customer are copied to them too"}
     - {name: related_ticket, type: link, to: Ticket, read_only: true, no_copy: true, label: Follows Up, description: "The closed ticket this one continues: mail arrived on a ticket that was closed"}
