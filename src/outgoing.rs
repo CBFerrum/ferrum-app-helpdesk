@@ -266,8 +266,12 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
             .and_then(|r| r.first().and_then(|d| id(d, "id"))),
         None => None,
     };
-    // Answers come back to the support address with the ticket's secret in it.
-    let token = crate::inbound::ticket_token(hc.kernel, hc.ctx.tenant, ticket);
+    // Answers come back to the support address with the ticket's secret in it, found again by its hash. (In the save's
+    // transaction: the vault answers on a second connection.)
+    let token = crate::inbound::ticket_token(hc.kernel, hc.ctx.tenant, ticket).await?;
+    if let Some(t) = &token {
+        crate::inbound::sent_with(hc.tx, hc.ctx.tenant, ticket, t, "vault").await?;
+    }
     let reply_to =
         if through_mail { address.as_ref().and_then(|a| s(a, "address")).zip(token.as_deref()).and_then(|(a, t)| crate::mail::tagged(a, t)) } else { None };
     let reply_mailbox = reply_to.as_ref().map(|a| mailbox(brand_name.as_deref(), a));

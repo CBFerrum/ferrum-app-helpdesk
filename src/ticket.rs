@@ -453,13 +453,8 @@ impl DocHook for TicketHook {
             };
         }
 
-        // The secret in the mail sent about the ticket is made from it and kept nowhere; the ticket keeps a keyed hash
-        // of it, by which a reply written to the support address with it finds the ticket (inbound.rs).
-        if let (Some(key), Some(t)) = (hc.kernel.settings.secret_key.as_ref(), id(doc, "id"))
-            && let Some(token) = crate::inbound::ticket_token(hc.kernel, hc.ctx.tenant, t)
-        {
-            set(doc, "mail_token_hash", crate::inbound::token_hash(key, &token));
-        }
+        // (The secret in the mail sent about the ticket is kept nowhere: its hash is recorded when the ticket is made and
+        // as mail goes, in helpdesk_mail_token. `mail_token_hash`, which 0.11 kept here, is no longer written.)
 
         // New messages: author and server time (replies to an existing ticket cannot be backdated).
         let known: HashSet<String> =
@@ -608,6 +603,13 @@ impl DocHook for TicketHook {
     /// (automations cannot address the user behind an email field).
     async fn after_save(&self, hc: &mut HookCtx<'_>, doc: &Doc, old: Option<&Doc>) -> Result<()> {
         let Some(ticket) = id(doc, "id") else { return Ok(()) };
+        // A new ticket is findable by its secret from the start, as it was when the ticket kept a hash of it: mail sent
+        // about it records the secret again (a newer one after Helpdesk's key is rotated).
+        if old.is_none()
+            && let Some(token) = crate::inbound::ticket_token(hc.kernel, hc.ctx.tenant, ticket).await?
+        {
+            crate::inbound::sent_with(hc.tx, hc.ctx.tenant, ticket, &token, "vault").await?;
+        }
         let known: HashSet<String> = old.map(|o| rows(o, "conversation").iter().filter_map(|r| s(r, "id").map(str::to_string)).collect()).unwrap_or_default();
         let fresh: Vec<Doc> = rows(doc, "conversation").into_iter().filter(|m| !s(m, "id").is_some_and(|i| known.contains(i))).collect();
         outgoing::dispatch(hc, doc, ticket, &fresh).await?;

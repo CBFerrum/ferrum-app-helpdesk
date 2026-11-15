@@ -75,8 +75,16 @@ fn row<'a>(report: &'a Value, key: &str, value: &str) -> Option<&'a Value> {
 
 async fn fresh_kernel() -> Arc<Kernel> {
     let url = std::env::var("FERRUM_HELPDESK_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_helpdesk_test".into());
-    let db = Db::connect(DbConfig { url, max_connections: 10, ..Default::default() }).await.expect("connect");
-    sqlx::raw_sql("drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
+    let db = Db::connect(DbConfig { url: url.clone(), max_connections: 10, ..Default::default() }).await.expect("connect");
+    sqlx::raw_sql("drop schema if exists vault cascade; drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
+    // The vault, opened as a server opens it (its credential slot, from the address's password), once migrated.
+    let opener = ferrum_kernel::vault::Opener {
+        database_url: url,
+        file: "/nonexistent/root.key".into(),
+        kdf: ferrum_kernel::vault::Kdf { m_kib: 64, t: 1, p: 1 },
+        ..Default::default()
+    };
+    ferrum_kernel::vault::open(&db, opener, false).await.expect("the vault");
     let mut packages = ferrum_domain::packages().expect("platform packages");
     packages.extend(ferrum_app_erp::packages().expect("ERP's packages"));
     packages.extend(ferrum_app_helpdesk::packages().expect("app packages"));
@@ -87,11 +95,12 @@ async fn fresh_kernel() -> Arc<Kernel> {
     for source in ferrum_app_erp::reports() {
         ferrum_domain::reports::add_source(source);
     }
-    ferrum_app_helpdesk::register(&mut hooks);
+    // As the server registers it: as itself, so that it takes its own vault handle.
+    hooks.app("helpdesk", &[], ferrum_app_helpdesk::register);
     for source in ferrum_app_helpdesk::reports() {
         ferrum_domain::reports::add_source(source);
     }
-    // The server's key, as production's: the secret in a ticket's mail is made with it.
+    // The server's key, as production's (0.11 made the secret in a ticket's mail with it; it is now Helpdesk's own).
     let settings = KernelSettings {
         secret_key: Some(ferrum_kernel::secret::SecretKey::new([7u8; 32])),
         public_url: Some("https://help.example.test".into()),
@@ -1109,7 +1118,7 @@ async fn replies_and_files(k: &Arc<Kernel>) {
     drain(k).await;
     let mails = sent_to("ada@shop.test");
     assert_eq!(mails.len(), 1, "{mails:?}");
-    let token = ferrum_app_helpdesk::inbound::ticket_token(&t.k, t.ctx.tenant, ticket).unwrap();
+    let token = ferrum_app_helpdesk::inbound::ticket_token(&t.k, t.ctx.tenant, ticket).await.unwrap().expect("the vault is open");
     assert_eq!(mails[0].1, format!("Re: [{number}/{token}] Printer jam <urgent>"), "the subject names the ticket and carries its secret");
     let html = &mails[0].2;
     assert!(html.contains("<strong>rear tray</strong>") && html.contains("<a href=\"https://help.example.test/g\">the guide</a>"), "{html}");

@@ -52,11 +52,8 @@ pub struct Env {
     pub webhook: String,
 }
 
-/// A kernel on a reset database and a workspace `slug` with Helpdesk (and, with `mail`, the Mail stand-in).
-pub async fn boot(slug: &str, mail: bool, extra: Vec<ferrum_meta::Package>) -> Env {
-    let url = std::env::var("FERRUM_HELPDESK_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_helpdesk_test".into());
-    let db = Db::connect(DbConfig { url, max_connections: 16, ..Default::default() }).await.expect("connect");
-    sqlx::raw_sql("drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
+/// A kernel on `db` as the server boots one: the apps registered each as itself, so that each takes its own vault handle.
+pub async fn kernel(db: Db, mail: bool, extra: Vec<ferrum_meta::Package>) -> Arc<Kernel> {
     let mut packages = ferrum_domain::packages().expect("platform packages");
     packages.extend(ferrum_app_erp::packages().expect("ERP's packages"));
     packages.extend(ferrum_app_helpdesk::packages().expect("app packages"));
@@ -71,15 +68,25 @@ pub async fn boot(slug: &str, mail: bool, extra: Vec<ferrum_meta::Package>) -> E
     for source in ferrum_app_erp::reports() {
         ferrum_domain::reports::add_source(source);
     }
-    ferrum_app_helpdesk::register(&mut hooks);
+    hooks.app("helpdesk", &[], ferrum_app_helpdesk::register);
     for source in ferrum_app_helpdesk::reports() {
         ferrum_domain::reports::add_source(source);
     }
     if mail {
-        ferrum_app_comms::register(&mut hooks);
+        hooks.app("comms", &[], ferrum_app_comms::register);
     }
     let settings = KernelSettings { secret_key: Some(SecretKey::new([7u8; 32])), public_url: Some("https://help.example.test".into()), ..Default::default() };
-    let k = Kernel::boot(db, catalog, hooks, settings, Some(Arc::new(Captured))).await.expect("boot");
+    Kernel::boot(db, catalog, hooks, settings, Some(Arc::new(Captured))).await.expect("boot")
+}
+
+/// A kernel on a reset database and a workspace `slug` with Helpdesk (and, with `mail`, the Mail stand-in).
+pub async fn boot(slug: &str, mail: bool, extra: Vec<ferrum_meta::Package>) -> Env {
+    let url = std::env::var("FERRUM_HELPDESK_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_helpdesk_test".into());
+    let db = Db::connect(DbConfig { url: url.clone(), max_connections: 16, ..Default::default() }).await.expect("connect");
+    sqlx::raw_sql("drop schema if exists vault cascade; drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
+    // The vault, opened as a server opens it (its credential slot, from the address's password), once migrated.
+    ferrum_kernel::vault::open(&db, opener(&url), false).await.expect("the vault");
+    let k = kernel(db, mail, extra).await;
     ferrum_domain::maintenance(&k).await.expect("partitions");
     k.set_file_store(Arc::new(MemFiles::default()));
     let mut packages = vec!["helpdesk".to_string()];
@@ -208,8 +215,18 @@ impl Env {
 }
 
 /// The secret in the mail sent about a ticket, as the server makes it.
-pub fn token(e: &Env, ticket: Uuid) -> String {
-    ferrum_app_helpdesk::inbound::ticket_token(&e.k, e.tenant, ticket).expect("the server has a key")
+pub async fn token(e: &Env, ticket: Uuid) -> String {
+    ferrum_app_helpdesk::inbound::ticket_token(&e.k, e.tenant, ticket).await.unwrap().expect("the vault is open")
+}
+
+/// What opens the tests' vault: the database password of `url`, with Argon2id kept cheap for tests.
+pub fn opener(url: &str) -> ferrum_kernel::vault::Opener {
+    ferrum_kernel::vault::Opener {
+        database_url: url.to_string(),
+        file: "/nonexistent/root.key".into(),
+        kdf: ferrum_kernel::vault::Kdf { m_kib: 64, t: 1, p: 1 },
+        ..Default::default()
+    }
 }
 
 /// Runs a suite's scenario the way the server runs: a thread with room for unoptimized hook chains.
