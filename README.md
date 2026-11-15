@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.11.0-7c3aed?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.12.0-7c3aed?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -44,7 +44,7 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 
 | | |
 |---|---|
-| **Version** | 0.11.0 (platform `>=0.3.2, <0.4`) |
+| **Version** | 0.12.0 (platform `>=0.3.2, <0.4`) |
 | **Kind** | Own interface at `/helpdesk/` (agent inbox, ticket workspace, administration, help centre editor, reports) and a page in the customer portal |
 | **What it adds** | 30 entities (21 main, 9 child tables) in 2 packages, 3 roles, 9 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
 | **Depends on** | Ferrum core, shared customers and items |
@@ -138,8 +138,9 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 - **Threading.** A reply is matched by the Message-ID it answers, then by the ticket's secret in the address it was
   written to (`support+<secret>@...`), then by the ticket number and secret in the subject tag
   `[TKT-2026-000123/secret]`. Subject text alone never matches. A reply to a merged ticket lands on the survivor.
-  The secret is made from the ticket with the server's key and kept nowhere, so whoever reads tickets (through the
-  API, an export, a report or the audit trail) cannot write into one as the customer.
+  The secret is made from the ticket with a key from Helpdesk's own key in the platform's vault and kept nowhere (only
+  its hash finds the ticket), so whoever reads tickets (through the API, an export, a report or the audit trail), or the
+  database, cannot write into one as the customer.
 - **Closed tickets.** Mail on a closed ticket opens a new one that says which ticket it follows up.
 - **Customer matching.** The sender is matched to a customer by exact address (the customer's or a contact's).
   Unknown senders are handled as Support Settings say: open a ticket, hold for review, or ignore.
@@ -477,6 +478,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 
 ### ✅ Recently shipped
 
+- [x] **0.12.0.** The secret in a ticket's mail comes from Helpdesk's own key in the platform's vault; mail 0.11 sent keeps finding its ticket.
 - [x] **0.11.0.** The secret in a ticket's mail is made with the server's key and kept nowhere, so reading tickets no longer lets anyone write into one.
 - [x] **0.10.3.** Screens for brands, Mail registration, per-agreement calendars, held mail and mail that fails authentication.
 - [x] **0.10.2.** Hours per agreement, inbound mail through Mail's registration, the platform's tags, calendars and files, public help-centre counts, brands.
