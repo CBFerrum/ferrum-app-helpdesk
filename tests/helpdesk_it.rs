@@ -91,7 +91,12 @@ async fn fresh_kernel() -> Arc<Kernel> {
     for source in ferrum_app_helpdesk::reports() {
         ferrum_domain::reports::add_source(source);
     }
-    let settings = KernelSettings { public_url: Some("https://help.example.test".into()), ..Default::default() };
+    // The server's key, as production's: the secret in a ticket's mail is made with it.
+    let settings = KernelSettings {
+        secret_key: Some(ferrum_kernel::secret::SecretKey::new([7u8; 32])),
+        public_url: Some("https://help.example.test".into()),
+        ..Default::default()
+    };
     let kernel = Kernel::boot(db, catalog, hooks, settings, Some(Arc::new(Captured))).await.expect("boot");
     kernel.set_file_store(Arc::new(MemFiles::default()));
     kernel
@@ -1104,7 +1109,7 @@ async fn replies_and_files(k: &Arc<Kernel>) {
     drain(k).await;
     let mails = sent_to("ada@shop.test");
     assert_eq!(mails.len(), 1, "{mails:?}");
-    let token = t.get("Ticket", ticket).await["mail_token"].as_str().unwrap().to_string();
+    let token = ferrum_app_helpdesk::inbound::ticket_token(&t.k, t.ctx.tenant, ticket).unwrap();
     assert_eq!(mails[0].1, format!("Re: [{number}/{token}] Printer jam <urgent>"), "the subject names the ticket and carries its secret");
     let html = &mails[0].2;
     assert!(html.contains("<strong>rear tray</strong>") && html.contains("<a href=\"https://help.example.test/g\">the guide</a>"), "{html}");

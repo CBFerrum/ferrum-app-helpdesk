@@ -201,7 +201,7 @@ pub async fn check_files(hc: &mut HookCtx<'_>, ticket: Uuid, wanted: &Value) -> 
 
 /// Renders the message template `helpdesk.reply` (the workspace's copy, else the package's) for a ticket and
 /// the values it declares: the mail's subject and HTML.
-async fn render_reply(k: &Kernel, sctx: &Ctx, ticket: &Doc, values: &Value) -> Result<(String, String)> {
+async fn render_reply(k: &Kernel, sctx: &Ctx, ticket: &Doc, token: Option<&str>, values: &Value) -> Result<(String, String)> {
     let def = k.message_template(sctx, "helpdesk.reply").await?;
     let languages = def["template"]["languages"].as_object().ok_or_else(|| Error::internal("the template helpdesk.reply has no languages"))?;
     let email = languages
@@ -211,6 +211,10 @@ async fn render_reply(k: &Kernel, sctx: &Ctx, ticket: &Doc, values: &Value) -> R
         .ok_or_else(|| Error::internal("the template helpdesk.reply has no email"))?;
     let mut doc = ticket.clone();
     doc.remove("conversation");
+    // The secret is no field of the ticket; a workspace's own copy of the template from before 0.11.0 names it as one.
+    if let Some(t) = token {
+        doc.insert("mail_token".into(), json!(t));
+    }
     let vars = json!({"doc": doc, "values": values});
     let mut env = minijinja::Environment::new();
     env.set_auto_escape_callback(|name| if name == "body" { minijinja::AutoEscape::Html } else { minijinja::AutoEscape::None });
@@ -263,8 +267,9 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
         None => None,
     };
     // Answers come back to the support address with the ticket's secret in it.
+    let token = crate::inbound::ticket_token(hc.kernel, hc.ctx.tenant, ticket);
     let reply_to =
-        if through_mail { address.as_ref().and_then(|a| s(a, "address")).zip(s(doc, "mail_token")).and_then(|(a, t)| crate::mail::tagged(a, t)) } else { None };
+        if through_mail { address.as_ref().and_then(|a| s(a, "address")).zip(token.as_deref()).and_then(|(a, t)| crate::mail::tagged(a, t)) } else { None };
     let reply_mailbox = reply_to.as_ref().map(|a| mailbox(brand_name.as_deref(), a));
     let (in_reply_to, references) = threading(doc);
     for m in fresh.iter().filter(|m| b(m, "emailed")) {
@@ -293,14 +298,14 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
             (a, b) => Some(format!("{}{}", a.unwrap_or_default(), b.unwrap_or_default())),
         };
         let values = json!({"body": markdown_html(body), "signature": signature, "link": link, "files": names.join(", "), "attached": can_attach && !ids.is_empty(),
-            "brand": brand_name});
+            "brand": brand_name, "token": token});
         // A template that is missing (a workspace not yet updated) or broken (edited) never stops a reply: the
         // agent's words go out in plain form, with the ticket's tag in the subject.
-        let (title, html) = match render_reply(hc.kernel, &sctx, doc, &values).await {
+        let (title, html) = match render_reply(hc.kernel, &sctx, doc, token.as_deref(), &values).await {
             Ok(done) => done,
             Err(e) => {
                 tracing::warn!(ticket = %ticket, "the reply template could not be used: {e}");
-                let (token, subject_line) = (s(doc, "mail_token").unwrap_or_default(), s(doc, "subject").unwrap_or_default());
+                let (token, subject_line) = (token.as_deref().unwrap_or_default(), s(doc, "subject").unwrap_or_default());
                 (subject(number, token, subject_line), format!("{}{}", markdown_html(body), signature.clone().unwrap_or_default()))
             }
         };

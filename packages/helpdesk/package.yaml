@@ -1,5 +1,5 @@
 package: helpdesk
-version: 0.2.0
+version: 0.3.0
 label: Support
 description: Helpdesk tickets with business-hours SLAs, teams with automatic assignment, a knowledge base, warranty claims and maintenance contracts with planned visits.
 # Customers and items are shared with other apps; the links to ERP's invoices and orders come with
@@ -124,11 +124,11 @@ messages:
     entity: Ticket
     category: operational
     channels: [email]
-    values: [body, signature, link, files, attached, brand]
+    values: [body, signature, link, files, attached, brand, token]
     languages:
       en:
         email:
-          subject: "Re: [{{ doc.number }}/{{ doc.mail_token }}] {{ doc.subject }}"
+          subject: "Re: [{{ doc.number }}/{{ values.token }}] {{ doc.subject }}"
           body: "<div style=\"font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;font-size:15px;line-height:1.5;color:#18181b;max-width:560px\">{{ values.body|safe }}{% if values.signature %}<div style=\"margin:0 0 12px\">{{ values.signature|safe }}</div>{% endif %}{% if values.files %}<p style=\"margin:0 0 12px;color:#52525b\">{% if values.attached %}Attached{% elif values.link %}Files with this reply (open the ticket to download them){% else %}Files with this reply{% endif %}: {{ values.files }}</p>{% endif %}<p style=\"margin:16px 0 0;padding-top:12px;border-top:1px solid #e4e4e7;color:#71717a;font-size:13px\">Ticket {{ doc.number }}{% if values.link %} &middot; <a href=\"{{ values.link|safe }}\" style=\"color:#52525b\">Follow it, or reply, here</a>{% endif %}</p></div>"
   - key: helpdesk.survey
     label: Ask the customer to rate the help

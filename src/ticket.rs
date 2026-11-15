@@ -453,8 +453,12 @@ impl DocHook for TicketHook {
             };
         }
 
-        if s(doc, "mail_token").is_none() {
-            set(doc, "mail_token", crate::inbound::new_token());
+        // The secret in the mail sent about the ticket is made from it and kept nowhere; the ticket keeps a keyed hash
+        // of it, by which a reply written to the support address with it finds the ticket (inbound.rs).
+        if let (Some(key), Some(t)) = (hc.kernel.settings.secret_key.as_ref(), id(doc, "id"))
+            && let Some(token) = crate::inbound::ticket_token(hc.kernel, hc.ctx.tenant, t)
+        {
+            set(doc, "mail_token_hash", crate::inbound::token_hash(key, &token));
         }
 
         // New messages: author and server time (replies to an existing ticket cannot be backdated).
