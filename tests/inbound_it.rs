@@ -566,6 +566,30 @@ async fn scenario() {
     assert_eq!(said(&e.get("Ticket", vaulted).await), had, "neither reached the ticket");
     assert_eq!(tickets(&e).await.len(), before + 2, "each opened a ticket of its own");
 
+    // ── Helpdesk's own reply coming back to a support address (a customer's mailbox that forwards everything there, a
+    //    list's echo): sent from an account that is no support address (a brand's sender), so its From is not one of
+    //    Helpdesk's own, and with no marker, as Mail keeps none a sender wrote. Its Message-ID is the one Mail gave it:
+    //    Mail has that message already and takes it as a duplicate, so Helpdesk is never handed it ──
+    e.insert("EmailAccount", json!({"account_name": "Acme Brand", "email_address": "hello@acme.test", "smtp_host": "127.0.0.1", "smtp_security": "None"}))
+        .await;
+    e.update("SupportAddress", support_address, json!({"mail_account": "Acme Brand"})).await;
+    let mut conv = e.get("Ticket", t_id).await["conversation"].as_array().unwrap().clone();
+    conv.push(json!({"author_kind": "Agent", "author": "sam@acme.test", "body": "Coming back to us?", "is_internal": false}));
+    e.k.update(&agent, "Ticket", t_id, obj(json!({"conversation": conv})), None).await.unwrap();
+    let replied = (said(&e.get("Ticket", t_id).await), e.get("Ticket", t_id).await["cc"].clone());
+    let ours = e.list("Communication", json!({"direction": "Sent", "reference_id": t_id.to_string()})).await;
+    let ours = ours.iter().find(|c| c["text_content"].as_str().is_some_and(|t| t.contains("Coming back"))).expect("the reply went").clone();
+    assert_eq!(ours["sender"], json!("hello@acme.test"), "from the brand's sender, which is no support address");
+    let mut echo = mail("hello@acme.test", "ada@cust.test", ours["subject"].as_str().unwrap(), "Coming back to us?", ours["message_id"].as_str().unwrap());
+    echo["sender_name"] = json!("Acme Support");
+    echo["cc"] = ours["cc"].clone();
+    echo["in_reply_to"] = ours["in_reply_to"].clone();
+    echo["headers"] = json!({"Delivered-To": "support@acme.test"});
+    let before = (tickets(&e).await.len(), e.list("InboundLog", json!({})).await.len());
+    assert_eq!(e.post_mail(&raw(&echo)).await["status"], json!("duplicate"), "Mail has the message it sent");
+    assert_eq!((said(&e.get("Ticket", t_id).await), e.get("Ticket", t_id).await["cc"].clone()), replied, "nothing added to the ticket, no copy");
+    assert_eq!((tickets(&e).await.len(), e.list("InboundLog", json!({})).await.len()), before, "no ticket, and nothing handed to Helpdesk to log");
+
     // ── a replica whose vault is closed: the reply goes all the same, with no secret at all, and the customer's answer
     //    finds the ticket by the mail it answers ──
     // (Last: registering the apps again gives the process that kernel's handles.)
