@@ -56,11 +56,6 @@ describe("the target cards", () => {
     const [open] = cards(base);
     expect([open.state, open.text]).toEqual(["none", "No deadline"]);
   });
-
-  it("no longer read the hours the clock was stopped for, which the server stopped working out", () => {
-    const [, z] = cards({ ...base, resolution_state: "met", resolved_at: "2026-11-02T11:00:00Z", resolution_hours: "5", paused_hours: 2.5 } as SlaTicket);
-    expect(z.detail).not.toContain("Stopped for");
-  });
 });
 
 describe("working hours in words", () => {

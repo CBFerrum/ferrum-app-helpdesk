@@ -1,14 +1,29 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { setTimeZone } from "@ferrum/client";
 import { periodOf, VIEWS, viewLink } from "./reportviews";
 
-const today = new Date(2026, 10, 12);
+const today = "2026-11-12";
 
 describe("the report periods", () => {
   it("count back from today, both days included", () => {
     expect(periodOf("7", today)).toEqual({ from_date: "2026-11-06", to_date: "2026-11-12" });
     expect(periodOf("30", today)).toEqual({ from_date: "2026-10-14", to_date: "2026-11-12" });
     expect(periodOf("month", today)).toEqual({ from_date: "2026-11-01", to_date: "2026-11-12" });
-    expect(periodOf("90", new Date(2026, 0, 10)).from_date).toBe("2025-10-13");
+    expect(periodOf("90", "2026-01-10").from_date).toBe("2025-10-13");
+  });
+
+  it("count back from the workspace's today, not the browser's", () => {
+    // 11:00 UTC on 5 Nov is already 6 Nov in Kiritimati (UTC+14), and still 5 Nov in any browser west of UTC+13.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-05T11:00:00Z"));
+    setTimeZone("Pacific/Kiritimati");
+    try {
+      expect(periodOf("7")).toEqual({ from_date: "2026-10-31", to_date: "2026-11-06" });
+      expect(periodOf("month")).toEqual({ from_date: "2026-11-01", to_date: "2026-11-06" });
+    } finally {
+      setTimeZone(undefined);
+      vi.useRealTimers();
+    }
   });
 });
 

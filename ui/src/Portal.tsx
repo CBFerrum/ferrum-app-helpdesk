@@ -6,7 +6,7 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, lazy, Suspense, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { api, errorMessage, t as tr, isolate } from "@ferrum/client";
+import { api, errorMessage, formatDateTime, formatMoment, t as tr, isolate } from "@ferrum/client";
 import { Badge, Button, Field, Icon, ListSkeleton, Markdown, ReaderSkeleton, Spinner, StatePanel, toast, useShellTitle } from "@ferrum/kit";
 import { LoadFailed } from "./states";
 import { STATUS_TONES } from "./tones";
@@ -48,8 +48,9 @@ export interface PortalTicketDetail extends PortalTicketSummary {
   can_rate: boolean;
 }
 
-const when = (s?: string | null) => (s ? new Date(s).toLocaleString() : "");
-const day = (s?: string | null) => (s ? new Date(s).toLocaleDateString() : "");
+/** When something happened, and its day, on the workspace's clock (or the person's own). */
+export const when = (s?: string | null) => formatDateTime(s);
+export const day = (s?: string | null) => formatMoment(s, { dateStyle: "medium" });
 
 export function PortalTickets() {
   useShellTitle(tr("Your tickets"));
