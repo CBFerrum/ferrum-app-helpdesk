@@ -30,7 +30,6 @@
 use crate::site::customer_of;
 use async_trait::async_trait;
 use ferrum_domain::util::{b, id, rows, s, sys};
-use ferrum_kernel::secret::SecretKey;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, HookCtx, Kernel, Result, Tx};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -173,22 +172,22 @@ pub(crate) async fn sent_with(tx: &mut Tx, tenant: Uuid, ticket: Uuid, token: &s
     Ok(())
 }
 
-/// The secret 0.11 made with the server's key (`settings.secret_key`, which the platform is making its own): mail it
-/// sent still carries it.
-fn token_with(key: &SecretKey, tenant: Uuid, ticket: Uuid) -> String {
-    key.fingerprint("helpdesk mail token", &format!("{tenant}/{ticket}"))[..32].to_string()
+/// The secrets 0.11 made for `ticket` with the server's key, and with each it had retired: mail it sent still carries one.
+fn old_tokens(k: &Kernel, tenant: Uuid, ticket: Uuid) -> Result<Vec<String>> {
+    Ok(crate::keys::old_fingerprints(k, "helpdesk mail token", &format!("{tenant}/{ticket}"))?.into_iter().map(|f| f[..32].to_string()).collect())
 }
 
-/// What 0.11 kept on the ticket to find it by such a secret: a keyed hash of it (`mail_token_hash`).
-fn token_hash(key: &SecretKey, token: &str) -> String {
-    key.fingerprint("helpdesk mail token hash", token)
+/// What 0.11 kept on the ticket to find it by such a secret (`mail_token_hash`): a keyed hash of it, by each of those keys.
+fn old_token_hashes(k: &Kernel, token: &str) -> Result<Vec<String>> {
+    crate::keys::old_fingerprints(k, "helpdesk mail token hash", token)
 }
 
 /// Upkeep: the secrets 0.11 put in the mail it sent (made with the server's key, and with each key it had retired),
 /// recorded by their hashes for each ticket it sent mail about (`mail_token_hash`), so that replies carrying them find
 /// their ticket without the server's key once the platform keeps it to itself. A batch a round, each ticket once.
 pub(crate) async fn carry(k: &Kernel, tenant: Uuid) -> Result<usize> {
-    if k.settings.secret_key.is_none() {
+    // Nothing to record without those keys.
+    if old_tokens(k, tenant, Uuid::nil())?.is_empty() {
         return Ok(0);
     }
     let mut tx = k.db.tenant_tx(tenant).await?;
@@ -200,17 +199,12 @@ pub(crate) async fn carry(k: &Kernel, tenant: Uuid) -> Result<usize> {
     .fetch_all(&mut *tx)
     .await?;
     for &t in &tickets {
-        for key in keys(k) {
-            sent_with(&mut tx, tenant, t, &token_with(key, tenant, t), "server").await?;
+        for token in old_tokens(k, tenant, t)? {
+            sent_with(&mut tx, tenant, t, &token, "server").await?;
         }
     }
     tx.commit().await?;
     Ok(tickets.len())
-}
-
-/// The server's key, then the keys being rotated out: mail sent before a rotation carries what an older one made.
-fn keys(k: &Kernel) -> impl Iterator<Item = &SecretKey> {
-    k.settings.secret_key.iter().chain(&k.settings.retired_secret_keys)
 }
 
 /// Whether the ticket table still has the column 0.10 and earlier kept each ticket's secret in (`mail_token`), which
@@ -320,7 +314,7 @@ async fn matching_ticket(k: &Kernel, tx: &mut Tx, tenant: Uuid, mail: &Inbound) 
         .await?;
         // 0.11's, not yet recorded: while the server's key is the apps' to use.
         if found.is_none() {
-            let hashes: Vec<String> = keys(k).map(|key| token_hash(key, token)).collect();
+            let hashes = old_token_hashes(k, token)?;
             found = sqlx::query_scalar("select id from e_ticket where tenant_id = $1 and mail_token_hash = any($2) limit 1")
                 .bind(tenant)
                 .bind(&hashes)
@@ -350,7 +344,7 @@ async fn matching_ticket(k: &Kernel, tx: &mut Tx, tenant: Uuid, mail: &Inbound) 
             .bind(&token)
             .fetch_one(&mut **tx)
             .await?;
-            ours = ours || keys(k).any(|key| same(&token_with(key, tenant, t), &token));
+            ours = ours || old_tokens(k, tenant, t)?.iter().any(|old| same(old, &token));
             if !ours && kept_tokens(tx).await? {
                 let kept: Option<String> =
                     sqlx::query_scalar("select mail_token from e_ticket where tenant_id = $1 and id = $2").bind(tenant).bind(t).fetch_one(&mut **tx).await?;

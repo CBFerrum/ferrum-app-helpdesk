@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.1
+
+Helpdesk no longer names the server's key (`FERRUM_SECRET_KEY`), which the platform is making its own. The secrets 0.11 put in the mail it sent (and the hash it kept of each) are checked through Helpdesk's own handle, which gives their fingerprints under each old key the platform still holds (`Vault::old_fingerprints`, contexts `helpdesk mail token` and `helpdesk mail token hash`, on the platform's main from 0ce3017): never to make a secret, only to find the ticket a reply answers. Such a secret does not lapse (a customer may answer months later), so upkeep still records each one's hash for its ticket, once (`helpdesk_mail_token`); once every ticket is recorded, nothing needs the old key, and a reply carrying it still finds its ticket after the platform lets the key go. Needs that platform (0.3.8 from 0ce3017). No database or interface change.
+
 ## 0.12.0
 
 Helpdesk 0.4.0. Needs a platform with the vault (Ferrum `8e6b1f0` or later). A database change
