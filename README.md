@@ -145,9 +145,9 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 - **Customer matching.** The sender is matched to a customer by exact address (the customer's or a contact's), as
   ERP's portal matches one: never a disabled customer, nor one a web shop made at a guest checkout (anyone may type
   anyone's address there). Unknown senders are handled as Support Settings say: open a ticket, hold for review, or ignore.
-- **Loop and noise protection.** Automatic replies, bounces, mailing-list mail, mail from a support address itself,
-  mail carrying Helpdesk's own marker and mail over a sender's hourly limit (20 by default) are logged and never
-  turned into tickets or answered.
+- **Loop and noise protection.** Automatic replies, bounces, mailing-list mail, mail from a support address itself
+  and mail over a sender's hourly limit (20 by default) are logged and never turned into tickets or answered. Helpdesk's
+  own reply coming back keeps the Message-ID Mail gave it, and Mail takes it as the message it already has.
 - **Sender authentication.** Mail the mail server could not verify is checked: a failed DMARC, SPF and DKIM result
   from a known customer, the requester or a copy of the ticket it answers is held for staff (Hold Failed, the
   default; Hold All Unverified; or Accept). Mail with no result is taken and marked "Sender not verified" on the message.

@@ -253,7 +253,6 @@ async fn scenario() {
         "threaded onto the customer's message"
     );
     assert_eq!((out["reference_entity"].clone(), out["reference_id"].clone()), (json!("Ticket"), json!(t_id.to_string())));
-    assert_eq!(out["headers"]["X-Ferrum-Helpdesk"], after["number"]);
     let html = out["content"].as_str().unwrap().to_string();
     assert!(
         html.contains("<strong>page two</strong>") && html.contains("Sam, Acme Support") && html.contains("https://help.example.test/open/Ticket/"),
@@ -330,7 +329,6 @@ async fn scenario() {
         (json!({"X-Failed-Recipients": "gone@x.test"}), "mailer-daemon@mx.test", "Bounce"),
         (json!({"Return-Path": "<>"}), "ada@cust.test", "Bounce"),
         (json!({}), "support@acme.test", "Own address"),
-        (json!({"X-Ferrum-Helpdesk": "TKT-1"}), "ada@cust.test", "Own address"),
     ];
     let count = noise.len();
     for (n, (headers, from, expect)) in noise.into_iter().enumerate() {

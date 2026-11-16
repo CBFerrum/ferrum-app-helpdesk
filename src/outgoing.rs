@@ -325,7 +325,6 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
                 in_reply_to: in_reply_to.clone(),
                 references: references.clone(),
                 attachments: Some(m.get("attachments").cloned().unwrap_or_else(|| json!([]))),
-                headers: [("X-Ferrum-Helpdesk".to_string(), number.to_string())].into(),
                 ..Default::default()
             };
             // A name Mail will not take in a Reply-To (the checks are Mail's) is left off, the address stays.

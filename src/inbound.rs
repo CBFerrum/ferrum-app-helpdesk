@@ -54,7 +54,7 @@ pub struct Inbound {
     /// Stored files: `[{id, file_name, content_type, size}]`.
     pub attachments: Vec<Value>,
     /// Header names (any case) to values: Auto-Submitted, Precedence, List-Id, List-Unsubscribe, X-Autoreply,
-    /// X-Failed-Recipients, X-Ferrum-Helpdesk. Only what the mail had.
+    /// X-Failed-Recipients, and Mail's verdict `x-ferrum-auth`. Only what Mail kept of the mail.
     pub headers: BTreeMap<String, String>,
     /// The Mail message this arrived as, to link it to the ticket.
     pub communication: Option<Uuid>,
@@ -79,9 +79,6 @@ pub enum Outcome {
     /// Already taken.
     Duplicate,
 }
-
-/// The header Helpdesk puts on its own mail; mail carrying it came from this app and is never taken in.
-pub const MARKER: &str = "x-ferrum-helpdesk";
 
 pub fn norm(address: &str) -> String {
     address.trim().trim_matches(['<', '>']).trim().to_lowercase()
@@ -176,8 +173,8 @@ pub fn noise(mail: &Inbound, own: &HashSet<String>) -> Option<(&'static str, Str
     let h: BTreeMap<String, String> = mail.headers.iter().map(|(k, v)| (k.to_lowercase(), v.trim().to_lowercase())).collect();
     let from = norm(&mail.from);
     let local = from.split('@').next().unwrap_or_default();
-    if own.contains(&without_tag(&from)) || h.contains_key(MARKER) {
-        return Some(("Own address", if h.contains_key(MARKER) { MARKER.to_string() } else { from }));
+    if own.contains(&without_tag(&from)) {
+        return Some(("Own address", from));
     }
     if matches!(local, "mailer-daemon" | "postmaster") || h.contains_key("x-failed-recipients") {
         return Some(("Bounce", if h.contains_key("x-failed-recipients") { "x-failed-recipients".into() } else { from }));
@@ -730,7 +727,7 @@ mod tests {
         let why = |m: &Inbound| noise(m, &own).map(|r| r.0);
         assert_eq!(why(&mail(&[], "ada@cust.test")), None);
         assert_eq!(why(&mail(&[], "Support+x@Acme.test")), Some("Own address"), "the support address itself, with a tag");
-        assert_eq!(why(&mail(&[("X-Ferrum-Helpdesk", "TKT-1")], "ada@cust.test")), Some("Own address"));
+        assert_eq!(why(&mail(&[("X-Ferrum-Helpdesk", "TKT-1")], "ada@cust.test")), None, "a header anyone can write is no reason to drop a mail");
         assert_eq!(why(&mail(&[], "MAILER-DAEMON@mx.test")), Some("Bounce"));
         assert_eq!(why(&mail(&[("X-Failed-Recipients", "x@y.test")], "ada@cust.test")), Some("Bounce"));
         assert_eq!(why(&mail(&[("Auto-Submitted", "auto-replied")], "ada@cust.test")), Some("Automatic reply"));
