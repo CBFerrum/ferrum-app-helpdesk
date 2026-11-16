@@ -612,7 +612,10 @@ async fn scenario() {
     assert!(refused(&t.try_update("Ticket", t3id, json!({"satisfaction_rating": 6})).await, "satisfaction_rating"));
     let reopened = t.say(t3id, json!({"author_kind": "Customer", "body": "It happened again this morning."})).await.unwrap();
     assert_eq!((reopened["status"].clone(), reopened["resolved_at"].clone(), reopened["sla_status"].clone()), (json!("Open"), Value::Null, json!("On Track")));
-    assert!(near(ts(&reopened["resolution_by"]), opened + h(4) + waited(&reopened)), "the time it sat resolved does not count");
+    // A reopened ticket's resolution starts again from the reopening: the clock's start the ticket records.
+    let restarted = ts(&reopened["sla_start"]);
+    assert!(restarted >= ts(&resolved["resolved_at"]), "from the reopening, not from the opening");
+    assert_eq!(ts(&reopened["resolution_by"]), restarted + h(4), "the time it sat resolved does not count");
     t.update("Ticket", t3id, json!({"status": "Resolved", "satisfaction_rating": 4, "feedback": "Quick help"})).await;
     let closed = t.update("Ticket", t3id, json!({"status": "Closed"})).await;
     assert!(closed["closed_at"].is_string());
