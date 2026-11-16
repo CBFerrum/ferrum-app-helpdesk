@@ -4,7 +4,6 @@
 #![allow(dead_code)]
 
 use async_trait::async_trait;
-use ferrum_kernel::secret::SecretKey;
 use ferrum_kernel::tenant::NewTenant;
 use ferrum_kernel::{Ctx, Db, DbConfig, Doc, Error, HookRegistry, Kernel, KernelSettings, ListQuery, Result};
 use ferrum_meta::Catalog;
@@ -76,7 +75,7 @@ pub async fn kernel(db: Db, mail: bool, extra: Vec<ferrum_meta::Package>) -> Arc
         hooks.app("comms", &[], ferrum_app_comms::register);
         hooks.own("comms", &ferrum_app_comms::packages().unwrap().iter().map(|p| p.name().to_string()).collect::<Vec<_>>());
     }
-    let settings = KernelSettings { secret_key: Some(SecretKey::new([7u8; 32])), public_url: Some("https://help.example.test".into()), ..Default::default() };
+    let settings = KernelSettings { public_url: Some("https://help.example.test".into()), ..Default::default() };
     Kernel::boot(db, catalog, hooks, settings, Some(Arc::new(Captured))).await.expect("boot")
 }
 

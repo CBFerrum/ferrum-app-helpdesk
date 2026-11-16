@@ -3,7 +3,6 @@
 //! moves in time order and marked with where it came from, tags and watchers come along (files, comments and assignments move by the same statements, untested here), the
 //! duplicate closes as merged and a customer's reply to it lands on the survivor.
 
-use ferrum_kernel::secret::SecretKey;
 use ferrum_kernel::tenant::NewTenant;
 use ferrum_kernel::{Ctx, Db, DbConfig, Doc, Error, HookRegistry, Kernel, KernelSettings, SiteRequest};
 use ferrum_meta::Catalog;
@@ -56,8 +55,7 @@ async fn scenario() {
     hooks.app("helpdesk", &[], ferrum_app_helpdesk::register);
     let helpdesk_packages: Vec<String> = ferrum_app_helpdesk::packages().unwrap().iter().map(|p| p.name().to_string()).collect();
     hooks.own("helpdesk", &helpdesk_packages);
-    let settings = KernelSettings { secret_key: Some(SecretKey::new([7u8; 32])), ..Default::default() };
-    let k = Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot");
+    let k = Kernel::boot(db, catalog, hooks, KernelSettings::default(), None).await.expect("boot");
     ferrum_domain::maintenance(&k).await.expect("partitions");
     let tenant = k
         .create_tenant(NewTenant {
