@@ -64,7 +64,7 @@ pub async fn kernel(db: Db, mail: bool, extra: Vec<ferrum_meta::Package>) -> Arc
     let catalog = Catalog::from_packages(packages).expect("catalog");
     let mut hooks = HookRegistry::default();
     ferrum_domain::register(&mut hooks);
-    ferrum_app_erp::register(&mut hooks);
+    hooks.app("erp", &[], ferrum_app_erp::register);
     for source in ferrum_app_erp::reports() {
         ferrum_domain::reports::add_source(source);
     }
@@ -74,6 +74,7 @@ pub async fn kernel(db: Db, mail: bool, extra: Vec<ferrum_meta::Package>) -> Arc
     }
     if mail {
         hooks.app("comms", &[], ferrum_app_comms::register);
+        hooks.own("comms", &ferrum_app_comms::packages().unwrap().iter().map(|p| p.name().to_string()).collect::<Vec<_>>());
     }
     let settings = KernelSettings { secret_key: Some(SecretKey::new([7u8; 32])), public_url: Some("https://help.example.test".into()), ..Default::default() };
     Kernel::boot(db, catalog, hooks, settings, Some(Arc::new(Captured))).await.expect("boot")
