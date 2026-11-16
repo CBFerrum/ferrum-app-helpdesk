@@ -11,12 +11,10 @@
 //! * A reply is matched to its ticket by the Message-ID it answers (In-Reply-To, References), then by the ticket's
 //!   secret in the address it was written to (`support+<secret>@…`, the Reply-To of what Helpdesk sends), and
 //!   last by the ticket's number and secret in the subject tag the app puts in outgoing mail. Never by subject text alone.
-//!   The secret is made from the ticket with a key from Helpdesk's own key in the vault ([`ticket_token`]) and kept
-//!   nowhere: whoever reads tickets, through the API, an export, a report or the audit trail, cannot write as the
-//!   customer. Its hash is recorded when the ticket is made and as mail goes (`helpdesk_mail_token`), to find the ticket
-//!   by. Mail 0.11 sent
-//!   carries a secret made with the server's key (its hash recorded by upkeep, and matched with that key meanwhile);
-//!   mail sent before 0.11.0 carries the secret those releases kept in the ticket's `mail_token` column, still read for it.
+//!   The secret is 32 hexadecimal digits made from the ticket with a key from Helpdesk's own key in the vault
+//!   ([`ticket_token`]) and kept nowhere: whoever reads tickets, through the API, an export, a report or the audit trail,
+//!   cannot write as the customer. Its hash is recorded when the ticket is made and as mail goes (`helpdesk_mail_token`),
+//!   to find the ticket by. A secret of any other shape is malformed and finds nothing.
 //! * Mail the mail server could not verify (`x-ferrum-auth: unverified`) from a known customer, or from the requester
 //!   or a copy of the ticket it answers, is held for review when Support Settings say (the default): a forged
 //!   sender must not read or steer a ticket.
@@ -129,7 +127,12 @@ pub fn addresses(list: Option<&str>) -> Vec<String> {
     out
 }
 
-/// The tag outgoing mail carries in its subject, `[TKT-2026-000123/k3j9x2m1q7aa]`: the ticket's number and its secret.
+/// Whether `token` has the shape of a ticket's secret ([`ticket_token`]): 32 lowercase hexadecimal digits.
+fn is_secret(token: &str) -> bool {
+    token.len() == 32 && token.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// The tag outgoing mail carries in its subject, `[TKT-2026-000123/<secret>]`: the ticket's number and its secret.
 pub fn tag(subject: &str) -> Option<(String, String)> {
     let mut rest = subject;
     while let Some(open) = rest.find('[') {
@@ -138,8 +141,7 @@ pub fn tag(subject: &str) -> Option<(String, String)> {
         if let Some((number, token)) = after[..close].rsplit_once('/')
             && !number.trim().is_empty()
             && number.len() <= 64
-            && (8..=64).contains(&token.len())
-            && token.chars().all(|c| c.is_ascii_alphanumeric())
+            && is_secret(token)
         {
             return Some((number.trim().to_string(), token.to_string()));
         }
@@ -157,69 +159,18 @@ pub async fn ticket_token(k: &Kernel, tenant: Uuid, ticket: Uuid) -> Result<Opti
 }
 
 /// Records that mail about `ticket` carries `token`, by a hash of the workspace and the secret (SHA-256), so that a reply
-/// carrying it finds the ticket in this workspace and in no copy of it under another id (a sandbox): `kind` `vault` for
-/// this release's secrets, `server` for those 0.11 made with the server's key.
-pub(crate) async fn sent_with(tx: &mut Tx, tenant: Uuid, ticket: Uuid, token: &str, kind: &str) -> Result<()> {
+/// carrying it finds the ticket in this workspace and in no copy of it under another id (a sandbox).
+pub(crate) async fn sent_with(tx: &mut Tx, tenant: Uuid, ticket: Uuid, token: &str) -> Result<()> {
     sqlx::query(
-        "insert into helpdesk_mail_token (tenant_id, token_hash, ticket, kind) \
-         values ($1, encode(sha256(convert_to($1::text || '/' || $2, 'UTF8')), 'hex'), $3, $4) on conflict (tenant_id, token_hash) do nothing",
+        "insert into helpdesk_mail_token (tenant_id, token_hash, ticket) \
+         values ($1, encode(sha256(convert_to($1::text || '/' || $2, 'UTF8')), 'hex'), $3) on conflict (tenant_id, token_hash) do nothing",
     )
     .bind(tenant)
     .bind(token)
     .bind(ticket)
-    .bind(kind)
     .execute(&mut **tx)
     .await?;
     Ok(())
-}
-
-/// The secrets 0.11 made for `ticket` with the server's key, and with each it had retired: mail it sent still carries one.
-fn old_tokens(k: &Kernel, tenant: Uuid, ticket: Uuid) -> Result<Vec<String>> {
-    Ok(crate::keys::old_fingerprints(k, "helpdesk mail token", &format!("{tenant}/{ticket}"))?.into_iter().map(|f| f[..32].to_string()).collect())
-}
-
-/// What 0.11 kept on the ticket to find it by such a secret (`mail_token_hash`): a keyed hash of it, by each of those keys.
-fn old_token_hashes(k: &Kernel, token: &str) -> Result<Vec<String>> {
-    crate::keys::old_fingerprints(k, "helpdesk mail token hash", token)
-}
-
-/// Upkeep: the secrets 0.11 put in the mail it sent (made with the server's key, and with each key it had retired),
-/// recorded by their hashes for each ticket it sent mail about (`mail_token_hash`), so that replies carrying them find
-/// their ticket without the server's key once the platform keeps it to itself. A batch a round, each ticket once.
-pub(crate) async fn carry(k: &Kernel, tenant: Uuid) -> Result<usize> {
-    // Nothing to record without those keys.
-    if old_tokens(k, tenant, Uuid::nil())?.is_empty() {
-        return Ok(0);
-    }
-    let mut tx = k.db.tenant_tx(tenant).await?;
-    let tickets: Vec<Uuid> = sqlx::query_scalar(
-        "select t.id from e_ticket t where t.tenant_id = $1 and t.mail_token_hash is not null and not exists \
-         (select 1 from helpdesk_mail_token m where m.tenant_id = t.tenant_id and m.ticket = t.id and m.kind = 'server') order by t.id limit 500",
-    )
-    .bind(tenant)
-    .fetch_all(&mut *tx)
-    .await?;
-    for &t in &tickets {
-        for token in old_tokens(k, tenant, t)? {
-            sent_with(&mut tx, tenant, t, &token, "server").await?;
-        }
-    }
-    tx.commit().await?;
-    Ok(tickets.len())
-}
-
-/// Whether the ticket table still has the column 0.10 and earlier kept each ticket's secret in (`mail_token`), which
-/// mail they sent carries: a database they wrote to has it, a new one never had it.
-async fn kept_tokens(tx: &mut Tx) -> Result<bool> {
-    Ok(sqlx::query_scalar(
-        "select exists (select 1 from information_schema.columns where table_schema = current_schema() and table_name = 'e_ticket' and column_name = 'mail_token')",
-    )
-    .fetch_one(&mut **tx)
-    .await?)
-}
-
-fn same(a: &str, b: &str) -> bool {
-    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |d, (x, y)| d | (x ^ y)) == 0
 }
 
 /// Why a mail is not for a person to answer, from its headers and sender: (reason, the header or address).
@@ -291,7 +242,7 @@ async fn policy(k: &Kernel, sctx: &Ctx, tx: &mut Tx) -> Result<Policy> {
 /// The ticket a mail answers, by the strongest key it carries: the Message-ID it answers (of mail we sent, or of
 /// what the customer sent before), the ticket Mail already threaded it onto, the secret in the address it was written
 /// to, and last the number and secret in its subject. A merged ticket leads to the one that stayed.
-async fn matching_ticket(k: &Kernel, tx: &mut Tx, tenant: Uuid, mail: &Inbound) -> Result<Option<Uuid>> {
+async fn matching_ticket(tx: &mut Tx, tenant: Uuid, mail: &Inbound) -> Result<Option<Uuid>> {
     let mut found = None;
     let wanted: Vec<String> = mail.in_reply_to.iter().chain(mail.references.iter()).map(|m| m.trim().trim_matches(['<', '>']).to_string()).collect();
     if !wanted.is_empty() {
@@ -303,9 +254,9 @@ async fn matching_ticket(k: &Kernel, tx: &mut Tx, tenant: Uuid, mail: &Inbound) 
     }
     found = found.or(mail.reference);
     if found.is_none()
-        && let Some(token) = mail.token.as_deref().filter(|t| (8..=64).contains(&t.len()) && t.chars().all(|c| c.is_ascii_alphanumeric()))
+        && let Some(token) = mail.token.as_deref().filter(|t| is_secret(t))
     {
-        // By the hash of the secret, recorded as the mail carrying it went (and, for 0.11's, by upkeep).
+        // By the hash of the secret, recorded as the mail carrying it went.
         found = sqlx::query_scalar(
             "select ticket from helpdesk_mail_token where tenant_id = $1 and token_hash = encode(sha256(convert_to($1::text || '/' || $2, 'UTF8')), 'hex')",
         )
@@ -313,22 +264,6 @@ async fn matching_ticket(k: &Kernel, tx: &mut Tx, tenant: Uuid, mail: &Inbound) 
         .bind(token)
         .fetch_optional(&mut **tx)
         .await?;
-        // 0.11's, not yet recorded: while the server's key is the apps' to use.
-        if found.is_none() {
-            let hashes = old_token_hashes(k, token)?;
-            found = sqlx::query_scalar("select id from e_ticket where tenant_id = $1 and mail_token_hash = any($2) limit 1")
-                .bind(tenant)
-                .bind(&hashes)
-                .fetch_optional(&mut **tx)
-                .await?;
-        }
-        if found.is_none() && kept_tokens(tx).await? {
-            found = sqlx::query_scalar("select id from e_ticket where tenant_id = $1 and mail_token = $2")
-                .bind(tenant)
-                .bind(token)
-                .fetch_optional(&mut **tx)
-                .await?;
-        }
     }
     if found.is_none()
         && let Some((number, token)) = tag(&mail.subject)
@@ -336,7 +271,7 @@ async fn matching_ticket(k: &Kernel, tx: &mut Tx, tenant: Uuid, mail: &Inbound) 
         let ticket: Option<Uuid> =
             sqlx::query_scalar("select id from e_ticket where tenant_id = $1 and number = $2").bind(tenant).bind(number).fetch_optional(&mut **tx).await?;
         if let Some(t) = ticket {
-            let mut ours: bool = sqlx::query_scalar(
+            let ours: bool = sqlx::query_scalar(
                 "select exists (select 1 from helpdesk_mail_token where tenant_id = $1 and ticket = $2 \
                  and token_hash = encode(sha256(convert_to($1::text || '/' || $3, 'UTF8')), 'hex'))",
             )
@@ -345,12 +280,6 @@ async fn matching_ticket(k: &Kernel, tx: &mut Tx, tenant: Uuid, mail: &Inbound) 
             .bind(&token)
             .fetch_one(&mut **tx)
             .await?;
-            ours = ours || old_tokens(k, tenant, t)?.iter().any(|old| same(old, &token));
-            if !ours && kept_tokens(tx).await? {
-                let kept: Option<String> =
-                    sqlx::query_scalar("select mail_token from e_ticket where tenant_id = $1 and id = $2").bind(tenant).bind(t).fetch_one(&mut **tx).await?;
-                ours = kept.is_some_and(|kept| same(&kept, &token));
-            }
             found = ours.then_some(t);
         }
     }
@@ -464,7 +393,7 @@ async fn run(k: &Kernel, ctx: &Ctx, tx: &mut Tx, mail: &Inbound, held: Option<Uu
         }
     }
     let name = mail.from_name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| from.split('@').next().unwrap_or_default().to_string());
-    let matched = matching_ticket(k, tx, tenant, mail).await?;
+    let matched = matching_ticket(tx, tenant, mail).await?;
     let mut existing = None;
     if let Some(t) = matched {
         let status: Option<String> =
@@ -747,48 +676,6 @@ impl DocHook for LogHook {
     }
 }
 
-/// Once for a workspace updated from a release where an address's brand was only a label: each distinct label becomes a
-/// brand (its name and what customers see it as), and the addresses that carried it are linked to it. Nothing is
-/// changed of the addresses otherwise; a brand an administrator made since is used, not made twice.
-pub async fn ensure_brands(k: &Kernel, ctx: &Ctx) -> Result<usize> {
-    if ctx.schema.entity("SupportBrand").is_none_or(|e| e.field("brand_name").is_none())
-        || ctx.schema.entity("SupportAddress").is_none_or(|e| e.field("brand").is_none())
-    {
-        return Ok(0);
-    }
-    let sctx = sys(ctx);
-    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-    sqlx::query("select pg_advisory_xact_lock(hashtext($1))").bind(format!("helpdesk-upkeep|brands|{}", ctx.tenant)).execute(&mut *tx).await?;
-    if crate::done(k, ctx, &mut tx, "brands").await? {
-        tx.commit().await?;
-        return Ok(0);
-    }
-    let mut linked = 0;
-    for a in k.find_tx(&sctx, &mut tx, "SupportAddress", &[], Some("address asc"), 1000).await? {
-        let (Some(row), Some(label)) = (id(&a, "id"), s(&a, "label").map(|l| cut(l.trim(), 80)).filter(|l| !l.is_empty())) else { continue };
-        if a.get("brand").is_some_and(|b| !b.is_null()) {
-            continue;
-        }
-        let existing = k.find_tx(&sctx, &mut tx, "SupportBrand", &[ferrum_kernel::Filter::eq("brand_name", label.clone())], None, 1).await?;
-        let brand = match existing.first().and_then(|b| id(b, "id")) {
-            Some(b) => b,
-            None => {
-                let mut v = Doc::new();
-                v.insert("brand_name".into(), json!(label));
-                v.insert("display_name".into(), json!(label));
-                id(&k.insert_tx(&sctx, &mut tx, "SupportBrand", v).await?, "id").ok_or_else(|| Error::internal("a brand without an id"))?
-            }
-        };
-        let mut v = Doc::new();
-        v.insert("brand".into(), json!(brand.to_string()));
-        k.set_values_tx(&sctx, &mut tx, "SupportAddress", row, v).await?;
-        linked += 1;
-    }
-    crate::mark(k, ctx, &mut tx, "brands").await?;
-    tx.commit().await?;
-    Ok(linked)
-}
-
 /// An address is stored as written in lower case, and Mail's registration of it follows it (`mail.rs`).
 pub struct AddressHook;
 
@@ -827,13 +714,16 @@ mod tests {
 
     #[test]
     fn the_subject_tag_is_the_number_and_the_secret_and_nothing_else_matches() {
-        assert_eq!(tag("Re: [TKT-2026-000123/ab12cd34ef56gh78] Printer jam"), Some(("TKT-2026-000123".into(), "ab12cd34ef56gh78".into())));
-        assert_eq!(tag("[ignore me] Re: [T-1/aaaaaaaa1111] x"), Some(("T-1".into(), "aaaaaaaa1111".into())));
+        let secret = "0123456789abcdef0123456789abcdef";
+        assert_eq!(tag(&format!("Re: [TKT-2026-000123/{secret}] Printer jam")), Some(("TKT-2026-000123".into(), secret.into())));
+        assert_eq!(tag(&format!("[ignore me] Re: [T-1/{secret}] x")), Some(("T-1".into(), secret.into())));
         assert_eq!(tag("Re: [TKT-2026-000123] Printer jam"), None, "the number alone is not enough");
-        assert_eq!(tag("Re: TKT-2026-000123/ab12cd34ef56gh78 Printer jam"), None);
-        assert_eq!(tag("[T-1/short]"), None);
-        assert_eq!(tag("[unclosed T-1/abcdefgh12"), None);
-        assert!(same("abc", "abc") && !same("abc", "abd") && !same("abc", "ab"));
+        assert_eq!(tag(&format!("Re: TKT-2026-000123/{secret} Printer jam")), None);
+        assert_eq!(tag(&format!("[unclosed T-1/{secret}")), None);
+        // Any other shape is malformed: 0.10's sixteen letters and digits, a cut or a longer one, capitals.
+        for bad in ["k3j9x2m1q7aa8888".to_string(), secret[..31].to_string(), format!("{secret}0"), secret.to_uppercase(), secret.replace('f', "g")] {
+            assert_eq!(tag(&format!("Re: [T-1/{bad}] x")), None, "{bad}");
+        }
     }
 
     #[test]

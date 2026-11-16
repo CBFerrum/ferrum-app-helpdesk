@@ -1,5 +1,6 @@
 //! Tickets' targets on the platform's clock (`FERRUM_HELPDESK_TEST_DATABASE_URL`, reset first): policies by
-//! priority, customer, group and team as records; the working calendar the workspace owns, with daylight saving;
+//! priority, customer, group and team as records; the working calendar the workspace owns (made round the clock,
+//! then the administrator's), with daylight saving;
 //! waiting for the customer stops the clock; the breach is recorded once and raises an event; and a workspace
 //! upgraded from a release that counted its own hours keeps its agreements and the clocks of its open tickets,
 //! with no administrator action.
@@ -7,7 +8,7 @@
 mod common;
 use chrono::{DateTime, Duration, Utc};
 use common::*;
-use ferrum_kernel::Ctx;
+use ferrum_kernel::{Calendar, Ctx};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -33,15 +34,9 @@ async fn scenario() {
     let k = e.k.clone();
     let sys = Ctx::system(e.tenant, k.registry.schema(e.tenant).await.unwrap());
 
-    // ── the calendar is made from the default agreement the workspace had, once ──
-    let hours = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(|d| json!({"weekday": d, "start_time": "09:00", "end_time": "17:00"}));
-    let standard = uid(&e
-        .insert(
-            "ServiceLevelAgreement",
-            json!({"sla_name": "Standard", "time_zone_offset": 330, "working_hours": hours, "holidays": [{"holiday_date": "2026-11-09", "description": "Local holiday"}],
-                   "priorities": targets(&[("Medium", "4", "16"), ("Urgent", "1", "4")])}),
-        )
-        .await);
+    // ── the workspace's calendar: made every hour of every day in UTC, then the administrator's ──
+    let standard =
+        uid(&e.insert("ServiceLevelAgreement", json!({"sla_name": "Standard", "priorities": targets(&[("Medium", "4", "16"), ("Urgent", "1", "4")])})).await);
     let billing = uid(&e.insert("SupportTeam", json!({"team_name": "Billing", "members": [{"agent": "bea@acme.test"}]})).await);
     let billing_sla = uid(&e
         .insert("ServiceLevelAgreement", json!({"sla_name": "Billing", "team": billing.to_string(), "priorities": targets(&[("Medium", "2", "6")])}))
@@ -49,15 +44,16 @@ async fn scenario() {
     let calendars = || async { e.sql::<String>("select zone from logic_calendar where tenant_id = $1 and name = 'helpdesk_hours'", &[]).await };
     assert_eq!(calendars().await, None, "nothing is made until a ticket needs it");
     ferrum_app_helpdesk::maintenance(&k).await.unwrap();
-    assert_eq!(calendars().await.as_deref(), Some("Asia/Kolkata"), "the upkeep makes it from the default agreement, offset and all");
-    let hours_row: Option<Value> = e.sql("select hours from logic_calendar where tenant_id = $1 and name = 'helpdesk_hours'", &[]).await;
-    assert_eq!(hours_row.unwrap()["mon"], json!([["09:00", "17:00"]]));
-    // The workspace's own: an administrator changes it, and nothing puts it back.
-    e.exec(
-        "update logic_calendar set zone = 'America/New_York', holidays = '{}', revision = revision + 1 where tenant_id = $1 and name = 'helpdesk_hours'",
-        &[],
+    assert_eq!(calendars().await.as_deref(), Some("UTC"), "the upkeep makes it when the workspace has agreements");
+    let open: Option<bool> = e.sql("select hours is null and weekends = '{}' from logic_calendar where tenant_id = $1 and name = 'helpdesk_hours'", &[]).await;
+    assert_eq!(open, Some(true), "round the clock");
+    // The workspace's own: an administrator sets its hours, and nothing puts it back.
+    let week = json!({"mon": [["09:00", "17:00"]], "tue": [["09:00", "17:00"]], "wed": [["09:00", "17:00"]], "thu": [["09:00", "17:00"]], "fri": [["09:00", "17:00"]]});
+    let mine: Calendar = serde_json::from_value(
+        json!({"name": "helpdesk_hours", "zone": "America/New_York", "weekends": ["sat", "sun"], "holidays": [], "revision": 0, "hours": week}),
     )
-    .await;
+    .unwrap();
+    k.set_logic_calendar(&e.admin, &mine).await.expect("the administrator's hours");
     ferrum_app_helpdesk::maintenance(&k).await.unwrap();
     assert_eq!(calendars().await.as_deref(), Some("America/New_York"));
 

@@ -201,7 +201,7 @@ pub async fn check_files(hc: &mut HookCtx<'_>, ticket: Uuid, wanted: &Value) -> 
 
 /// Renders the message template `helpdesk.reply` (the workspace's copy, else the package's) for a ticket and
 /// the values it declares: the mail's subject and HTML.
-async fn render_reply(k: &Kernel, sctx: &Ctx, ticket: &Doc, token: Option<&str>, values: &Value) -> Result<(String, String)> {
+async fn render_reply(k: &Kernel, sctx: &Ctx, ticket: &Doc, values: &Value) -> Result<(String, String)> {
     let def = k.message_template(sctx, "helpdesk.reply").await?;
     let languages = def["template"]["languages"].as_object().ok_or_else(|| Error::internal("the template helpdesk.reply has no languages"))?;
     let email = languages
@@ -211,10 +211,6 @@ async fn render_reply(k: &Kernel, sctx: &Ctx, ticket: &Doc, token: Option<&str>,
         .ok_or_else(|| Error::internal("the template helpdesk.reply has no email"))?;
     let mut doc = ticket.clone();
     doc.remove("conversation");
-    // The secret is no field of the ticket; a workspace's own copy of the template from before 0.11.0 names it as one.
-    if let Some(t) = token {
-        doc.insert("mail_token".into(), json!(t));
-    }
     let vars = json!({"doc": doc, "values": values});
     let mut env = minijinja::Environment::new();
     env.set_auto_escape_callback(|name| if name == "body" { minijinja::AutoEscape::Html } else { minijinja::AutoEscape::None });
@@ -249,8 +245,6 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
         return Ok(());
     }
     let copies: Vec<String> = crate::inbound::addresses(s(doc, "cc")).into_iter().filter(|a| !own.contains(a)).collect();
-    // Mail with what a send needs (0.20 and later); an older one carries the reply without threading, as the platform's mail does.
-    let through_mail = via_mail && hc.ctx.schema.entity("Communication").is_some_and(|c| c.field("reply_to_address").is_some());
     let address = reply_address(hc, doc).await?;
     let brand = match address.as_ref().and_then(|a| id(a, "brand")) {
         Some(b) => hc.kernel.get_tx(&sctx, hc.tx, "SupportBrand", b, false).await.ok(),
@@ -270,10 +264,10 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
     // transaction: the vault answers on a second connection.)
     let token = crate::inbound::ticket_token(hc.kernel, hc.ctx.tenant, ticket).await?;
     if let Some(t) = &token {
-        crate::inbound::sent_with(hc.tx, hc.ctx.tenant, ticket, t, "vault").await?;
+        crate::inbound::sent_with(hc.tx, hc.ctx.tenant, ticket, t).await?;
     }
     let reply_to =
-        if through_mail { address.as_ref().and_then(|a| s(a, "address")).zip(token.as_deref()).and_then(|(a, t)| crate::mail::tagged(a, t)) } else { None };
+        if via_mail { address.as_ref().and_then(|a| s(a, "address")).zip(token.as_deref()).and_then(|(a, t)| crate::mail::tagged(a, t)) } else { None };
     let reply_mailbox = reply_to.as_ref().map(|a| mailbox(brand_name.as_deref(), a));
     let (in_reply_to, references) = threading(doc);
     for m in fresh.iter().filter(|m| b(m, "emailed")) {
@@ -305,7 +299,7 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
             "brand": brand_name, "token": token});
         // A template that is missing (a workspace not yet updated) or broken (edited) never stops a reply: the
         // agent's words go out in plain form, with the ticket's tag in the subject.
-        let (title, html) = match render_reply(hc.kernel, &sctx, doc, token.as_deref(), &values).await {
+        let (title, html) = match render_reply(hc.kernel, &sctx, doc, &values).await {
             Ok(done) => done,
             Err(e) => {
                 tracing::warn!(ticket = %ticket, "the reply template could not be used: {e}");
@@ -318,7 +312,7 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
             Some(b) => format!("{}{html}{}", s(b, "header").map(markdown_html).unwrap_or_default(), s(b, "footer").map(markdown_html).unwrap_or_default()),
             None => html,
         };
-        if through_mail {
+        if via_mail {
             let message = ferrum_app_comms::outbound::Message {
                 to: vec![to.to_string()],
                 cc: copies.clone(),
@@ -422,12 +416,13 @@ mod tests {
 
     #[test]
     fn the_subject_names_the_ticket_and_fits_the_platforms_limit() {
-        assert_eq!(subject("TKT-2026-000123", "k3j9x2m1", "Printer jam"), "Re: [TKT-2026-000123/k3j9x2m1] Printer jam");
-        let long = subject("TKT-2026-000123", "k3j9x2m1", &"é".repeat(400));
-        assert!(long.len() <= 300 && long.starts_with("Re: [TKT-2026-000123/k3j9x2m1] é"), "{}", long.len());
+        let s = "0123456789abcdef0123456789abcdef";
+        assert_eq!(subject("TKT-2026-000123", s, "Printer jam"), format!("Re: [TKT-2026-000123/{s}] Printer jam"));
+        let long = subject("TKT-2026-000123", s, &"é".repeat(400));
+        assert!(long.len() <= 300 && long.starts_with(&format!("Re: [TKT-2026-000123/{s}] é")), "{}", long.len());
         assert!(ferrum_kernel::outbox::check_mail("ada@shop.test", &long).is_ok());
-        assert_eq!(subject("T-1", "abcdefgh", "two\nlines"), "Re: [T-1/abcdefgh] twolines");
-        assert!(crate::inbound::tag(&subject("T-1", "abcdefgh", "x")).is_some(), "what goes out is what comes back");
+        assert_eq!(subject("T-1", s, "two\nlines"), format!("Re: [T-1/{s}] twolines"));
+        assert_eq!(crate::inbound::tag(&subject("T-1", s, "x")), Some(("T-1".into(), s.into())), "what goes out is what comes back");
     }
 
     #[test]

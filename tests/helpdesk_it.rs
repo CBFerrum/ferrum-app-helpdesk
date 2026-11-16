@@ -355,18 +355,22 @@ async fn scenario() {
     let recent_delivery = t.insert("DeliveryNote", deliver("RT-1", &day(-30))).await;
     t.submit("DeliveryNote", uid(&recent_delivery)).await;
 
-    // ───────────── agreements ─────────────
-    let weekdays = |from: &str, to: &str| -> Value {
-        ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].iter().map(|d| json!({"weekday": d, "start_time": from, "end_time": to})).collect()
+    // ───────────── agreements, on the workspace's calendars ─────────────
+    // The workspace's hours (Kolkata, 09:00-18:00 on weekdays, Monday 26 October a holiday) and the commercial group's (08:00-20:00).
+    let calendar = |name: &str, from: &str, to: &str, holidays: Value| -> ferrum_kernel::Calendar {
+        let day = json!([[from, to]]);
+        serde_json::from_value(json!({"name": name, "zone": "Asia/Kolkata", "weekends": ["sat", "sun"], "holidays": holidays, "revision": 0,
+            "hours": {"mon": day, "tue": day, "wed": day, "thu": day, "fri": day}}))
+        .unwrap()
     };
+    k.set_logic_calendar(&t.ctx, &calendar("helpdesk_hours", "09:00", "18:00", json!(["2026-10-26"]))).await.expect("the workspace's hours");
+    k.set_logic_calendar(&t.ctx, &calendar("commercial_hours", "08:00", "20:00", json!([]))).await.expect("the group's hours");
     let targets =
         |list: &[(&str, &str, &str)]| -> Value { list.iter().map(|(p, r, z)| json!({"priority": p, "response_hours": r, "resolution_hours": z})).collect() };
     let standard = uid(&t
         .insert(
             "ServiceLevelAgreement",
-            json!({"sla_name": "Standard", "time_zone_offset": 330, "working_hours": weekdays("09:00", "18:00"),
-                   "holidays": [{"holiday_date": "2026-10-26", "description": "Company holiday"}],
-                   "priorities": targets(&[("Low", "16", "80"), ("Medium", "8", "40"), ("High", "4", "16"), ("Urgent", "1", "4")])}),
+            json!({"sla_name": "Standard", "priorities": targets(&[("Low", "16", "80"), ("Medium", "8", "40"), ("High", "4", "16"), ("Urgent", "1", "4")])}),
         )
         .await);
     let premium = uid(&t
@@ -379,7 +383,7 @@ async fn scenario() {
     let group_sla = uid(&t
         .insert(
             "ServiceLevelAgreement",
-            json!({"sla_name": "Commercial", "customer_group": commercial["id"], "time_zone_offset": 330, "working_hours": weekdays("08:00", "20:00"),
+            json!({"sla_name": "Commercial", "customer_group": commercial["id"], "calendar": "commercial_hours",
                    "priorities": targets(&[("Medium", "4", "24"), ("High", "2", "8")])}),
         )
         .await);
@@ -392,13 +396,6 @@ async fn scenario() {
         }
         v
     };
-    let night =
-        t.try_insert("ServiceLevelAgreement", sla_with(json!({"working_hours": [{"weekday": "Monday", "start_time": "22:00", "end_time": "06:00"}]}))).await;
-    assert!(refused(&night, "end_time"), "a night shift is one row per day: {night:?}");
-    assert!(refused(
-        &t.try_insert("ServiceLevelAgreement", sla_with(json!({"working_hours": [{"weekday": "Monday", "start_time": "9am", "end_time": "17:00"}]}))).await,
-        "start_time"
-    ));
     assert!(refused(
         &t.try_insert("ServiceLevelAgreement", sla_with(json!({"priorities": targets(&[("Low", "1", "2"), ("Low", "2", "4")])}))).await,
         "priority"
@@ -439,11 +436,7 @@ async fn scenario() {
     assert_eq!((t1["team"].clone(), t1["assigned_to"].clone()), (json!(l1.to_string()), json!("a1@sd.test")));
     assert_eq!(t1["contact_email"], json!("bob@example.test"), "taken from the customer");
     assert_eq!(t1["service_level_agreement"], json!(standard.to_string()));
-    assert_eq!(
-        t1["response_by"],
-        json!("2026-10-27T06:30:00.000Z"),
-        "1h on Friday, the holiday skipped, 3h on Tuesday, on the calendar made from the default agreement"
-    );
+    assert_eq!(t1["response_by"], json!("2026-10-27T06:30:00.000Z"), "1h on Friday, the holiday skipped, 3h on Tuesday, on the workspace's calendar");
     assert_eq!(t1["resolution_by"], json!("2026-10-28T09:30:00.000Z"));
     assert_eq!(
         (t1["response_state"].clone(), t1["resolution_state"].clone()),
@@ -481,7 +474,7 @@ async fn scenario() {
     assert_eq!(
         (t2["response_by"].clone(), t2["resolution_by"].clone()),
         (json!("2026-10-26T03:30:00.000Z"), json!("2026-10-27T11:30:00.000Z")),
-        "the group's 4 and 24 hours, on the group's own hours (08:00-20:00 in Kolkata, no holiday of its own): the upkeep made its calendar from them"
+        "the group's 4 and 24 hours, on the group's own calendar (08:00-20:00 in Kolkata, no holiday of its own)"
     );
     k.pin_clock(Some(friday));
     let t2 = t.update("Ticket", t2id, json!({"priority": "Low"})).await;
