@@ -247,7 +247,8 @@ async fn raise(k: &Kernel, user: &Ctx, body: &Map<String, Value>) -> Result<Valu
         set(&mut t, "channel", "Portal");
         set(&mut t, "contact_email", email.clone());
         set(&mut t, "contact_name", if user.full_name.is_empty() { email.clone() } else { user.full_name.clone() });
-        if let Some(c) = customer_of(k, &sctx, &mut tx, &email).await? {
+        // The customer the address belongs to, as ERP's portal finds it: the oldest by its own email, else by a contact's.
+        if let Some(c) = ferrum_app_erp::portal::customers_of(k, &sctx, &mut tx, &email).await?.first() {
             set(&mut t, "customer", c.to_string());
         }
         let saved = k.insert_tx(&sctx, &mut tx, "Ticket", t).await?;
@@ -256,19 +257,6 @@ async fn raise(k: &Kernel, user: &Ctx, body: &Map<String, Value>) -> Result<Valu
         Ok(view)
     })
     .await
-}
-
-/// The customer an address belongs to: the customer's own email, or one of its contacts'.
-pub(crate) async fn customer_of(k: &Kernel, sctx: &Ctx, tx: &mut Tx, email: &str) -> Result<Option<Uuid>> {
-    let direct = k.find_tx(sctx, tx, "Customer", &[Filter::eq("email", email)], Some("created_at asc"), 5).await?;
-    if let Some(c) = direct.iter().find(|c| !b(c, "disabled")).and_then(|c| id(c, "id")) {
-        return Ok(Some(c));
-    }
-    if sctx.schema.entity("Contact").is_some_and(|c| c.field("emails").is_some() && c.field("customer").is_some()) {
-        let contacts = k.find_tx(sctx, tx, "Contact", &[Filter::eq("emails.email", email)], Some("created_at asc"), 5).await?;
-        return Ok(contacts.iter().find_map(|c| id(c, "customer")));
-    }
-    Ok(None)
 }
 
 /// `POST portal/tickets/{id}/replies` `{body}`: the customer's message; it reopens a ticket that
