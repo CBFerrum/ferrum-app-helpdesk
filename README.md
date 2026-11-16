@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.13.0-7c3aed?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.13.1-7c3aed?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -479,6 +479,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 
 ### ✅ Recently shipped
 
+- [x] **0.13.1.** The portal's times and the report periods on the workspace's clock, no names of what 0.13.0 removed; rebuilt on Ferrum-Frontend 06bd1a2 with `mountApp`.
 - [x] **0.13.0.** One secret in a ticket's mail, calendars by name only, and nothing kept for older releases.
 - [x] **0.12.0.** The secret in a ticket's mail comes from Helpdesk's own key in the platform's vault; mail 0.11 sent keeps finding its ticket.
 - [x] **0.11.0.** The secret in a ticket's mail is made with the server's key and kept nowhere, so reading tickets no longer lets anyone write into one.
