@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.2
+
+A ticket's customer is found as ERP's portal finds the customers an address belongs to (`ferrum_app_erp::portal::customers_of`), in place of a copy of Helpdesk's own that had missed two of ERP's rules. A customer a web shop made at a guest checkout under the address counted as the address's, though anyone may type anyone's address there; so did a disabled customer one of its contacts names. A ticket raised on the portal or mailed in from such an address was that customer's, under its contract, agreements and assignment rules, and the sender counted as a known customer, so their mail opened a ticket where Support Settings ignore or hold mail from unknown senders. Now such a ticket has no customer and such mail is an unknown sender's. Where an address has several customers, the oldest by its own email is still taken before a contact's. ERP is now a dependency of the app, not of its tests only; it need not be installed, since the customers and contacts it reads are the platform's. No database or interface change.
+
 ## 0.12.1
 
 Helpdesk no longer names the server's key (`FERRUM_SECRET_KEY`), which the platform is making its own. The secrets 0.11 put in the mail it sent (and the hash it kept of each) are checked through Helpdesk's own handle, which gives their fingerprints under each old key the platform still holds (`Vault::old_fingerprints`, contexts `helpdesk mail token` and `helpdesk mail token hash`, on the platform's main from 0ce3017): never to make a secret, only to find the ticket a reply answers. Such a secret does not lapse (a customer may answer months later), so upkeep still records each one's hash for its ticket, once (`helpdesk_mail_token`); once every ticket is recorded, nothing needs the old key, and a reply carrying it still finds its ticket after the platform lets the key go. Needs that platform (0.3.8 from 0ce3017). No database or interface change.
