@@ -11,7 +11,6 @@ import { PERIODS, type PeriodId, VIEWS, viewLink } from "./reportviews";
 export function Reports() {
   useShellTitle(t("Reports"));
   const [period, setPeriod] = useRemembered<PeriodId>("helpdesk:report-period", "30");
-  const today = new Date();
   return (
     <div className="stack">
       <div className="page-head">
@@ -42,7 +41,7 @@ export function Reports() {
             <p>{v.question}</p>
             {v.note && <p className="faint">{v.note}</p>}
             <p className="row">
-              <Link className="btn btn-primary btn-md" to={viewLink(v, v.group, period, today)}>
+              <Link className="btn btn-primary btn-md" to={viewLink(v, v.group, period)}>
                 {v.group ? t("Open by {group}", { group: v.group }) : t("Open the report")}
               </Link>
               {!v.period && <span className="faint">{t("As it stands now")}</span>}
@@ -50,7 +49,7 @@ export function Reports() {
             {v.also.length > 0 && (
               <p className="row" aria-label={t("Other ways to group it")}>
                 {v.also.map((g) => (
-                  <Link key={g} className="chip" to={viewLink(v, g, period, today)}>
+                  <Link key={g} className="chip" to={viewLink(v, g, period)}>
                     {isolate(g)}
                   </Link>
                 ))}

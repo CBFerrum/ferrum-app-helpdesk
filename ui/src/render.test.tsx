@@ -5,10 +5,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
+import { setTimeZone } from "@ferrum/client";
 import type { EntityMeta } from "@ferrum/records";
 import { Composer } from "./Composer";
 import { Conversation } from "./Conversation";
 import { buildFeed, type Story } from "./feed";
+import { day, when } from "./Portal";
 import { MergeDialog } from "./Merge";
 import { Queues } from "./Queues";
 import { Rail, type RailTicket } from "./Rail";
@@ -360,5 +362,19 @@ describe("merging", () => {
     expect(html).toContain('type="checkbox"');
     expect(html).toContain("(closed)");
     expect(html).toContain("Merge 0 tickets");
+  });
+});
+
+describe("the portal's times", () => {
+  it("are on the workspace's clock, not the browser's", () => {
+    // 11:00 UTC on 5 Nov is 01:00 on 6 Nov in Kiritimati (UTC+14), and still 5 Nov in any browser west of UTC+13.
+    const at = "2026-11-05T11:00:00Z";
+    setTimeZone("Pacific/Kiritimati");
+    try {
+      expect(day(at)).toBe(new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "Pacific/Kiritimati" }).format(new Date(at)));
+      expect(when(at)).toContain(new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short", timeZone: "Pacific/Kiritimati" }).format(new Date(at)));
+    } finally {
+      setTimeZone(undefined);
+    }
   });
 });

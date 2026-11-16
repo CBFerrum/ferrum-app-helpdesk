@@ -1,0 +1,1 @@
+import{e as r,j as n}from"./index-CkfqNm0-.js";const d="helpdesk_hours";function u(){return r({queryKey:["helpdesk","calendars"],staleTime:5*6e4,retry:!1,queryFn:({signal:e})=>n.get("/api/admin/calendars",void 0,e).then(a=>a.calendars.map(s=>s.name))}).data}export{d as W,u};

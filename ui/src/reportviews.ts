@@ -2,7 +2,7 @@
 // report, how it is grouped, and the period. The reports are Helpdesk's own (`reports.rs`); the platform draws
 // them, so a view is only a link that names what to ask. Pure, so it is tested.
 
-import { t } from "@ferrum/client";
+import { t, todayIso } from "@ferrum/client";
 
 export type PeriodId = "7" | "30" | "90" | "month";
 
@@ -13,13 +13,13 @@ export const PERIODS: { id: PeriodId; label: string }[] = [
   { id: "month", get label() { return t("This month"); } },
 ];
 
-const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+/** `day` (YYYY-MM-DD) moved by `n` days, counted in UTC so that no zone or daylight saving moves it. */
+const addDays = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 
-/** The period as the reports' `from_date` and `to_date` (both days included), counted back from `today`. */
-export function periodOf(id: PeriodId, today: Date): { from_date: string; to_date: string } {
-  if (id === "month") return { from_date: iso(new Date(today.getFullYear(), today.getMonth(), 1)), to_date: iso(today) };
-  const from = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (Number(id) - 1));
-  return { from_date: iso(from), to_date: iso(today) };
+/** The period as the reports' `from_date` and `to_date` (both days included), counted back from the workspace's today. */
+export function periodOf(id: PeriodId, today = todayIso()): { from_date: string; to_date: string } {
+  if (id === "month") return { from_date: `${today.slice(0, 8)}01`, to_date: today };
+  return { from_date: addDays(today, 1 - Number(id)), to_date: today };
 }
 
 export interface ReportView {
@@ -109,7 +109,7 @@ export const VIEWS: ReportView[] = [
 ];
 
 /** Where a view opens: the platform's report, run at once, with the group and the period. */
-export function viewLink(v: ReportView, group: string, period: PeriodId, today: Date): string {
+export function viewLink(v: ReportView, group: string, period: PeriodId, today?: string): string {
   const sp = new URLSearchParams({ run: "1" });
   if (group) sp.set("group_by", group);
   if (v.period) for (const [k, val] of Object.entries(periodOf(period, today))) sp.set(k, val);

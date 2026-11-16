@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.1
+
+Needs the same platform as 0.13.0. No database change. Interface only, `ui/dist` rebuilt with Ferrum-Frontend `06bd1a2`.
+
+- A customer's tickets in the portal say when they were opened and when each message came on the workspace's clock
+  (or the person's own); it was the browser's. The reports' periods count back from the workspace's today.
+- The Arabic and Hindi names of what 0.13.0 removed (paused hours, the agreements' offset, working hours and
+  holidays) are gone.
+- The two routes to the screens apps no longer have (`apps/:app/settings`, `x/:app/:page`) are gone.
+- The page starts through the frontend's `mountApp`; the
+  interface lint has no baseline file any more.
+
 ## 0.13.0
 
 Helpdesk 0.5.0. Nothing is launched, so nothing is kept any more for what an older release left in a workspace. The package's SQL changed (`helpdesk/001_targets.sql` is gone; `helpdesk/002_mail_tokens.sql` has no `kind` column): a cluster set up before this is set up again from empty. No interface change.
