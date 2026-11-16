@@ -110,12 +110,7 @@ async fn fresh_kernel() -> Arc<Kernel> {
     for source in ferrum_app_helpdesk::reports() {
         ferrum_domain::reports::add_source(source);
     }
-    // The server's key, as production's (0.11 made the secret in a ticket's mail with it; it is now Helpdesk's own).
-    let settings = KernelSettings {
-        secret_key: Some(ferrum_kernel::secret::SecretKey::new([7u8; 32])),
-        public_url: Some("https://help.example.test".into()),
-        ..Default::default()
-    };
+    let settings = KernelSettings { public_url: Some("https://help.example.test".into()), ..Default::default() };
     let kernel = Kernel::boot(db, catalog, hooks, settings, Some(Arc::new(Captured))).await.expect("boot");
     kernel.set_file_store(Arc::new(MemFiles::default()));
     kernel
