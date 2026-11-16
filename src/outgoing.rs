@@ -12,7 +12,7 @@
 //! names it in the message, and the platform attaches it to the ticket (`Kernel::attach_files_tx`).
 
 use ferrum_domain::util::{b, id, rows, s, sys};
-use ferrum_kernel::{Ctx, Doc, Error, Filter, HookCtx, Kernel, Result};
+use ferrum_kernel::{Ctx, Doc, Error, Filter, HookCtx, Kernel, Result, Tx};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -251,13 +251,8 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
         None => None,
     };
     let brand_name = brand.as_ref().and_then(|b| s(b, "display_name").or(s(b, "brand_name"))).map(str::to_string);
-    let account = match address.as_ref().and_then(|a| s(a, "mail_account")).map(str::to_string) {
-        Some(name) => hc
-            .kernel
-            .find_tx(&sctx, hc.tx, "EmailAccount", &[Filter::eq("account_name", name)], None, 1)
-            .await
-            .ok()
-            .and_then(|r| r.first().and_then(|d| id(d, "id"))),
+    let account = match address.as_ref() {
+        Some(a) => mail_account(hc.kernel, &sctx, hc.tx, a).await.and_then(|d| id(&d, "id")),
         None => None,
     };
     // Answers come back to the support address with the ticket's secret in it, found again by its hash. (In the save's
@@ -325,7 +320,6 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
                 in_reply_to: in_reply_to.clone(),
                 references: references.clone(),
                 attachments: Some(m.get("attachments").cloned().unwrap_or_else(|| json!([]))),
-                headers: [("X-Ferrum-Helpdesk".to_string(), number.to_string())].into(),
                 ..Default::default()
             };
             // A name Mail will not take in a Reply-To (the checks are Mail's) is left off, the address stays.
@@ -358,6 +352,26 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
         }
     }
     Ok(())
+}
+
+/// The Mail account replies from a support address go out through: the one it names. None when it names none (or one
+/// Mail does not have): Mail's default outgoing account is used then.
+pub(crate) async fn mail_account(k: &Kernel, sctx: &Ctx, tx: &mut Tx, address: &Doc) -> Option<Doc> {
+    let name = s(address, "mail_account")?.to_string();
+    k.find_tx(sctx, tx, "EmailAccount", &[Filter::eq("account_name", name)], None, 1).await.ok()?.into_iter().next()
+}
+
+/// The addresses Helpdesk's replies go out from: the Mail account of each support address in `addresses`, and Mail's
+/// default outgoing accounts. None without Mail.
+pub(crate) async fn sending_addresses(k: &Kernel, sctx: &Ctx, tx: &mut Tx, addresses: &[Doc]) -> Result<Vec<String>> {
+    if sctx.schema.entity("EmailAccount").is_none() {
+        return Ok(vec![]);
+    }
+    let mut accounts = k.find_tx(sctx, tx, "EmailAccount", &[Filter::eq("enable_outgoing", true), Filter::eq("default_outgoing", true)], None, 100).await?;
+    for a in addresses {
+        accounts.extend(mail_account(k, sctx, tx, a).await);
+    }
+    Ok(accounts.iter().filter_map(|a| s(a, "email_address").map(crate::inbound::norm)).collect())
 }
 
 /// `Name <address>` for a Reply-To: the name as plain words (letters, digits, spaces, dots, dashes and underscores; nothing

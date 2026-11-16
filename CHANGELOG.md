@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.13.2
+
+Needs the same platform as 0.13.1, and builds against Mail (Comms) 0.25.0. No database change. No interface change.
+
+- **No marker on Helpdesk's mail.** Mail 0.25 keeps no `x-ferrum-` header a sender wrote, so `X-Ferrum-Helpdesk` never
+  reached Helpdesk on a received mail. That marker was also never proof: anyone could write it to have their mail
+  dropped. Received mail is not checked for it any more, and Helpdesk's replies no longer carry it.
+- **Helpdesk's own reply coming back is still refused.** A reply forwarded back to a support address, or echoed by
+  a list, keeps the Message-ID Mail gave it. Mail already holds that message, so it takes the copy as a duplicate and
+  never hands it to Helpdesk. This holds even when the reply went out from an account that is not a support address,
+  such as a brand's sender. A suite now shows it.
+- **Its own reply under another Message-ID is refused too.** A relay that gives mail a Message-ID of its own (Amazon SES
+  does) sent Helpdesk's reply back unrecognised. It was taken in as the customer's message, reopened the ticket, and
+  put the brand's sender among the ticket's copies. Mail from an address Helpdesk's replies go out from is now its own,
+  as mail from a support address is. That covers each support address's Mail account and Mail's default outgoing
+  account. It is logged as "Own address" and never taken in. One limit is known: when Mail has no outgoing account,
+  replies go through the server's own mailer under the server's sender, which Helpdesk cannot know, so that echo is
+  still taken in.
+
 ## 0.13.1
 
 Needs the same platform as 0.13.0. No database change. Interface only, `ui/dist` rebuilt with Ferrum-Frontend `06bd1a2`.

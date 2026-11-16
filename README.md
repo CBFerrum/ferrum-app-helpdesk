@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.13.1-7c3aed?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.13.2-7c3aed?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -145,9 +145,10 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 - **Customer matching.** The sender is matched to a customer by exact address (the customer's or a contact's), as
   ERP's portal matches one: never a disabled customer, nor one a web shop made at a guest checkout (anyone may type
   anyone's address there). Unknown senders are handled as Support Settings say: open a ticket, hold for review, or ignore.
-- **Loop and noise protection.** Automatic replies, bounces, mailing-list mail, mail from a support address itself,
-  mail carrying Helpdesk's own marker and mail over a sender's hourly limit (20 by default) are logged and never
-  turned into tickets or answered.
+- **Loop and noise protection.** Automatic replies, bounces, mailing-list mail, mail from a support address itself
+  or from an address Helpdesk's replies go out from (a support address's Mail account, Mail's default outgoing
+  account) and mail over a sender's hourly limit (20 by default) are logged and never turned into tickets or answered.
+  Helpdesk's own reply coming back keeps the Message-ID Mail gave it, and Mail takes it as the message it already has.
 - **Sender authentication.** Mail the mail server could not verify is checked: a failed DMARC, SPF and DKIM result
   from a known customer, the requester or a copy of the ticket it answers is held for staff (Hold Failed, the
   default; Hold All Unverified; or Accept). Mail with no result is taken and marked "Sender not verified" on the message.
@@ -479,6 +480,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 
 ### ✅ Recently shipped
 
+- [x] **0.13.2.** Built against Mail 0.25: no marker on Helpdesk's mail; its own reply coming back is refused by its Message-ID, or by its From when a relay gave it another.
 - [x] **0.13.1.** The portal's times and the report periods on the workspace's clock, no names of what 0.13.0 removed; rebuilt on Ferrum-Frontend 06bd1a2 with `mountApp`.
 - [x] **0.13.0.** One secret in a ticket's mail, calendars by name only, and nothing kept for older releases.
 - [x] **0.12.0.** The secret in a ticket's mail comes from Helpdesk's own key in the platform's vault; mail 0.11 sent keeps finding its ticket.

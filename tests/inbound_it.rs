@@ -253,7 +253,6 @@ async fn scenario() {
         "threaded onto the customer's message"
     );
     assert_eq!((out["reference_entity"].clone(), out["reference_id"].clone()), (json!("Ticket"), json!(t_id.to_string())));
-    assert_eq!(out["headers"]["X-Ferrum-Helpdesk"], after["number"]);
     let html = out["content"].as_str().unwrap().to_string();
     assert!(
         html.contains("<strong>page two</strong>") && html.contains("Sam, Acme Support") && html.contains("https://help.example.test/open/Ticket/"),
@@ -330,7 +329,6 @@ async fn scenario() {
         (json!({"X-Failed-Recipients": "gone@x.test"}), "mailer-daemon@mx.test", "Bounce"),
         (json!({"Return-Path": "<>"}), "ada@cust.test", "Bounce"),
         (json!({}), "support@acme.test", "Own address"),
-        (json!({"X-Ferrum-Helpdesk": "TKT-1"}), "ada@cust.test", "Own address"),
     ];
     let count = noise.len();
     for (n, (headers, from, expect)) in noise.into_iter().enumerate() {
@@ -567,6 +565,60 @@ async fn scenario() {
     deliver(&e, mail("ada@cust.test", "support@acme.test", &format!("Re: [{number}/k3j9x2m1q7aa8888] Vault"), "By an older tag.", "older2@cust.test")).await;
     assert_eq!(said(&e.get("Ticket", vaulted).await), had, "neither reached the ticket");
     assert_eq!(tickets(&e).await.len(), before + 2, "each opened a ticket of its own");
+
+    // ── Helpdesk's own reply coming back to a support address (a customer's mailbox that forwards everything there, a
+    //    list's echo): sent from an account that is no support address (a brand's sender), so its From is not one of
+    //    Helpdesk's own, and with no marker, as Mail keeps none a sender wrote. Its Message-ID is the one Mail gave it:
+    //    Mail has that message already and takes it as a duplicate, so Helpdesk is never handed it ──
+    e.insert("EmailAccount", json!({"account_name": "Acme Brand", "email_address": "hello@acme.test", "smtp_host": "127.0.0.1", "smtp_security": "None"}))
+        .await;
+    e.update("SupportAddress", support_address, json!({"mail_account": "Acme Brand"})).await;
+    let mut conv = e.get("Ticket", t_id).await["conversation"].as_array().unwrap().clone();
+    conv.push(json!({"author_kind": "Agent", "author": "sam@acme.test", "body": "Coming back to us?", "is_internal": false}));
+    e.k.update(&agent, "Ticket", t_id, obj(json!({"conversation": conv})), None).await.unwrap();
+    let replied = (said(&e.get("Ticket", t_id).await), e.get("Ticket", t_id).await["cc"].clone());
+    let ours = e.list("Communication", json!({"direction": "Sent", "reference_id": t_id.to_string()})).await;
+    let ours = ours.iter().find(|c| c["text_content"].as_str().is_some_and(|t| t.contains("Coming back"))).expect("the reply went").clone();
+    assert_eq!(ours["sender"], json!("hello@acme.test"), "from the brand's sender, which is no support address");
+    let mut echo = mail("hello@acme.test", "ada@cust.test", ours["subject"].as_str().unwrap(), "Coming back to us?", ours["message_id"].as_str().unwrap());
+    echo["sender_name"] = json!("Acme Support");
+    echo["cc"] = ours["cc"].clone();
+    echo["in_reply_to"] = ours["in_reply_to"].clone();
+    echo["headers"] = json!({"Delivered-To": "support@acme.test"});
+    let before = (tickets(&e).await.len(), e.list("InboundLog", json!({})).await.len());
+    assert_eq!(e.post_mail(&raw(&echo)).await["status"], json!("duplicate"), "Mail has the message it sent");
+    assert_eq!((said(&e.get("Ticket", t_id).await), e.get("Ticket", t_id).await["cc"].clone()), replied, "nothing added to the ticket, no copy");
+    assert_eq!((tickets(&e).await.len(), e.list("InboundLog", json!({})).await.len()), before, "no ticket, and nothing handed to Helpdesk to log");
+    // The same echo after a relay gave it a Message-ID of its own (Amazon SES does): Mail does not know it and hands it to
+    // Helpdesk, which knows it as its own by its From, the address its replies go out from.
+    let status = e.get("Ticket", t_id).await["status"].clone();
+    let mut rewritten = echo.clone();
+    rewritten["message_id"] = json!("rewritten@relay.test");
+    deliver(&e, rewritten).await;
+    let now = e.get("Ticket", t_id).await;
+    let logged: Vec<(Value, Value)> =
+        e.list("InboundLog", json!({"message_id": "rewritten@relay.test"})).await.iter().map(|l| (l["outcome"].clone(), l["reason"].clone())).collect();
+    assert_eq!(
+        (logged, said(&now), now["status"].clone(), now["cc"].clone()),
+        (vec![(json!("Ignored"), json!("Own address"))], replied.0, status, replied.1.clone()),
+        "Helpdesk's own reply under another Message-ID: dropped as its own, the ticket untouched, nothing copied"
+    );
+    // Mail's default outgoing account is as much Helpdesk's own when it is no support address.
+    let support_account = uid(&e.list("EmailAccount", json!({"account_name": "Support"})).await[0]);
+    e.update("EmailAccount", support_account, json!({"default_outgoing": false})).await;
+    e.insert("EmailAccount", json!({"account_name": "General", "email_address": "office@acme.test", "default_outgoing": true, "smtp_host": "127.0.0.1"})).await;
+    let mut general = echo.clone();
+    general["sender"] = json!("office@acme.test");
+    general["message_id"] = json!("general-echo@relay.test");
+    deliver(&e, general).await;
+    assert_eq!(e.list("InboundLog", json!({"message_id": "general-echo@relay.test"})).await[0]["reason"], json!("Own address"), "from the default sender");
+    assert_eq!((said(&e.get("Ticket", t_id).await), e.get("Ticket", t_id).await["cc"].clone()), (replied.0, replied.1.clone()));
+    // An agent writing from their own mailbox, which nothing sends through, is taken as before.
+    let mut agent_mail = echo.clone();
+    agent_mail["sender"] = json!("sam@acme.test");
+    agent_mail["message_id"] = json!("sam-own@acme.test");
+    deliver(&e, agent_mail).await;
+    assert_eq!(e.list("InboundLog", json!({"message_id": "sam-own@acme.test"})).await[0]["outcome"], json!("Added to Ticket"));
 
     // ── a replica whose vault is closed: the reply goes all the same, with no secret at all, and the customer's answer
     //    finds the ticket by the mail it answers ──
