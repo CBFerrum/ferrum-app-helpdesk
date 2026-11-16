@@ -421,8 +421,6 @@ async fn scenario() {
 
     // ── mail that fails authentication, from someone known, is held: a forged sender cannot read or steer a ticket ──
     e.update("SupportSettings", settings, json!({"unknown_senders": "Open Ticket"})).await;
-    // A settings record from before this release has no value for it: the default is Hold Failed.
-    e.exec("update e_support_settings set unverified_senders = null where tenant_id = $1", &[]).await;
     let known_ticket = uid(&e.list("Ticket", json!({"subject": "Known"})).await[0]);
     // A mail server that adds no authentication result at all: a customer's reply is taken, and marked.
     let before = e.get("Ticket", known_ticket).await["conversation"].as_array().map_or(0, Vec::len);

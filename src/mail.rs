@@ -4,7 +4,7 @@
 //! the headers Mail kept (`Communication.headers`), and goes through [`crate::inbound`].
 //!
 //! A registration follows its address: made when an address is added or enabled, moved when it is changed, taken
-//! back when it is disabled or deleted, and, for every address a workspace already had, by the upkeep. The address
+//! back when it is disabled or deleted, and checked again by the upkeep (what was refused is tried again). The address
 //! itself is registered, which also takes `support+<anything>@`: the tag is the ticket's secret in the Reply-To of
 //! what Helpdesk sends, so an answer finds its ticket by the address it was written to.
 //!

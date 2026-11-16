@@ -61,10 +61,8 @@ pub struct Inbound {
     /// A ticket Mail already threaded it onto.
     pub reference: Option<Uuid>,
     /// The address on the message the registration matched, with its `+tag`.
-    #[serde(default)]
     pub recipient: Option<String>,
     /// What follows the `+` of that address, or what the `*` of the registered pattern matched.
-    #[serde(default)]
     pub token: Option<String>,
 }
 
@@ -496,10 +494,11 @@ async fn drop_copies(k: &Kernel, sctx: &Ctx, files: &[Value]) {
 }
 
 /// What the mail server found of the sender, from the headers Mail stored: `x-ferrum-auth` is `unverified` both when a
-/// check failed and when there was no result, so the stored `authentication-results` tells them apart.
+/// check failed and when there was no result, so the stored `authentication-results` tells them apart. A mail without
+/// Mail's verdict is not verified.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Auth {
-    /// Verified, or Mail kept no verdict (mail from before Mail 0.20): taken as it always was.
+    /// Mail found the sender authenticated (`x-ferrum-auth: verified`).
     Verified,
     /// A result was present and the sender was not authenticated, and it says it failed.
     Failed,
@@ -509,9 +508,8 @@ pub enum Auth {
 
 pub fn auth_of(headers: &BTreeMap<String, String>) -> Auth {
     let get = |n: &str| headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(n)).map(|(_, v)| v.to_lowercase());
-    match get("x-ferrum-auth").as_deref().map(str::trim) {
-        None | Some("verified") => return Auth::Verified,
-        _ => {}
+    if get("x-ferrum-auth").as_deref().map(str::trim) == Some("verified") {
+        return Auth::Verified;
     }
     let Some(result) = get("authentication-results") else { return Auth::Unproven };
     let says = |m: &str, v: &str| result.split(|c: char| c == ';' || c.is_whitespace()).any(|t| t == format!("{m}={v}"));
@@ -754,7 +752,8 @@ mod tests {
     #[test]
     fn a_failed_check_is_told_from_no_result() {
         let h = |v: &[(&str, &str)]| -> BTreeMap<String, String> { v.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect() };
-        assert_eq!(auth_of(&h(&[])), Auth::Verified, "no verdict kept: as before");
+        assert_eq!(auth_of(&h(&[])), Auth::Unproven, "no verdict at all: not proven");
+        assert_eq!(auth_of(&h(&[("authentication-results", "mx.x; dmarc=fail header.from=a.test")])), Auth::Failed, "nor does its absence hide a failure");
         assert_eq!(auth_of(&h(&[("x-ferrum-auth", "verified"), ("authentication-results", "mx; dmarc=pass")])), Auth::Verified);
         assert_eq!(auth_of(&h(&[("x-ferrum-auth", "unverified")])), Auth::Unproven, "no result at all");
         assert_eq!(auth_of(&h(&[("x-ferrum-auth", "unverified"), ("authentication-results", "mx.x; spf=none; dkim=none")])), Auth::Unproven);
@@ -766,15 +765,6 @@ mod tests {
             Auth::Failed,
             "misaligned"
         );
-    }
-
-    #[test]
-    fn mail_held_before_this_release_can_still_be_released() {
-        // What 0.10.x kept in the log's payload: no recipient and no secret.
-        let old = json!({"message_id": "m1@x.test", "in_reply_to": [], "references": [], "from_name": null, "from": "ada@cust.test", "to": ["support@acme.test"], "cc": [],
-            "subject": "Hi", "text": "Hello", "attachments": [], "headers": {"auto-submitted": "no"}, "communication": null, "reference": null});
-        let m: Inbound = serde_json::from_value(old).unwrap();
-        assert_eq!((m.recipient, m.token, m.subject.as_str()), (None, None, "Hi"));
     }
 
     #[test]

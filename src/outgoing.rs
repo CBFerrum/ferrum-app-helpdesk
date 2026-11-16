@@ -297,8 +297,8 @@ pub async fn dispatch(hc: &mut HookCtx<'_>, doc: &Doc, ticket: Uuid, fresh: &[Do
         };
         let values = json!({"body": markdown_html(body), "signature": signature, "link": link, "files": names.join(", "), "attached": can_attach && !ids.is_empty(),
             "brand": brand_name, "token": token});
-        // A template that is missing (a workspace not yet updated) or broken (edited) never stops a reply: the
-        // agent's words go out in plain form, with the ticket's tag in the subject.
+        // A template an administrator's edit broke never stops a reply: the agent's words go out in plain form, with the
+        // ticket's tag in the subject.
         let (title, html) = match render_reply(hc.kernel, &sctx, doc, &values).await {
             Ok(done) => done,
             Err(e) => {
