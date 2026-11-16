@@ -209,7 +209,6 @@
     - {name: resolution_breached, type: check, read_only: true, no_copy: true, in_filter: true}
     - {name: first_response_hours, type: decimal, precision: 2, read_only: true, no_copy: true, description: "Working hours the first response took on the platform's service target, pauses excluded"}
     - {name: resolution_hours, type: decimal, precision: 2, read_only: true, no_copy: true, description: "Working hours resolution took, pauses excluded"}
-    - {name: paused_hours, type: decimal, precision: 2, read_only: true, no_copy: true, hidden: true, description: "Kept for tickets before 0.10; no longer worked out (the platform's target keeps the time worked, not the time stopped)"}
     - {name: response_state, type: select, options: [running, paused, met, met_late, breached], read_only: true, no_copy: true, in_filter: true, label: Response Target, description: "The platform's service target: the breach is recorded once and raises the ticket's updated event"}
     - {name: resolution_state, type: select, options: [running, paused, met, met_late, breached], read_only: true, no_copy: true, in_filter: true, label: Resolution Target}
     - {name: response_secs, type: int, read_only: true, no_copy: true, hidden: true, description: "Seconds of working time the agreement gives for a first response to this ticket's priority"}

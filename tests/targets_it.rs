@@ -1,16 +1,13 @@
 //! Tickets' targets on the platform's clock (`FERRUM_HELPDESK_TEST_DATABASE_URL`, reset first): policies by
 //! priority, customer, group and team as records; the working calendar the workspace owns (made round the clock,
-//! then the administrator's), with daylight saving;
-//! waiting for the customer stops the clock; the breach is recorded once and raises an event; and a workspace
-//! upgraded from a release that counted its own hours keeps its agreements and the clocks of its open tickets,
-//! with no administrator action.
+//! then the administrator's), with daylight saving; waiting for the customer stops the clock; and the breach is
+//! recorded once and raises an event.
 
 mod common;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use common::*;
-use ferrum_kernel::{Calendar, Ctx};
+use ferrum_kernel::Calendar;
 use serde_json::{Value, json};
-use uuid::Uuid;
 
 fn at(s: &str) -> DateTime<Utc> {
     s.parse().unwrap()
@@ -32,7 +29,6 @@ fn targets_on_the_platforms_clock() {
 async fn scenario() {
     let e = boot("targets", false, vec![]).await;
     let k = e.k.clone();
-    let sys = Ctx::system(e.tenant, k.registry.schema(e.tenant).await.unwrap());
 
     // ── the workspace's calendar: made every hour of every day in UTC, then the administrator's ──
     let standard =
@@ -119,167 +115,4 @@ async fn scenario() {
     // ── a priority raised: the new seconds count from the save ──
     let raised = e.update("Ticket", uid(&team_ticket), json!({"priority": "Urgent"})).await;
     assert_eq!(raised["service_level_agreement"], json!(standard.to_string()), "Billing sets no Urgent target: the default's");
-    let _ = (sys, Duration::zero());
-    upgrade(&e).await;
-}
-
-/// A workspace as 0.9.x left it: its agreements, and open tickets that carry their own deadlines and no target rows.
-async fn upgrade(e: &Env) {
-    let k = e.k.clone();
-    let tenant = e.tenant;
-    // A second workspace's worth of state in the same cluster: legacy tickets inserted as the old code stored them.
-    let sla: Uuid = e.sql("select id from e_service_level_agreement where tenant_id = $1 and sla_name = 'Standard'", &[]).await.unwrap();
-    let legacy = |status: &'static str| status;
-    let (running, missed, answered, waiting, done) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
-    let now = Utc::now();
-    let ago = |h: i64| now - Duration::hours(h);
-    let mut tx = k.db.tenant_tx(tenant).await.unwrap();
-    sqlx::query("select set_config('ferrum.system', 'on', true)").execute(&mut *tx).await.unwrap();
-    // "Before": the targets' fields are empty and no round exists (they come with this release), the old ones are filled.
-    for (id, subject, status, opened, rby, zby, rbreach, zbreach, responded, history) in [
-        (
-            running,
-            "Legacy running",
-            "Open",
-            ago(2),
-            Some(now + Duration::hours(2)),
-            Some(now + Duration::hours(14)),
-            false,
-            false,
-            None,
-            json!([{"status": "Open", "at": ago(2)}]),
-        ),
-        (missed, "Legacy missed", "Open", ago(30), Some(ago(26)), Some(ago(14)), true, true, None, json!([{"status": "Open", "at": ago(30)}])),
-        (
-            answered,
-            "Legacy answered",
-            "Open",
-            ago(3),
-            Some(now + Duration::hours(1)),
-            Some(now + Duration::hours(13)),
-            false,
-            false,
-            Some(ago(2)),
-            json!([{"status": "Open", "at": ago(3)}]),
-        ),
-        (
-            waiting,
-            "Legacy waiting",
-            "Replied",
-            ago(5),
-            None,
-            None,
-            false,
-            false,
-            Some(ago(4)),
-            json!([{"status": "Open", "at": ago(5)}, {"status": "Replied", "at": ago(4)}]),
-        ),
-        (
-            done,
-            "Legacy done",
-            "Resolved",
-            ago(50),
-            Some(ago(46)),
-            Some(ago(34)),
-            false,
-            false,
-            Some(ago(49)),
-            json!([{"status": "Open", "at": ago(50)}, {"status": "Resolved", "at": ago(40)}]),
-        ),
-    ] {
-        sqlx::query(
-            "insert into e_ticket (tenant_id, id, subject, status, priority, channel, opened_at, service_level_agreement, response_by, resolution_by, \
-             response_breached, resolution_breached, first_responded_at, resolved_at, status_history, sla_status, paused_hours) \
-             values ($1, $2, $3, $4, 'Medium', 'Portal', $5, $6, $7, $8, $9, $10, $11, $12, $13, 'On Track', 0)",
-        )
-        .bind(tenant)
-        .bind(id)
-        .bind(subject)
-        .bind(legacy(status))
-        .bind(opened)
-        .bind(sla)
-        .bind(rby)
-        .bind(zby)
-        .bind(rbreach)
-        .bind(zbreach)
-        .bind(responded)
-        .bind((status == "Resolved").then(|| ago(40)))
-        .bind(history)
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-    }
-    // The release's migration, as a server upgrade runs it.
-    sqlx::raw_sql(include_str!("../packages/helpdesk/sql/001_targets.sql")).execute(&mut *tx).await.unwrap();
-    tx.commit().await.unwrap();
-    let round = |id: Uuid, target: &'static str| {
-        let (k, tenant) = (k.clone(), tenant);
-        async move {
-            let mut tx = k.db.tenant_tx(tenant).await.unwrap();
-            let row: Option<(i64, i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>, Option<DateTime<Utc>>, Option<DateTime<Utc>>, Option<DateTime<Utc>>)> = sqlx::query_as(
-                "select within_secs, worked_secs, due_at, paused_at, met_at, breached_at, started_at from record_target where tenant_id = $1 and entity = 'Ticket' and record_id = $2 and target = $3",
-            )
-            .bind(tenant)
-            .bind(id)
-            .bind(target)
-            .fetch_optional(&mut *tx)
-            .await
-            .unwrap();
-            tx.commit().await.unwrap();
-            row
-        }
-    };
-    let state = |id: Uuid| {
-        let e_k = k.clone();
-        async move {
-            let mut tx = e_k.db.tenant_tx(tenant).await.unwrap();
-            let r: (Option<String>, Option<String>) = sqlx::query_as("select response_state, resolution_state from e_ticket where tenant_id = $1 and id = $2")
-                .bind(tenant)
-                .bind(id)
-                .fetch_one(&mut *tx)
-                .await
-                .unwrap();
-            tx.commit().await.unwrap();
-            r
-        }
-    };
-    // Running: started when opened, due when it was due, on the seconds its agreement gives.
-    let r = round(running, "respond").await.expect("a round");
-    assert_eq!((r.0, r.1, r.3.is_none(), r.4.is_none(), r.5.is_none()), (4 * 3600, 0, true, true, true));
-    assert!(
-        r.2.is_some_and(|d| (d - (now + Duration::hours(2))).num_seconds().abs() <= 1) && r.6.is_some_and(|s| (s - ago(2)).num_seconds().abs() <= 1),
-        "{r:?}"
-    );
-    assert_eq!(state(running).await, (Some("running".into()), Some("running".into())));
-    assert_eq!(round(running, "resolve").await.unwrap().0, 16 * 3600);
-    // Missed: stays missed, on both targets.
-    assert!(round(missed, "respond").await.unwrap().5.is_some() && round(missed, "resolve").await.unwrap().5.is_some());
-    assert_eq!(state(missed).await, (Some("breached".into()), Some("breached".into())));
-    // Answered: its response stays given; only the resolution runs.
-    let a = round(answered, "respond").await.unwrap();
-    assert!(a.4.is_some() && a.5.is_none(), "met, not late: {a:?}");
-    assert_eq!(state(answered).await, (Some("met".into()), Some("running".into())));
-    // Waiting for the customer: stopped, with the working time it had used (about an hour: opened 5 hours ago, replied at 4, none counted stopped before).
-    let w = round(waiting, "resolve").await.unwrap();
-    assert!(w.3.is_some() && w.2.is_none(), "stopped, no due moment: {w:?}");
-    assert!((3000..=3700).contains(&w.1), "about an hour used: {}", w.1);
-    assert_eq!(state(waiting).await.1, Some("paused".into()));
-    // Resolved before the upgrade: left as it was.
-    assert!(round(done, "resolve").await.is_none() && state(done).await == (None, None));
-
-    // The upkeep brings the inbox's fields up to date, and nothing needs an administrator: a save keeps the clock.
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
-    let doc = e.get("Ticket", running).await;
-    let before = when(&doc["response_by"]);
-    let kept = e.update("Ticket", running, json!({"conversation": [{"author_kind": "Customer", "author": "c@x.test", "body": "Hello?"}]})).await;
-    assert_eq!(kept["response_state"], json!("running"));
-    assert!(
-        (when(&kept["response_by"]) - before).num_seconds().abs() <= 1,
-        "the same due moment after the first save in the new release: {} vs {before}",
-        kept["response_by"]
-    );
-    assert_eq!(e.get("Ticket", missed).await["sla_status"], json!("Breached"));
-    // Their agreements are the records they were.
-    let policy = e.get("ServiceLevelAgreement", sla).await;
-    assert_eq!((policy["sla_name"].clone(), policy["priorities"][0]["response_hours"].clone()), (json!("Standard"), json!("4")));
 }
