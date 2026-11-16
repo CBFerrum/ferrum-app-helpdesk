@@ -49,9 +49,13 @@ async fn scenario() {
     let catalog = Catalog::from_packages(packages).expect("catalog");
     let mut hooks = HookRegistry::default();
     ferrum_domain::register(&mut hooks);
-    ferrum_app_erp::register(&mut hooks);
+    let erp_packages: Vec<String> = ferrum_app_erp::packages().unwrap().iter().map(|p| p.name().to_string()).collect();
+    hooks.app("erp", &[], ferrum_app_erp::register);
+    hooks.own("erp", &erp_packages);
     // As the server registers it: as itself, so that it takes its own vault handle.
     hooks.app("helpdesk", &[], ferrum_app_helpdesk::register);
+    let helpdesk_packages: Vec<String> = ferrum_app_helpdesk::packages().unwrap().iter().map(|p| p.name().to_string()).collect();
+    hooks.own("helpdesk", &helpdesk_packages);
     let settings = KernelSettings { secret_key: Some(SecretKey::new([7u8; 32])), ..Default::default() };
     let k = Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot");
     ferrum_domain::maintenance(&k).await.expect("partitions");

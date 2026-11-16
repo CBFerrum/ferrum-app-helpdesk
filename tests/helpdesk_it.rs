@@ -91,12 +91,16 @@ async fn fresh_kernel() -> Arc<Kernel> {
     let catalog = Catalog::from_packages(packages).expect("catalog");
     let mut hooks = HookRegistry::default();
     ferrum_domain::register(&mut hooks);
-    ferrum_app_erp::register(&mut hooks);
+    let erp_packages: Vec<String> = ferrum_app_erp::packages().unwrap().iter().map(|p| p.name().to_string()).collect();
+    hooks.app("erp", &[], ferrum_app_erp::register);
+    hooks.own("erp", &erp_packages);
     for source in ferrum_app_erp::reports() {
         ferrum_domain::reports::add_source(source);
     }
     // As the server registers it: as itself, so that it takes its own vault handle.
     hooks.app("helpdesk", &[], ferrum_app_helpdesk::register);
+    let helpdesk_packages: Vec<String> = ferrum_app_helpdesk::packages().unwrap().iter().map(|p| p.name().to_string()).collect();
+    hooks.own("helpdesk", &helpdesk_packages);
     for source in ferrum_app_helpdesk::reports() {
         ferrum_domain::reports::add_source(source);
     }
