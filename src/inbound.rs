@@ -21,14 +21,15 @@
 //!   or a copy of the ticket it answers, is held for review when Support Settings say (the default): a forged
 //!   sender must not read or steer a ticket.
 //! * Anything else is a new ticket of the address's team. The sender is matched to a customer by exact address
-//!   (the customer's, or a contact's); an unknown sender is handled as Support Settings say.
+//!   (the customer's, or a contact's) as ERP's portal matches one, never a disabled customer nor a web shop's guest;
+//!   an unknown sender is handled as Support Settings say.
 //! * Mail on a closed ticket (final) opens a new ticket that says which it follows up.
 //!
 //! Everything runs in the caller's transaction as the system, under a lock on the sender, so the same mail
 //! arriving twice at once is taken once and the hourly limit counts exactly.
 
-use crate::site::customer_of;
 use async_trait::async_trait;
+use ferrum_app_erp::portal::customers_of;
 use ferrum_domain::util::{b, id, rows, s, sys};
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, HookCtx, Kernel, Result, Tx};
 use serde::{Deserialize, Serialize};
@@ -472,7 +473,7 @@ async fn run(k: &Kernel, ctx: &Ctx, tx: &mut Tx, mail: &Inbound, held: Option<Uu
     }
     let customer = match existing {
         Some((_, false)) => None,
-        _ => customer_of(k, &sctx, tx, &from).await?,
+        _ => customers_of(k, &sctx, tx, &from).await?.first().copied(),
     };
     // Mail the server could not verify, from someone we know: held, so a forged sender neither adds to their ticket nor opens one
     // in their name. Known: a customer's address or contact, or the requester or a copy of the ticket it answers.
@@ -492,7 +493,7 @@ async fn run(k: &Kernel, ctx: &Ctx, tx: &mut Tx, mail: &Inbound, held: Option<Uu
                         .bind(t)
                         .fetch_one(&mut **tx)
                         .await?;
-                contact.is_some_and(|c| norm(&c) == from) || addresses(cc.as_deref()).contains(&from) || customer_of(k, &sctx, tx, &from).await?.is_some()
+                contact.is_some_and(|c| norm(&c) == from) || addresses(cc.as_deref()).contains(&from) || !customers_of(k, &sctx, tx, &from).await?.is_empty()
             }
             (None, None) => false,
         };

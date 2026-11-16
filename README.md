@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.12.0-7c3aed?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.12.2-7c3aed?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -44,7 +44,7 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 
 | | |
 |---|---|
-| **Version** | 0.12.1 (platform `>=0.3.8, <0.4`) |
+| **Version** | 0.12.2 (platform `>=0.3.8, <0.4`) |
 | **Kind** | Own interface at `/helpdesk/` (agent inbox, ticket workspace, administration, help centre editor, reports) and a page in the customer portal |
 | **What it adds** | 30 entities (21 main, 9 child tables) in 2 packages, 3 roles, 9 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
 | **Depends on** | Ferrum core, shared customers and items |
@@ -142,8 +142,9 @@ skill and shift, and the same data set holds the customer's contracts, equipment
   its hash finds the ticket), so whoever reads tickets (through the API, an export, a report or the audit trail), or the
   database, cannot write into one as the customer.
 - **Closed tickets.** Mail on a closed ticket opens a new one that says which ticket it follows up.
-- **Customer matching.** The sender is matched to a customer by exact address (the customer's or a contact's).
-  Unknown senders are handled as Support Settings say: open a ticket, hold for review, or ignore.
+- **Customer matching.** The sender is matched to a customer by exact address (the customer's or a contact's), as
+  ERP's portal matches one: never a disabled customer, nor one a web shop made at a guest checkout (anyone may type
+  anyone's address there). Unknown senders are handled as Support Settings say: open a ticket, hold for review, or ignore.
 - **Loop and noise protection.** Automatic replies, bounces, mailing-list mail, mail from a support address itself,
   mail carrying Helpdesk's own marker and mail over a sender's hourly limit (20 by default) are logged and never
   turned into tickets or answered.
@@ -575,7 +576,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-Its tests also build on [ferrum-app-erp](https://github.com/CBFerrum/ferrum-app-erp) and the Mail app, which Cargo takes
+It and its tests build on [ferrum-app-erp](https://github.com/CBFerrum/ferrum-app-erp) and the Mail app, which Cargo takes
 from GitHub. To work on them alongside this app, clone them into the same folder and add to the same file:
 
 ```toml

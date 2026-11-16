@@ -21,6 +21,11 @@ use uuid::Uuid;
 
 const PASSWORD: &str = "Correct-Horse-9";
 
+/// Commerce's mark on the customers its guest checkouts make, as its package adds it; installed
+/// last, so that all before it runs as a workspace without Commerce does.
+const COMMERCE: &str = "{package: commerce, version: '1', depends: [parties], field_prefix: commerce_, overlays: [{entity: Customer, ops: \
+     [{op: add_field, field: {name: commerce_guest, type: check, read_only: true, in_filter: true}}]}]}";
+
 fn obj(v: Value) -> Doc {
     v.as_object().cloned().unwrap()
 }
@@ -88,6 +93,7 @@ async fn fresh_kernel() -> Arc<Kernel> {
     let mut packages = ferrum_domain::packages().expect("platform packages");
     packages.extend(ferrum_app_erp::packages().expect("ERP's packages"));
     packages.extend(ferrum_app_helpdesk::packages().expect("app packages"));
+    packages.push(ferrum_meta::catalog::load_package_files(&[("package.yaml".to_string(), COMMERCE.to_string())].into()).expect("Commerce's mark"));
     let catalog = Catalog::from_packages(packages).expect("catalog");
     let mut hooks = HookRegistry::default();
     ferrum_domain::register(&mut hooks);
@@ -606,7 +612,10 @@ async fn scenario() {
     assert!(refused(&t.try_update("Ticket", t3id, json!({"satisfaction_rating": 6})).await, "satisfaction_rating"));
     let reopened = t.say(t3id, json!({"author_kind": "Customer", "body": "It happened again this morning."})).await.unwrap();
     assert_eq!((reopened["status"].clone(), reopened["resolved_at"].clone(), reopened["sla_status"].clone()), (json!("Open"), Value::Null, json!("On Track")));
-    assert!(near(ts(&reopened["resolution_by"]), opened + h(4) + waited(&reopened)), "the time it sat resolved does not count");
+    // A reopened ticket's resolution starts again from the reopening: the clock's start the ticket records.
+    let restarted = ts(&reopened["sla_start"]);
+    assert!(restarted >= ts(&resolved["resolved_at"]), "from the reopening, not from the opening");
+    assert_eq!(ts(&reopened["resolution_by"]), restarted + h(4), "the time it sat resolved does not count");
     t.update("Ticket", t3id, json!({"status": "Resolved", "satisfaction_rating": 4, "feedback": "Quick help"})).await;
     let closed = t.update("Ticket", t3id, json!({"status": "Closed"})).await;
     assert!(closed["closed_at"].is_string());
@@ -838,6 +847,7 @@ async fn scenario() {
     helpdesk_alone(&k).await;
     portal(&k).await;
     replies_and_files(&k).await;
+    not_theirs(&k).await;
 }
 
 /// Helpdesk in a workspace without ERP (Ferrum docs/plan/apps-ui.md §13): customers and items are
@@ -1279,4 +1289,51 @@ async fn replies_and_files(k: &Arc<Kernel>) {
     assert_eq!(raj.action("SavedReply", thanks, "used", json!({})).await["uses"], json!(2), "counted for everyone it is shared with");
     assert!(priya.try_update("SavedReply", thanks, json!({"body": "changed"})).await.is_err(), "a shared reply is its writer's and the managers' to change");
     assert_eq!(boss.update("SavedReply", thanks, json!({"body": "Hi {{customer.first_name}}"})).await["body"], json!("Hi {{customer.first_name}}"));
+}
+
+/// Mail from `from` to the support address, as Mail hands it over.
+async fn write_in(k: &Kernel, ctx: &Ctx, from: &str, message_id: &str) -> ferrum_app_helpdesk::inbound::Outcome {
+    let mail = ferrum_app_helpdesk::inbound::Inbound {
+        message_id: Some(message_id.into()),
+        from: from.into(),
+        to: vec!["help@desk.test".into()],
+        subject: "My order".into(),
+        text: "Where is it?".into(),
+        ..Default::default()
+    };
+    let mut tx = k.db.tenant_tx(ctx.tenant).await.unwrap();
+    let out = ferrum_app_helpdesk::inbound::receive(k, ctx, &mut tx, &mail).await.unwrap();
+    tx.commit().await.unwrap();
+    out
+}
+
+/// An address is no customer's for a web shop's guest under it (anyone may type anyone's address at a guest
+/// checkout), nor for a disabled customer one of its contacts names: what it raises on the portal or writes to
+/// support is no customer's ticket, and its mail is a stranger's.
+async fn not_theirs(k: &Arc<Kernel>) {
+    use ferrum_app_helpdesk::inbound::Outcome;
+    let session = k.login("desk", "admin@desk.test", PASSWORD).await.expect("login");
+    k.install_packages(session.tenant, &["commerce".into()]).await.expect("Commerce's mark");
+    let t = T { k: k.clone(), ctx: k.load_ctx(session.tenant, session.user, Some(session.token_version), "it".into()).await.expect("ctx") };
+    let system = T { k: k.clone(), ctx: ferrum_domain::util::sys(&t.ctx) };
+    let guest = uid(&system.insert("Customer", json!({"customer_name": "Lea at the shop", "email": "lea@shop.test", "commerce_guest": true})).await);
+    let old = uid(&t.insert("Customer", json!({"customer_name": "Old Max Co"})).await);
+    t.insert("Contact", json!({"first_name": "Max", "emails": [{"email": "max@old.test"}], "customer": old.to_string()})).await;
+    t.update("Customer", old, json!({"disabled": true})).await;
+    t.insert("SupportAddress", json!({"address": "help@desk.test"})).await;
+    let mut whose = vec![];
+    for who in ["lea@shop.test", "max@old.test"] {
+        let person = k.create_user(&t.ctx, who, who, None, &[], false).await.unwrap();
+        k.set_user_kind(&t.ctx, person, "portal").await.unwrap();
+        let person = k.load_ctx(session.tenant, person, None, "it".into()).await.unwrap();
+        let raised = call(k, Some(&person), "POST", "portal/tickets", json!({"subject": "My order", "description": "Where is it?"})).await.unwrap();
+        whose.push(t.get("Ticket", vid(&raised)).await["customer"].clone());
+        let Outcome::Created(mailed) = write_in(k, &system.ctx, who, &format!("first@{who}")).await else { panic!("{who}'s mail opened no ticket") };
+        whose.push(t.get("Ticket", mailed).await["customer"].clone());
+    }
+    assert_eq!(whose, vec![Value::Null; 4], "not the guest's ({guest}) nor the disabled customer's ({old}): portal and mail, Lea then Max");
+    t.settings(json!({"unknown_senders": "Ignore"})).await;
+    for who in ["lea@shop.test", "max@old.test"] {
+        assert_eq!(write_in(k, &system.ctx, who, &format!("again@{who}")).await, Outcome::Ignored("Unknown sender"), "{who} is no customer's");
+    }
 }
