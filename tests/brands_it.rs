@@ -1,10 +1,9 @@
 //! A brand on a support address (`FERRUM_HELPDESK_TEST_DATABASE_URL`, reset first): a name, a signature and a wrapper as
-//! records, made once from the labels a workspace's addresses already had, and carried by the replies to tickets that
-//! came in at the address, through the real Mail app.
+//! records, carried by the replies to tickets that came in at the address, through the real Mail app.
 
 mod common;
 use common::*;
-use serde_json::{Value, json};
+use serde_json::json;
 
 fn raw(from: &str, to: &str, subject: &str, id: &str) -> String {
     format!(
@@ -20,26 +19,11 @@ fn brands() {
 
 async fn scenario() {
     let e = boot("brands", true, vec![]).await;
-    let k = e.k.clone();
     let team = uid(&e.insert("SupportTeam", json!({"team_name": "Support", "members": [{"agent": "sam@acme.test"}]})).await);
     let agent = e.user("sam@acme.test", &["Support Agent"]).await;
-    // A workspace as 0.10 left it: addresses with a label, no brand.
-    let acme = uid(&e.insert("SupportAddress", json!({"address": "support@acme.test", "label": "Acme Support", "team": team.to_string()})).await);
-    let plain = uid(&e.insert("SupportAddress", json!({"address": "plain@acme.test", "team": team.to_string()})).await);
-    let also = uid(&e.insert("SupportAddress", json!({"address": "also@acme.test", "label": "Acme Support", "team": team.to_string()})).await);
-    assert!(e.list("SupportBrand", json!({})).await.is_empty());
-
-    // The upkeep makes a brand of each label, once, and links the addresses that carried it.
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
-    let brands = e.list("SupportBrand", json!({})).await;
-    assert_eq!((brands.len(), brands[0]["brand_name"].clone(), brands[0]["display_name"].clone()), (1, json!("Acme Support"), json!("Acme Support")));
-    let brand = uid(&brands[0]);
-    for address in [acme, also] {
-        assert_eq!(e.get("SupportAddress", address).await["brand"], json!(brand.to_string()));
-    }
-    assert_eq!(e.get("SupportAddress", plain).await["brand"], Value::Null, "no label, no brand");
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
-    assert_eq!(e.list("SupportBrand", json!({})).await.len(), 1, "once");
+    let brand = uid(&e.insert("SupportBrand", json!({"brand_name": "Acme Support"})).await);
+    e.insert("SupportAddress", json!({"address": "support@acme.test", "brand": brand.to_string(), "team": team.to_string()})).await;
+    e.insert("SupportAddress", json!({"address": "plain@acme.test", "team": team.to_string()})).await;
     // The agent reads brands and cannot change them.
     assert_eq!(e.k.get(&agent, "SupportBrand", brand, false).await.unwrap()["brand_name"], json!("Acme Support"));
     assert!(e.k.update(&agent, "SupportBrand", brand, obj(json!({"display_name": "Mine"})), None).await.is_err());

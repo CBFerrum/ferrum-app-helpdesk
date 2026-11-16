@@ -33,12 +33,3 @@ pub(crate) async fn mail_token(k: &Kernel, tenant: Uuid, ticket: Uuid) -> Result
         Err(e) => Err(e),
     }
 }
-
-/// What 0.11 issued with the server's key (and each it had retired): `message`'s fingerprint for `context`, one of
-/// Helpdesk's own (`helpdesk mail token`, `helpdesk mail token hash`), under each old key the platform still holds,
-/// through Helpdesk's handle; to check mail already sent, never to make a secret. Empty once no old key is held.
-pub(crate) fn old_fingerprints(k: &Kernel, context: &str, message: &str) -> Result<Vec<String>> {
-    let v =
-        VAULT.read().unwrap_or_else(|e| e.into_inner()).clone().ok_or_else(|| Error::Unavailable("Helpdesk was registered without its vault handle".into()))?;
-    v.old_fingerprints(k, context, message)
-}

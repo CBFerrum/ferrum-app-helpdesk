@@ -111,7 +111,9 @@ async fn scenario() {
     // ── addresses are registered with Mail and kept in step ──
     let support = uid(&e.insert("SupportTeam", json!({"team_name": "Support", "members": [{"agent": "sam@acme.test"}, {"agent": "kim@acme.test"}]})).await);
     let billing = uid(&e.insert("SupportTeam", json!({"team_name": "Billing", "members": [{"agent": "bea@acme.test"}]})).await);
-    let support_address = uid(&e.insert("SupportAddress", json!({"address": "Support@Acme.test", "label": "Acme Support", "team": support.to_string()})).await);
+    let brand = uid(&e.insert("SupportBrand", json!({"brand_name": "Acme Support"})).await);
+    let support_address =
+        uid(&e.insert("SupportAddress", json!({"address": "Support@Acme.test", "brand": brand.to_string(), "team": support.to_string()})).await);
     let billing_address =
         uid(&e.insert("SupportAddress", json!({"address": "billing@acme.test", "team": billing.to_string(), "default_priority": "High"})).await);
     assert_eq!(registered(&e).await, ["billing@acme.test", "support@acme.test"], "registered as saved, in lower case");
@@ -152,11 +154,6 @@ async fn scenario() {
     assert_eq!(registered(&e).await, ["billing@acme.test", "desk@acme.test", "support@acme.test"]);
     let fixed = e.get("SupportAddress", desk).await;
     assert_eq!((fixed["mail_registered"].clone(), fixed["registration_note"].clone()), (json!(true), Value::Null));
-    // A Mail that has no registrations (an older one) is left alone, and nothing breaks.
-    sqlx::raw_sql("alter table comms_mail_route rename to comms_mail_route_older").execute(&e.k.db.pool).await.unwrap();
-    ferrum_app_helpdesk::maintenance(&e.k).await.unwrap();
-    e.update("SupportAddress", scratch_free(&e).await, json!({"label": "still saves"})).await;
-    sqlx::raw_sql("alter table comms_mail_route_older rename to comms_mail_route").execute(&e.k.db.pool).await.unwrap();
     e.k.delete(&e.admin, "SupportAddress", desk, None).await.unwrap();
     e.k.delete(&e.admin, "SupportAddress", elsewhere, None).await.unwrap();
     assert_eq!(registered(&e).await, ["billing@acme.test", "support@acme.test"]);
@@ -248,7 +245,7 @@ async fn scenario() {
     assert_eq!(
         out["reply_to_address"],
         json!(format!("Acme Support <support+{token}@acme.test>")),
-        "answers come back to the support address, in its brand's name (made from its label by the upkeep), tagged with the ticket's secret"
+        "answers come back to the support address, in its brand's name, tagged with the ticket's secret"
     );
     assert_eq!(
         (out["in_reply_to"].clone(), out["mail_references"].clone()),
@@ -284,7 +281,9 @@ async fn scenario() {
     // By the address it was written to, with nothing else to go by.
     deliver(&e, mail("ada@cust.test", &format!("support+{token}@acme.test"), "A new subject line", "By the address.", "r2@cust.test")).await;
     assert_eq!(e.get("Ticket", t_id).await["conversation"].as_array().unwrap().len(), 5, "the secret in the address found it");
-    deliver(&e, mail("ada@cust.test", "support+wrongwrongwrong@acme.test", "Wrong address secret", "Guessing.", "r2b@cust.test")).await;
+    // A guess of the right shape (32 hexadecimal digits) finds nothing.
+    let guess = "0123456789abcdef0123456789abcdef";
+    deliver(&e, mail("ada@cust.test", &format!("support+{guess}@acme.test"), "Wrong address secret", "Guessing.", "r2b@cust.test")).await;
     assert_eq!(e.list("Ticket", json!({"subject": "Wrong address secret"})).await.len(), 1, "a guess is a new ticket");
     // By the subject's tag, last.
     let tagged = format!("Re: [{}/{token}] Printer jam", t["number"].as_str().unwrap());
@@ -311,7 +310,7 @@ async fn scenario() {
     );
     let before = tickets(&e).await.len();
     for (n, subject) in [
-        ("wrong secret", format!("Re: [{}/wrongwrongwrong] Printer jam", t["number"].as_str().unwrap())),
+        ("wrong secret", format!("Re: [{}/{guess}] Printer jam", t["number"].as_str().unwrap())),
         ("no tag", "Re: Printer jam".to_string()),
         ("number alone", format!("Re: [{}] Printer jam", t["number"].as_str().unwrap())),
     ] {
@@ -422,8 +421,6 @@ async fn scenario() {
 
     // ── mail that fails authentication, from someone known, is held: a forged sender cannot read or steer a ticket ──
     e.update("SupportSettings", settings, json!({"unknown_senders": "Open Ticket"})).await;
-    // A settings record from before this release has no value for it: the default is Hold Failed.
-    e.exec("update e_support_settings set unverified_senders = null where tenant_id = $1", &[]).await;
     let known_ticket = uid(&e.list("Ticket", json!({"subject": "Known"})).await[0]);
     // A mail server that adds no authentication result at all: a customer's reply is taken, and marked.
     let before = e.get("Ticket", known_ticket).await["conversation"].as_array().map_or(0, Vec::len);
@@ -533,79 +530,43 @@ async fn scenario() {
     );
     assert!(erased[0]["body"].is_null() && erased[0]["payload"].is_null(), "the held mail's words go with the sender: {:?}", erased[0]);
 
-    // ── mail sent before 0.11.0 carries the secret the ticket kept then (its column stays): it still finds the ticket ──
+    // ── a ticket's secret is kept nowhere but as a hash, from the ticket's making; a secret of any other shape than
+    //    Helpdesk's 32 hexadecimal digits is malformed and finds nothing, even one a ticket had recorded: the mail is a
+    //    new ticket ──
     // Ada has written more than the hourly limit by now: none for what follows.
     e.update("SupportSettings", settings, json!({"inbound_per_hour": 0})).await;
-    deliver(&e, mail("ada@cust.test", "support@acme.test", "Old printer", "Before the upgrade.", "old1@cust.test")).await;
-    let old = e.list("Ticket", json!({"subject": "Old printer"})).await.remove(0);
-    {
-        let mut tx = e.k.db.tenant_tx(e.tenant).await.unwrap();
-        sqlx::raw_sql("alter table e_ticket add column if not exists mail_token text").execute(&mut *tx).await.unwrap();
-        sqlx::query("update e_ticket set mail_token = 'k3j9x2m1q7aa8888' where tenant_id = $1 and id = $2")
-            .bind(e.tenant)
-            .bind(uid(&old))
-            .execute(&mut *tx)
-            .await
-            .unwrap();
-        tx.commit().await.unwrap();
-    }
-    let said = |d: &ferrum_kernel::Doc| d.get("conversation").and_then(Value::as_array).map_or(0, Vec::len);
-    let had = said(&e.get("Ticket", uid(&old)).await);
-    deliver(&e, mail("ada@cust.test", "support+k3j9x2m1q7aa8888@acme.test", "Re: Old printer", "By the old address.", "old2@cust.test")).await;
-    let by_tag = format!("Re: [{}/k3j9x2m1q7aa8888] Old printer", old["number"].as_str().unwrap());
-    deliver(&e, mail("ada@cust.test", "support@acme.test", &by_tag, "By the old tag.", "old3@cust.test")).await;
-    assert_eq!(said(&e.get("Ticket", uid(&old)).await), had + 2, "both found the ticket by the secret it had");
-    assert!(e.list("Ticket", json!({"subject": "Re: Old printer"})).await.is_empty(), "neither opened a ticket of its own");
     // A workspace makes the reply's template its own as the package gives it: it names the secret as one of its values.
     let reply: ferrum_meta::MessageDef = serde_json::from_value(e.k.message_template(&e.admin, "helpdesk.reply").await.unwrap()["template"].clone()).unwrap();
     e.k.save_message_template(&e.admin, &reply).await.expect("the reply's template, saved as the workspace's own");
-
-    // ── mail 0.11 sent carries a secret made with the server's key: it still finds its ticket, before and after upkeep
-    //    records its hash (which lets the server's key become the platform's own); a secret made now comes from
-    //    Helpdesk's own key in the vault (src/keys.rs), is not that one, and is kept nowhere but as a hash ──
-    deliver(&e, mail("ada@cust.test", "support@acme.test", "Eleven", "Mailed under 0.11.", "eleven1@cust.test")).await;
-    let eleven = uid(&e.list("Ticket", json!({"subject": "Eleven"})).await.remove(0));
-    let server = ferrum_kernel::secret::SecretKey::new([7u8; 32]);
-    let old = server.fingerprint("helpdesk mail token", &format!("{}/{eleven}", e.tenant))[..32].to_string();
-    {
+    deliver(&e, mail("ada@cust.test", "support@acme.test", "Vault", "Mailed in.", "vault1@cust.test")).await;
+    let vaulted = uid(&e.list("Ticket", json!({"subject": "Vault"})).await.remove(0));
+    let new = common::token(&e, vaulted).await;
+    let kept: Vec<String> = {
         let mut tx = e.k.db.tenant_tx(e.tenant).await.unwrap();
-        sqlx::query("update e_ticket set mail_token_hash = $3 where tenant_id = $1 and id = $2")
+        let r = sqlx::query_scalar("select token_hash from helpdesk_mail_token where tenant_id = $1 and ticket = $2")
             .bind(e.tenant)
-            .bind(eleven)
-            .bind(server.fingerprint("helpdesk mail token hash", &old))
-            .execute(&mut *tx)
-            .await
-            .unwrap();
-        tx.commit().await.unwrap();
-    }
-    let new = common::token(&e, eleven).await;
-    assert!(new.len() == 32 && new != old, "made with Helpdesk's key, not the server's");
-    let kept: Vec<(String, String)> = {
-        let mut tx = e.k.db.tenant_tx(e.tenant).await.unwrap();
-        let r = sqlx::query_as("select token_hash, kind from helpdesk_mail_token where tenant_id = $1 and ticket = $2")
-            .bind(e.tenant)
-            .bind(eleven)
+            .bind(vaulted)
             .fetch_all(&mut *tx)
             .await
             .unwrap();
         tx.commit().await.unwrap();
         r
     };
-    assert!(kept.len() == 1 && kept[0].1 == "vault" && !kept[0].0.contains(&new), "its hash, kept from the ticket's making: {kept:?}");
+    assert!(kept.len() == 1 && !kept[0].contains(&new), "its hash, kept from the ticket's making: {kept:?}");
     let said = |d: &ferrum_kernel::Doc| d.get("conversation").and_then(Value::as_array).map_or(0, Vec::len);
-    let had = said(&e.get("Ticket", eleven).await);
-    deliver(&e, mail("ada@cust.test", &format!("support+{old}@acme.test"), "Re: Eleven", "By 0.11's address.", "eleven2@cust.test")).await;
-    assert_eq!(said(&e.get("Ticket", eleven).await), had + 1, "0.11's secret, by the server's key");
-    ferrum_app_helpdesk::maintenance(&e.k).await.expect("upkeep");
-    ferrum_app_helpdesk::maintenance(&e.k).await.expect("upkeep again: nothing twice");
-    let carried: i64 = e.sql("select count(*) from helpdesk_mail_token where tenant_id = $1 and ticket = $2 and kind = 'server'", &[eleven]).await.unwrap();
-    assert_eq!(carried, 1, "0.11's secret recorded by its hash, once");
-    // With the ticket's 0.11 hash gone, as when the server's key is no longer the apps', its secret still finds it.
-    e.exec("update e_ticket set mail_token_hash = null where tenant_id = $1 and id = $2", &[eleven]).await;
-    let by_tag = format!("Re: [{}/{old}] Eleven", e.get("Ticket", eleven).await["number"].as_str().unwrap());
-    deliver(&e, mail("ada@cust.test", "support@acme.test", &by_tag, "By 0.11's tag.", "eleven3@cust.test")).await;
-    deliver(&e, mail("ada@cust.test", &format!("support+{new}@acme.test"), "Re: Eleven", "By this release's address.", "eleven4@cust.test")).await;
-    assert_eq!(said(&e.get("Ticket", eleven).await), had + 3, "each found its ticket");
+    let had = said(&e.get("Ticket", vaulted).await);
+    // 0.10's shape, sixteen letters and digits, recorded for the ticket as if mail had carried it.
+    e.exec(
+        "insert into helpdesk_mail_token (tenant_id, token_hash, ticket) values ($1, encode(sha256(convert_to($1::text || '/k3j9x2m1q7aa8888', 'UTF8')), 'hex'), $2)",
+        &[vaulted],
+    )
+    .await;
+    let before = tickets(&e).await.len();
+    let number = e.get("Ticket", vaulted).await["number"].as_str().unwrap().to_string();
+    deliver(&e, mail("ada@cust.test", "support+k3j9x2m1q7aa8888@acme.test", "Re: Vault", "By an older address.", "older1@cust.test")).await;
+    deliver(&e, mail("ada@cust.test", "support@acme.test", &format!("Re: [{number}/k3j9x2m1q7aa8888] Vault"), "By an older tag.", "older2@cust.test")).await;
+    assert_eq!(said(&e.get("Ticket", vaulted).await), had, "neither reached the ticket");
+    assert_eq!(tickets(&e).await.len(), before + 2, "each opened a ticket of its own");
 
     // ── a replica whose vault is closed: the reply goes all the same, with no secret at all, and the customer's answer
     //    finds the ticket by the mail it answers ──
@@ -614,25 +575,20 @@ async fn scenario() {
     let db = ferrum_kernel::Db::connect(ferrum_kernel::DbConfig { url, max_connections: 8, ..Default::default() }).await.expect("connect");
     let closed = common::kernel(db, true, vec![]).await;
     let sam = closed.load_ctx(e.tenant, agent.user, None, "it".into()).await.unwrap();
-    let mut conv = e.get("Ticket", eleven).await["conversation"].as_array().unwrap().clone();
+    let mut conv = e.get("Ticket", vaulted).await["conversation"].as_array().unwrap().clone();
     conv.push(json!({"author_kind": "Agent", "author": "sam@acme.test", "body": "Sent while the vault is closed.", "is_internal": false}));
     closed
-        .update(&sam, "Ticket", eleven, ferrum_kernel::Doc::from_iter([("conversation".to_string(), Value::Array(conv))]), None)
+        .update(&sam, "Ticket", vaulted, ferrum_kernel::Doc::from_iter([("conversation".to_string(), Value::Array(conv))]), None)
         .await
         .expect("the reply is saved and sent");
-    let sent = e.list("Communication", json!({"direction": "Sent", "reference_id": eleven.to_string()})).await;
+    let sent = e.list("Communication", json!({"direction": "Sent", "reference_id": vaulted.to_string()})).await;
     let last = sent.iter().find(|c| c["text_content"].as_str().is_some_and(|t| t.contains("vault is closed"))).expect("the reply went");
     let subject = last["subject"].as_str().unwrap();
-    assert!(!subject.contains(&new) && !subject.contains(&old), "no secret in the subject: {subject}");
+    assert!(!subject.contains(&new), "no secret in the subject: {subject}");
     assert!(last["reply_to_address"].is_null(), "nor a Reply-To with one: {last:?}");
     let answers = last["message_id"].as_str().expect("its id").to_string();
-    let mut answer = mail("ada@cust.test", "support@acme.test", "Re: Eleven", "Answered while it was closed.", "eleven5@cust.test");
+    let mut answer = mail("ada@cust.test", "support@acme.test", "Re: Vault", "Answered while it was closed.", "vault5@cust.test");
     answer["in_reply_to"] = json!(answers);
     deliver(&e, answer).await;
-    assert_eq!(said(&e.get("Ticket", eleven).await), had + 5, "the reply and the answer to it, by the mail it answers");
-}
-
-/// A support address that exists, to save.
-async fn scratch_free(e: &Env) -> Uuid {
-    uid(&e.list("SupportAddress", json!({})).await[0])
+    assert_eq!(said(&e.get("Ticket", vaulted).await), had + 2, "the reply and the answer to it, by the mail it answers");
 }

@@ -34,16 +34,6 @@ fn ts_value(t: Ts) -> Value {
     json!(t.to_rfc3339_opts(SecondsFormat::Millis, true))
 }
 
-/// "HH:MM" (one-digit hours allowed) → minutes since midnight; "24:00" is the end of the day.
-pub fn parse_hm(v: &str) -> Option<u32> {
-    let (h, m) = v.trim().split_once(':')?;
-    if h.is_empty() || h.len() > 2 || m.len() != 2 {
-        return None;
-    }
-    let (h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);
-    (m < 60 && (h < 24 || (h == 24 && m == 0))).then_some(h * 60 + m)
-}
-
 /// The status timeline `[{status, at}]` kept on the ticket, oldest first.
 fn timeline(doc: &Doc) -> Vec<(String, Ts)> {
     let mut out: Vec<(String, Ts)> = doc
@@ -212,17 +202,6 @@ impl DocHook for SlaHook {
                 && !seen.insert(p.to_string())
             {
                 errors.push(FieldError::new("priority", "is listed twice").in_row("priorities", i));
-            }
-        }
-        for (i, r) in rows(doc, "working_hours").iter().enumerate() {
-            let (start, end) = (s(r, "start_time").map(parse_hm), s(r, "end_time").map(parse_hm));
-            match (start, end) {
-                (Some(None), _) => errors.push(FieldError::new("start_time", "use HH:MM, e.g. 09:00").in_row("working_hours", i)),
-                (_, Some(None)) => errors.push(FieldError::new("end_time", "use HH:MM, e.g. 18:00 (24:00 for midnight)").in_row("working_hours", i)),
-                (Some(Some(a)), Some(Some(z))) if a >= z => {
-                    errors.push(FieldError::new("end_time", "must be after the start time; enter a night shift as one row per day").in_row("working_hours", i))
-                }
-                _ => {}
             }
         }
         // A target that names a calendar the workspace lacks refuses every save of a ticket: the name must be one there is.
@@ -454,7 +433,7 @@ impl DocHook for TicketHook {
         }
 
         // (The secret in the mail sent about the ticket is kept nowhere: its hash is recorded when the ticket is made and
-        // as mail goes, in helpdesk_mail_token. `mail_token_hash`, which 0.11 kept here, is no longer written.)
+        // as mail goes, in helpdesk_mail_token.)
 
         // New messages: author and server time (replies to an existing ticket cannot be backdated).
         let known: HashSet<String> =
@@ -603,12 +582,12 @@ impl DocHook for TicketHook {
     /// (automations cannot address the user behind an email field).
     async fn after_save(&self, hc: &mut HookCtx<'_>, doc: &Doc, old: Option<&Doc>) -> Result<()> {
         let Some(ticket) = id(doc, "id") else { return Ok(()) };
-        // A new ticket is findable by its secret from the start, as it was when the ticket kept a hash of it: mail sent
-        // about it records the secret again (a newer one after Helpdesk's key is rotated).
+        // A new ticket is findable by its secret from the start: mail sent about it records the secret again (a newer one
+        // after Helpdesk's key is rotated).
         if old.is_none()
             && let Some(token) = crate::inbound::ticket_token(hc.kernel, hc.ctx.tenant, ticket).await?
         {
-            crate::inbound::sent_with(hc.tx, hc.ctx.tenant, ticket, &token, "vault").await?;
+            crate::inbound::sent_with(hc.tx, hc.ctx.tenant, ticket, &token).await?;
         }
         let known: HashSet<String> = old.map(|o| rows(o, "conversation").iter().filter_map(|r| s(r, "id").map(str::to_string)).collect()).unwrap_or_default();
         let fresh: Vec<Doc> = rows(doc, "conversation").into_iter().filter(|m| !s(m, "id").is_some_and(|i| known.contains(i))).collect();
@@ -1037,16 +1016,6 @@ mod tests {
         assert_eq!(level(json!({"sla_status": "Breached"})), Some(1), "from the bottom, one at a time");
         assert_eq!(level(json!({"sla_status": "Breached", "escalation_level": 2, "priority": "Low"})), None, "not this priority");
         assert_eq!(level(json!({"sla_status": "Breached", "escalation_level": 2, "priority": "Urgent"})), Some(3));
-    }
-
-    #[test]
-    fn working_hours_parse() {
-        assert_eq!(parse_hm("09:00"), Some(540));
-        assert_eq!(parse_hm("9:30"), Some(570));
-        assert_eq!(parse_hm("24:00"), Some(1440));
-        for bad in ["24:01", "25:00", "09:60", "0900", "9", "09:0", ":30", "ab:cd"] {
-            assert_eq!(parse_hm(bad), None, "{bad}");
-        }
     }
 
     fn sla(name: &str, customer: Option<Uuid>, group: Option<Uuid>, team: Option<Uuid>, ticket_type: Option<Uuid>, priorities: &[(&str, &str, &str)]) -> Sla {

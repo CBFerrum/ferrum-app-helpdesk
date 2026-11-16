@@ -4,7 +4,7 @@
 //! the headers Mail kept (`Communication.headers`), and goes through [`crate::inbound`].
 //!
 //! A registration follows its address: made when an address is added or enabled, moved when it is changed, taken
-//! back when it is disabled or deleted, and, for every address a workspace already had, by the upkeep. The address
+//! back when it is disabled or deleted, and checked again by the upkeep (what was refused is tried again). The address
 //! itself is registered, which also takes `support+<anything>@`: the tag is the ticket's secret in the Reply-To of
 //! what Helpdesk sends, so an answer finds its ticket by the address it was written to.
 //!
@@ -100,13 +100,9 @@ pub fn tagged(address: &str, token: &str) -> Option<String> {
     Some(if local.contains('*') { format!("{}@{domain}", local.replacen('*', token, 1)) } else { format!("{local}+{token}@{domain}") })
 }
 
-/// Whether Mail's registrations are here for this workspace: Mail installed, and a Mail new enough to have them.
-async fn available(ctx: &Ctx, tx: &mut Tx) -> Result<bool> {
-    if ctx.schema.entity("Communication").is_none() {
-        return Ok(false);
-    }
-    let table: Option<String> = sqlx::query_scalar("select to_regclass('comms_mail_route')::text").fetch_one(&mut **tx).await?;
-    Ok(table.is_some())
+/// Whether Mail is installed for this workspace, and with it the registrations.
+fn available(ctx: &Ctx) -> bool {
+    ctx.schema.entity("Communication").is_some()
 }
 
 /// Registers `address`; the reason when Mail refuses it (another app has it, it is a person's, or its domain is not one
@@ -142,7 +138,7 @@ async fn note(k: &Kernel, sctx: &Ctx, tx: &mut Tx, address: Uuid, current: &Doc,
 /// Keeps Mail's registration in step with a support address that was saved (`new`, with what it was in `old`) or deleted
 /// (`new` none): the old address taken back when it moved, was disabled or went, the new one registered when it is enabled.
 pub async fn sync(k: &Kernel, ctx: &Ctx, tx: &mut Tx, old: Option<&Doc>, new: Option<&Doc>) -> Result<()> {
-    if !available(ctx, tx).await? {
+    if !available(ctx) {
         return Ok(());
     }
     let sctx = sys(ctx);
@@ -166,15 +162,11 @@ pub async fn sync(k: &Kernel, ctx: &Ctx, tx: &mut Tx, old: Option<&Doc>, new: Op
 /// For the upkeep: every enabled address registered, every registration of Helpdesk's that no enabled address stands
 /// behind taken back. Changes only what differs, so it is safe on every replica at once. Returns how many it changed.
 pub async fn sync_all(k: &Kernel, ctx: &Ctx) -> Result<usize> {
-    if ctx.schema.entity("SupportAddress").is_none() {
+    if ctx.schema.entity("SupportAddress").is_none() || !available(ctx) {
         return Ok(0);
     }
     let sctx = sys(ctx);
     let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-    if !available(ctx, &mut tx).await? {
-        tx.commit().await?;
-        return Ok(0);
-    }
     sqlx::query("select pg_advisory_xact_lock(hashtext($1))").bind(format!("helpdesk-upkeep|mail|{}", ctx.tenant)).execute(&mut *tx).await?;
     let addresses = k.find_tx(&sctx, &mut tx, "SupportAddress", &[], Some("address asc"), 1000).await?;
     let mut have: Vec<String> = routes::registered(&mut tx, ctx.tenant, Some(APP)).await?.into_iter().map(|r| r.address).collect();

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.13.0
+
+Helpdesk 0.5.0. Nothing is launched, so nothing is kept any more for what an older release left in a workspace. The package's SQL changed (`helpdesk/001_targets.sql` is gone; `helpdesk/002_mail_tokens.sql` has no `kind` column): a cluster set up before this is set up again from empty. No interface change.
+
+- **One secret in a ticket's mail.** It is 32 hexadecimal digits made from the ticket with Helpdesk's key in the vault and found by its hash. A secret of any other shape in a reply's address or subject tag is malformed and finds nothing, so the mail is a ticket of its own. 0.10's secret kept on the ticket (`mail_token`) and 0.11's made with the server's key (`mail_token_hash`, the upkeep that recorded them, `helpdesk_mail_token.kind`) are no longer read. A reply still finds its ticket by the mail it answers, the secret in its address or the subject's tag.
+- **Calendars by name.** An agreement's hidden hours, holidays and offset from before 0.10 (`time_zone_offset`, `SlaWorkingHour`, `SlaHoliday`) are gone, with what made calendars of them. An agreement names one of the platform's calendars; `helpdesk_hours` is made round the clock in UTC when a ticket needs it and none exists, and is the administrator's from then on.
+- **No once-only conversions.** Brands made from addresses' labels, counting added to an older help centre and their record (`SupportSettings.upkeep_done`), the probes for a Mail older than 0.20, the targets backfill for 0.9's tickets and the ticket's `paused_hours` are gone.
+- **A mail without Mail's verdict is not verified.** Mail stamps every message it receives (`x-ferrum-auth`); one without the stamp counts as unproven, as one without an authentication result does, where it used to count as verified for mail from before Mail 0.20.
+
 ## 0.12.2
 
 A ticket's customer is found as ERP's portal finds the customers an address belongs to (`ferrum_app_erp::portal::customers_of`), in place of a copy of Helpdesk's own that had missed two of ERP's rules. A customer a web shop made at a guest checkout under the address counted as the address's, though anyone may type anyone's address there; so did a disabled customer one of its contacts names. A ticket raised on the portal or mailed in from such an address was that customer's, under its contract, agreements and assignment rules, and the sender counted as a known customer, so their mail opened a ticket where Support Settings ignore or hold mail from unknown senders. Now such a ticket has no customer and such mail is an unknown sender's. Where an address has several customers, the oldest by its own email is still taken before a contact's. ERP is now a dependency of the app, not of its tests only; it need not be installed, since the customers and contacts it reads are the platform's. No database or interface change.

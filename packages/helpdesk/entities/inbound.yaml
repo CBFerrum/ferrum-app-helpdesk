@@ -20,7 +20,7 @@
   description: "An address customers write to: support@ for everyone, or one per team or brand. Mail the Mail app receives for it becomes a new ticket of its team, or a message on the ticket it answers."
   fields:
     - {name: address, type: email, required: true, unique: true, in_list: true}
-    - {name: label, type: data, in_list: true, label: Label, description: "What this address was called before brands: the upkeep made a brand of it and linked the address to it. A label of its own for people"}
+    - {name: label, type: data, in_list: true, label: Label, description: "A name for the address, for people here; what customers see is its brand"}
     - {name: brand, type: link, to: SupportBrand, in_list: true, in_filter: true, description: "Whose name, signature and wrapping replies to this address's tickets carry"}
     - {name: team, type: link, to: SupportTeam, in_list: true, in_filter: true, description: "New tickets from this address go to this team (its assignment rules then pick the agent)"}
     - {name: default_priority, type: select, options: [Low, Medium, High, Urgent], default: Medium}

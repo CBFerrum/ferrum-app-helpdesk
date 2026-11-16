@@ -23,7 +23,6 @@
     - {name: survey_alert_at_or_below, type: int, default: 0, min: 0, max: 5, label: Tell the Lead at a Rating of or Below, description: "0 = never"}
     - {name: survey_alert_to, type: email, label: Lead Told About Bad Ratings}
     - {name: defaults_made, type: check, hidden: true, read_only: true, no_copy: true}
-    - {name: upkeep_done, type: data, max_length: 200, hidden: true, read_only: true, no_copy: true, description: "What the upkeep did once for this workspace when it was updated (calendars, counts, brands), so it is not done again over an administrator's changes"}
 
 - name: TicketType
   label: Ticket Type
@@ -85,21 +84,6 @@
   rules:
     - {name: resolution_after_response, check: "doc.resolution_hours >= doc.response_hours", message: "The resolution time cannot be shorter than the response time"}
 
-- name: SlaWorkingHour
-  label: SLA Working Hours
-  kind: child
-  fields:
-    - {name: weekday, type: select, options: [Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday], required: true, in_list: true}
-    - {name: start_time, type: data, required: true, max_length: 5, in_list: true, description: "HH:MM, 24-hour clock"}
-    - {name: end_time, type: data, required: true, max_length: 5, in_list: true, description: "HH:MM; 24:00 = midnight. A night shift is one row per day, e.g. Monday 22:00-24:00 and Tuesday 00:00-06:00"}
-
-- name: SlaHoliday
-  label: SLA Holiday
-  kind: child
-  fields:
-    - {name: holiday_date, type: date, required: true, in_list: true}
-    - {name: description, type: data, in_list: true}
-
 - name: ServiceLevelAgreement
   label: Service Level Agreement
   kind: master
@@ -113,13 +97,10 @@
     - {name: customer_group, type: link, to: CustomerGroup, in_list: true, description: "Applies to customers in this group and its sub-groups"}
     - {name: ticket_type, type: link, to: TicketType, in_list: true}
     - {name: team, type: link, to: SupportTeam, in_list: true, description: "Applies only to tickets of this team"}
-    - {name: calendar, type: data, max_length: 64, in_list: true, label: Working Calendar, description: "The working calendar (Admin, Calendars: hours, a time zone with daylight saving, dated exceptions) this agreement's targets are counted on. Empty: the workspace's calendar helpdesk_hours. An agreement that had its own hours, holidays or time zone before 0.10 got a calendar made from them when the app was updated"}
-    - {name: time_zone_offset, type: int, label: Time Zone (UTC Offset in Minutes), default: 0, min: -720, max: 840, hidden: true, description: "What the agreement had before 0.10: hours, holidays and a fixed time zone. Kept, and read once when the app is updated, to make the agreement's calendar and the workspace's helpdesk_hours; the calendar is what counts now"}
+    - {name: calendar, type: data, max_length: 64, in_list: true, label: Working Calendar, description: "The working calendar (Admin, Calendars: hours, a time zone with daylight saving, dated exceptions) this agreement's targets are counted on. Empty: the workspace's calendar helpdesk_hours"}
     - {name: pause_on_hold, type: check, label: Pause While On Hold, default: true}
     - {name: pause_on_replied, type: check, label: Pause While Awaiting the Customer (Replied), default: true}
     - {name: priorities, type: table, of: SlaPriority, label: Targets, required: true}
-    - {name: working_hours, type: table, of: SlaWorkingHour, hidden: true, description: "See Time Zone"}
-    - {name: holidays, type: table, of: SlaHoliday, hidden: true}
     - {name: description, type: text}
   list: {columns: [sla_name, customer, customer_group, team, ticket_type, enabled], sort: sla_name asc}
 
@@ -228,7 +209,6 @@
     - {name: resolution_breached, type: check, read_only: true, no_copy: true, in_filter: true}
     - {name: first_response_hours, type: decimal, precision: 2, read_only: true, no_copy: true, description: "Working hours the first response took on the platform's service target, pauses excluded"}
     - {name: resolution_hours, type: decimal, precision: 2, read_only: true, no_copy: true, description: "Working hours resolution took, pauses excluded"}
-    - {name: paused_hours, type: decimal, precision: 2, read_only: true, no_copy: true, hidden: true, description: "Kept for tickets before 0.10; no longer worked out (the platform's target keeps the time worked, not the time stopped)"}
     - {name: response_state, type: select, options: [running, paused, met, met_late, breached], read_only: true, no_copy: true, in_filter: true, label: Response Target, description: "The platform's service target: the breach is recorded once and raises the ticket's updated event"}
     - {name: resolution_state, type: select, options: [running, paused, met, met_late, breached], read_only: true, no_copy: true, in_filter: true, label: Resolution Target}
     - {name: response_secs, type: int, read_only: true, no_copy: true, hidden: true, description: "Seconds of working time the agreement gives for a first response to this ticket's priority"}
@@ -241,7 +221,6 @@
     - {name: merged_into, type: link, to: Ticket, read_only: true, no_copy: true, in_filter: true, label: Merged Into, description: "Closed as a duplicate of this ticket, which holds its conversation now; a reply to this one lands there"}
     - {name: merged_at, type: datetime, read_only: true, no_copy: true}
     - {name: merged_by, type: email, read_only: true, no_copy: true}
-    - {name: mail_token_hash, type: data, read_only: true, no_copy: true, hidden: true, index: true, description: "What finds the ticket by the secret in the subject and Reply-To of the mail sent about it: the secret is made from the ticket with the server's key and kept nowhere, this is a keyed hash of it, which nobody can turn back into the secret"}
     - {name: channel_address, type: link, to: SupportAddress, read_only: true, no_copy: true, in_filter: true, label: Support Address, description: "The support address the customer wrote to"}
     - {name: cc, type: text, no_copy: true, label: Copied, description: "Addresses copied on the customer's mail; replies to the customer are copied to them too"}
     - {name: related_ticket, type: link, to: Ticket, read_only: true, no_copy: true, label: Follows Up, description: "The closed ticket this one continues: mail arrived on a ticket that was closed"}
