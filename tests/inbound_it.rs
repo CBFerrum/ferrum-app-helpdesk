@@ -589,6 +589,36 @@ async fn scenario() {
     assert_eq!(e.post_mail(&raw(&echo)).await["status"], json!("duplicate"), "Mail has the message it sent");
     assert_eq!((said(&e.get("Ticket", t_id).await), e.get("Ticket", t_id).await["cc"].clone()), replied, "nothing added to the ticket, no copy");
     assert_eq!((tickets(&e).await.len(), e.list("InboundLog", json!({})).await.len()), before, "no ticket, and nothing handed to Helpdesk to log");
+    // The same echo after a relay gave it a Message-ID of its own (Amazon SES does): Mail does not know it and hands it to
+    // Helpdesk, which knows it as its own by its From, the address its replies go out from.
+    let status = e.get("Ticket", t_id).await["status"].clone();
+    let mut rewritten = echo.clone();
+    rewritten["message_id"] = json!("rewritten@relay.test");
+    deliver(&e, rewritten).await;
+    let now = e.get("Ticket", t_id).await;
+    let logged: Vec<(Value, Value)> =
+        e.list("InboundLog", json!({"message_id": "rewritten@relay.test"})).await.iter().map(|l| (l["outcome"].clone(), l["reason"].clone())).collect();
+    assert_eq!(
+        (logged, said(&now), now["status"].clone(), now["cc"].clone()),
+        (vec![(json!("Ignored"), json!("Own address"))], replied.0, status, replied.1.clone()),
+        "Helpdesk's own reply under another Message-ID: dropped as its own, the ticket untouched, nothing copied"
+    );
+    // Mail's default outgoing account is as much Helpdesk's own when it is no support address.
+    let support_account = uid(&e.list("EmailAccount", json!({"account_name": "Support"})).await[0]);
+    e.update("EmailAccount", support_account, json!({"default_outgoing": false})).await;
+    e.insert("EmailAccount", json!({"account_name": "General", "email_address": "office@acme.test", "default_outgoing": true, "smtp_host": "127.0.0.1"})).await;
+    let mut general = echo.clone();
+    general["sender"] = json!("office@acme.test");
+    general["message_id"] = json!("general-echo@relay.test");
+    deliver(&e, general).await;
+    assert_eq!(e.list("InboundLog", json!({"message_id": "general-echo@relay.test"})).await[0]["reason"], json!("Own address"), "from the default sender");
+    assert_eq!((said(&e.get("Ticket", t_id).await), e.get("Ticket", t_id).await["cc"].clone()), (replied.0, replied.1.clone()));
+    // An agent writing from their own mailbox, which nothing sends through, is taken as before.
+    let mut agent_mail = echo.clone();
+    agent_mail["sender"] = json!("sam@acme.test");
+    agent_mail["message_id"] = json!("sam-own@acme.test");
+    deliver(&e, agent_mail).await;
+    assert_eq!(e.list("InboundLog", json!({"message_id": "sam-own@acme.test"})).await[0]["outcome"], json!("Added to Ticket"));
 
     // ── a replica whose vault is closed: the reply goes all the same, with no secret at all, and the customer's answer
     //    finds the ticket by the mail it answers ──

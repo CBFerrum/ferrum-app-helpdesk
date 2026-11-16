@@ -5,7 +5,8 @@
 //! [`Inbound`], a plain description of the message, whatever brought it.
 //!
 //! * A mail for no support address is not ours and is not logged.
-//! * Auto-replies, bounces, mailing-list mail, mail from a support address itself and mail over a sender's
+//! * Auto-replies, bounces, mailing-list mail, mail from a support address itself or from an address Helpdesk's
+//!   replies go out from (a support address's Mail account, Mail's default outgoing account) and mail over a sender's
 //!   hourly limit are recognised by their headers and addresses, never turned into tickets or answered, and
 //!   kept in the Inbound Mail Log for an administrator.
 //! * A reply is matched to its ticket by the Message-ID it answers (In-Reply-To, References), then by the ticket's
@@ -344,7 +345,10 @@ async fn run(k: &Kernel, ctx: &Ctx, tx: &mut Tx, mail: &Inbound, held: Option<Uu
     let sctx = sys(ctx);
     let tenant = ctx.tenant;
     let addresses_all = k.find_tx(&sctx, tx, "SupportAddress", &[], Some("address asc"), 1000).await?;
-    let own: HashSet<String> = addresses_all.iter().filter_map(|a| s(a, "address")).map(|a| without_tag(&norm(a))).collect();
+    // Helpdesk's own: the support addresses, and the addresses its replies go out from (a brand's sender, Mail's default),
+    // so its own reply coming back under a Message-ID Mail does not know (a relay gave it another) is not taken in.
+    let mut own: HashSet<String> = addresses_all.iter().filter_map(|a| s(a, "address")).map(|a| without_tag(&norm(a))).collect();
+    own.extend(crate::outgoing::sending_addresses(k, &sctx, tx, &addresses_all).await?);
     // Where it was written to: To and Cc, and the recipient Mail matched (which finds a Bcc).
     let recipients: HashSet<String> = mail.to.iter().chain(mail.cc.iter()).chain(mail.recipient.iter()).map(|a| without_tag(&norm(a))).collect();
     let Some(target) = addresses_all.iter().find(|a| b(a, "enabled") && s(a, "address").is_some_and(|x| recipients.contains(&without_tag(&norm(x))))) else {
