@@ -50,8 +50,8 @@ pub fn covers(have: &[String], want: &str) -> bool {
     have.iter().any(|h| *h == want || want.strip_prefix(h.as_str()).is_some_and(|rest| rest.starts_with('-')))
 }
 
-async fn profiles(tx: &mut Tx, tenant: Uuid, agents: &[String]) -> Result<HashMap<String, Profile>> {
-    let now = Utc::now();
+async fn profiles(tx: &mut Tx, ctx: &Ctx, agents: &[String]) -> Result<HashMap<String, Profile>> {
+    let (tenant, now) = (ctx.tenant, Utc::now());
     let rows_: Vec<(String, Option<String>, Option<String>)> =
         sqlx::query_as("select agent::text, skills, shift_calendar from e_agent_profile where tenant_id = $1 and agent = any($2)")
             .bind(tenant)
@@ -60,10 +60,11 @@ async fn profiles(tx: &mut Tx, tenant: Uuid, agents: &[String]) -> Result<HashMa
             .await?;
     let away: HashSet<String> = sqlx::query_scalar::<_, String>(
         "select u.email::text from person_away a join app_user u on u.tenant_id = a.tenant_id and u.id = a.user_id \
-         where a.tenant_id = $1 and u.email = any($2) and current_date between a.starts_on and a.ends_on",
+         where a.tenant_id = $1 and u.email = any($2) and $3 between a.starts_on and a.ends_on",
     )
     .bind(tenant)
     .bind(agents)
+    .bind(ctx.today())
     .fetch_all(&mut **tx)
     .await?
     .into_iter()
@@ -130,7 +131,7 @@ pub async fn route(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ent: &EffEntity, doc: &Do
             .filter_map(|m| Some((s(m, "agent")?.to_string(), b(m, "active"), int(m, "max_open_tickets"))))
             .collect();
         let agents: Vec<String> = members.iter().map(|m| m.0.clone()).collect();
-        let (open, who) = (load(tx, ctx.tenant, &agents).await?, profiles(tx, ctx.tenant, &agents).await?);
+        let (open, who) = (load(tx, ctx.tenant, &agents).await?, profiles(tx, ctx, &agents).await?);
         let available = b(&rule, "only_available");
         let want: Option<String> = match s(&rule, "needs_skill") {
             Some("Ticket Language") => s(doc, "language").map(str::to_string),
@@ -185,7 +186,7 @@ pub async fn can_take(k: &Kernel, ctx: &Ctx, tx: &mut Tx, team: Option<Uuid>, ag
     {
         return Ok(false);
     }
-    let who = profiles(tx, ctx.tenant, &[agent.to_string()]).await?;
+    let who = profiles(tx, ctx, &[agent.to_string()]).await?;
     Ok(who.get(agent).is_none_or(|p| !p.away && p.on_shift))
 }
 

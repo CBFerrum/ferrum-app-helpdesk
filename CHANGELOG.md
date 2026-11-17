@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.3
+
+Needs the same platform as 0.13.2. No database change. No interface change.
+
+- **The workspace's day, not UTC's.** Routing skipped agents away on the UTC day (the database's `current_date`), a new ticket's support contract was looked up on the UTC date of its opening, and a warranty claim was resolved on the UTC day. A workspace east or west of UTC routed to an agent away that day, or passed over one back from leave, for part of every day; a ticket opened on a contract's first or last day was found uncovered; a claim closed in the evening west of UTC was resolved on tomorrow's date. All three follow the workspace's day now.
+
 ## 0.13.2
 
 Needs the same platform as 0.13.1, and builds against Mail (Comms) 0.25.0. No database change. No interface change.

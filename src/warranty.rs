@@ -4,7 +4,7 @@
 
 use crate::{child_table, int, linked};
 use async_trait::async_trait;
-use chrono::{Duration, NaiveDate, Utc};
+use chrono::{Duration, NaiveDate};
 use ferrum_domain::flow::created;
 use ferrum_domain::util::{get, id, s, set};
 use ferrum_kernel::value::parse_date;
@@ -56,7 +56,7 @@ async fn under_amc(hc: &mut HookCtx<'_>, customer: Uuid, item: Uuid, serial: Opt
 #[async_trait]
 impl DocHook for ClaimHook {
     async fn before_validate(&self, hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
-        let today = Utc::now().date_naive();
+        let today = hc.ctx.today();
         match s(doc, "status") {
             Some("Closed") if s(doc, "resolution_date").is_none() => set(doc, "resolution_date", today.to_string()),
             Some("Closed") => {}

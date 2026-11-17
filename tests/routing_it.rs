@@ -1,7 +1,8 @@
 //! Assignment and routing (`FERRUM_HELPDESK_TEST_DATABASE_URL`, reset first): rules as records choose a team and
 //! an agent by turns or load, by a skill or the ticket's language, among agents who are on shift and not away
 //! (the platform's away periods), with a fallback; a reopened ticket whose agent cannot take it goes round again;
-//! a ticket nobody answers moves on; two tickets at once never take the same turn.
+//! a ticket nobody answers moves on; two tickets at once never take the same turn. Who is away, what a contract covers
+//! and the day a warranty claim is closed are the workspace's day, not UTC's.
 
 mod common;
 use chrono::Utc;
@@ -232,4 +233,31 @@ async fn scenario() {
     let moved = e.get("Ticket", off_hours).await;
     assert!(moved["assigned_to"].is_string() && moved["assigned_to"] != json!("ann@acme.test"), "gone to the next agent: {}", moved["assigned_to"]);
     assert_eq!(moved["reassigned_count"], json!(1));
+
+    // ── the workspace's day, not UTC's ──
+    // No clock is set: the workspace moves to a zone whose day is not UTC's now (Pago Pago before 10:00 UTC, Kiritimati
+    // after, as the platform's own suites do), so a day taken from UTC is a day out.
+    use chrono::Timelike;
+    let zone = if Utc::now().hour() < 10 { "Pacific/Pago_Pago" } else { "Pacific/Kiritimati" };
+    k.update_tenant_settings(&e.admin, &obj(json!({"timezone": zone}))).await.expect("the workspace's zone");
+    let e = Env { admin: k.load_ctx(e.tenant, e.admin.user, None, "it".into()).await.expect("admin"), ..e };
+    let today = e.admin.today();
+    assert_ne!(today, Utc::now().date_naive(), "{zone}'s day is not UTC's");
+    // dee is away today where the workspace is: billing goes to bo alone.
+    k.set_away(&e.admin, user["dee"], today, today, user["boss"], "Sick").await.unwrap();
+    let billing = [assigned(&e, json!({"subject": "An invoice"})).await, assigned(&e, json!({"subject": "Another invoice"})).await];
+    assert_eq!(billing, [json!("bo@acme.test"), json!("bo@acme.test")], "dee is away on the workspace's day");
+    // A contract for today alone covers a ticket opened now.
+    let customer = uid(&e.insert("Customer", json!({"customer_name": "Today Only"})).await);
+    let day = today.to_string();
+    e.insert("SupportContract", json!({"contract_name": "One day", "customer": customer.to_string(), "start_date": day, "end_date": day})).await;
+    let covered = e.insert("Ticket", json!({"subject": "Covered today", "customer": customer.to_string()})).await;
+    assert_eq!(covered["entitlement"], json!("Covered"), "in force on the workspace's day");
+    // A warranty claim closed now is resolved today.
+    let group = &e.list("ItemGroup", json!({"group_name": "Products"})).await[0];
+    let nos = &e.list("Uom", json!({"uom_name": "Nos"})).await[0];
+    let item = uid(&e.insert("Item", json!({"item_code": "FAN", "item_name": "Fan", "item_group": group["id"], "stock_uom": nos["id"]})).await);
+    let claim = uid(&e.insert("WarrantyClaim", json!({"customer": customer.to_string(), "item": item.to_string(), "complaint": "Noisy"})).await);
+    let closed = e.update("WarrantyClaim", claim, json!({"status": "Closed", "resolution": "Replaced"})).await;
+    assert_eq!(closed["resolution_date"], json!(day), "resolved on the workspace's day");
 }
