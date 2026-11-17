@@ -107,9 +107,9 @@ fn available(ctx: &Ctx) -> bool {
 
 /// Registers `address`; the reason when Mail refuses it (another app has it, it is a person's, or its domain is not one
 /// of the workspace's mail domains).
-async fn register(tx: &mut Tx, tenant: Uuid, address: &str) -> std::result::Result<(), String> {
+async fn register(k: &Kernel, tx: &mut Tx, tenant: Uuid, address: &str) -> std::result::Result<(), String> {
     sqlx::query("savepoint helpdesk_register").execute(&mut **tx).await.map_err(|e| e.to_string())?;
-    match routes::register(tx, tenant, &Registration { app: APP, address, keep_in_mailbox: true }).await {
+    match routes::register(k, tx, tenant, &Registration { app: APP, address, keep_in_mailbox: true }).await {
         Ok(_) => {
             sqlx::query("release savepoint helpdesk_register").execute(&mut **tx).await.map_err(|e| e.to_string())?;
             Ok(())
@@ -151,7 +151,7 @@ pub async fn sync(k: &Kernel, ctx: &Ctx, tx: &mut Tx, old: Option<&Doc>, new: Op
     }
     let (Some(doc), Some(row)) = (new, new.and_then(|d| id(d, "id"))) else { return Ok(()) };
     match wanted {
-        Some(address) => match register(tx, ctx.tenant, &address).await {
+        Some(address) => match register(k, tx, ctx.tenant, &address).await {
             Ok(()) => note(k, &sctx, tx, row, doc, true, None).await,
             Err(why) => note(k, &sctx, tx, row, doc, false, Some(why)).await,
         },
@@ -185,7 +185,7 @@ pub async fn sync_all(k: &Kernel, ctx: &Ctx) -> Result<usize> {
             note(k, &sctx, &mut tx, row, a, true, None).await?;
             continue;
         }
-        match register(&mut tx, ctx.tenant, &address).await {
+        match register(k, &mut tx, ctx.tenant, &address).await {
             Ok(()) => {
                 changed += 1;
                 note(k, &sctx, &mut tx, row, a, true, None).await?;
