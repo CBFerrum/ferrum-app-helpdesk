@@ -90,7 +90,7 @@ async fn other_app(e: &Env, address: &str, remove: bool) {
     if remove {
         routes::unregister(&mut tx, e.tenant, "crm", address).await.unwrap();
     } else {
-        routes::register(&mut tx, e.tenant, &routes::Registration { app: "crm", address, keep_in_mailbox: true }).await.unwrap();
+        routes::register(&e.k, &mut tx, e.tenant, &routes::Registration { app: "crm", address, keep_in_mailbox: true }).await.unwrap();
     }
     tx.commit().await.unwrap();
 }
@@ -146,7 +146,7 @@ async fn scenario() {
         let mut tx = e.k.db.tenant_tx(e.tenant).await.unwrap();
         routes::unregister(&mut tx, e.tenant, "helpdesk", "support@acme.test").await.unwrap();
         routes::unregister(&mut tx, e.tenant, "helpdesk", "billing@acme.test").await.unwrap();
-        routes::register(&mut tx, e.tenant, &routes::Registration { app: "helpdesk", address: "old@acme.test", keep_in_mailbox: true }).await.unwrap();
+        routes::register(&e.k, &mut tx, e.tenant, &routes::Registration { app: "helpdesk", address: "old@acme.test", keep_in_mailbox: true }).await.unwrap();
         tx.commit().await.unwrap();
     }
     other_app(&e, "desk@acme.test", true).await;

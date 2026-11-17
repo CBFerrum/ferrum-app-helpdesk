@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.4
+
+Needs the same platform as 0.13.3, and builds against Mail (Comms) 0.26.0. No database change. No interface change.
+
+- **Mail 0.26.** Registering a support address with Mail takes the kernel now, so that Mail can ask the platform whether the workspace proved its Mail Domain. A support address on an outgoing email account's domain registers as before; one on a Mail Domain that is only a setting, not a proven claim, is refused with the reason on the address.
+
 ## 0.13.3
 
 Needs the same platform as 0.13.2. No database change. No interface change.
