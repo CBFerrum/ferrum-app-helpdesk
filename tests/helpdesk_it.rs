@@ -314,6 +314,8 @@ async fn scenario() {
     let inr = t.find_one("Currency", json!({"code": "INR"})).await;
     let company = t.insert("Company", json!({"company_name": "Support Desk Pvt Ltd", "abbr": "SD", "default_currency": inr["id"]})).await;
     let cid = uid(&company).to_string();
+    // The stock receipt and the old delivery are dated in 2024-25; only the current year comes with the company.
+    t.insert("FiscalYear", json!({"year_name": "2024-25", "company": cid, "start_date": "2024-04-01", "end_date": "2025-03-31"})).await;
     let stores = uid(&t.find_one("Warehouse", json!({"warehouse_name": "Stores", "company": cid})).await).to_string();
     let commercial = t.find_one("CustomerGroup", json!({"group_name": "Commercial"})).await;
     let individual = t.find_one("CustomerGroup", json!({"group_name": "Individual"})).await;
