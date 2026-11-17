@@ -329,7 +329,9 @@ async fn entitlement(hc: &mut HookCtx<'_>, doc: &mut Doc) -> Result<()> {
         set(doc, "entitlement", "None");
         return Ok(());
     };
-    let day = ts(doc, "opened_at").unwrap_or_else(Utc::now).date_naive();
+    // The day it was opened where the workspace is: a contract runs on the workspace's days.
+    let zone = hc.ctx.schema.timezone.parse().unwrap_or(chrono_tz::Tz::UTC);
+    let day = ts(doc, "opened_at").unwrap_or_else(Utc::now).with_timezone(&zone).date_naive();
     let tenant = hc.ctx.tenant;
     #[allow(clippy::type_complexity)]
     let contracts: Vec<(Uuid, Option<chrono::NaiveDate>, Option<Uuid>, Option<i64>, chrono::NaiveDate)> = sqlx::query_as(
