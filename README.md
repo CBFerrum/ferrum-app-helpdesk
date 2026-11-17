@@ -13,12 +13,12 @@
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-data-336791?style=flat-square&logo=postgresql&logoColor=white)
 ![React](https://img.shields.io/badge/React%20%2B%20TypeScript-interface-149eca?style=flat-square&logo=react&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-43%20Rust%20%2B%2021%20UI%20files-16a34a?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-38%20Rust%20%2B%2021%20UI%20files-16a34a?style=flat-square)
 
 ### A support desk where customers email you, your team answers on time, and every answer is written once.
 
 Ferrum Helpdesk is for support teams that outgrew a shared mailbox and do not want a per-agent subscription.
-Mail sent to your support addresses becomes tickets, targets count working hours, assignment shares the work by
+Mail sent to your support addresses becomes tickets (so do requests raised in the customer portal and tickets an agent logs by hand), targets count working hours, assignment shares the work by
 skill and shift, and the same data set holds the customer's contracts, equipment, warranty and invoices.
 
 [💡 Why](#-why-helpdesk) · [📸 Screenshots](#-screenshots) · [✨ Features](#-features) · [📊 Compare](#-how-it-compares) · [📍 Roadmap](#-roadmap) · [🚀 Install](#-install) · [🔧 Develop](#-develop)
@@ -44,13 +44,13 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 
 | | |
 |---|---|
-| **Version** | 0.13.0 (platform `>=0.3.8, <0.4`) |
+| **Version** | 0.13.2 (platform `>=0.3.8, <0.4`) |
 | **Kind** | Own interface at `/helpdesk/` (agent inbox, ticket workspace, administration, help centre editor, reports) and a page in the customer portal |
-| **What it adds** | 30 entities (21 main, 9 child tables) in 2 packages, 3 roles, 9 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
+| **What it adds** | 28 entities (21 main, 7 child tables) in 2 packages, 3 roles, 9 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
 | **Depends on** | Ferrum core, shared customers and items |
 | **Works with** | Mail (inbound and outbound email, version 0.20 or later), ERP (invoices and orders through a connector), Field Service (visits from tickets), the platform's calendars and service targets |
 | **Languages** | English, Arabic (right to left), Hindi; a workspace can change any interface word |
-| **Tests** | 43 Rust tests and 21 interface test files |
+| **Tests** | 38 Rust tests and 21 interface test files |
 | **Licence** | AGPL-3.0-only |
 
 ## 📸 Screenshots
@@ -165,8 +165,10 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 ### 🎫 Tickets and conversations
 
 - **Ticket** (`TKT-2026-000001`). Subject, description, status (Open, Replied, On Hold, Resolved, Closed), priority
-  (Low, Medium, High, Urgent), type, channel (Email, Portal, Phone, Chat, Web Form), customer, contact, team,
+  (Low, Medium, High, Urgent), type, channel, customer, contact, team,
   assignee, language, product and serial number.
+- **Channel.** Email is set on a ticket made from mail and Portal on one a customer raises. Phone, Chat and Web Form are
+  labels an agent picks when logging a ticket by hand; no phone, chat or web-form channel brings a ticket in.
 - **Conversation.** An append-only feed of messages, each from an agent or the customer, public or internal.
   Sent messages cannot be edited or removed.
 - **Public reply or internal note.** The box says which it is, in words and on the button: Send reply by email, Add
@@ -390,7 +392,7 @@ ticket by number to open a visit.
 | **Knowledge Base Editor** | Writes and publishes articles |
 
 Reports: nine, listed under Features. Print formats: none ship. Messages: customer reply, survey and low-rating alert.
-Upkeep (on a schedule): target checks and escalation, auto-close, reassignment, surveys, planned visits.
+Upkeep (on a schedule): target checks and escalation, auto-close, reassignment, surveys, Mail registration check.
 
 ## 🔌 Integrations
 
@@ -481,10 +483,9 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 ### ✅ Recently shipped
 
 - [x] **0.13.2.** Built against Mail 0.25: no marker on Helpdesk's mail; its own reply coming back is refused by its Message-ID, or by its From when a relay gave it another.
-- [x] **0.13.1.** The portal's times and the report periods on the workspace's clock, no names of what 0.13.0 removed; rebuilt on Ferrum-Frontend 06bd1a2 with `mountApp`.
-- [x] **0.13.0.** One secret in a ticket's mail, calendars by name only, and nothing kept for older releases.
-- [x] **0.12.0.** The secret in a ticket's mail comes from Helpdesk's own key in the platform's vault; mail 0.11 sent keeps finding its ticket.
-- [x] **0.11.0.** The secret in a ticket's mail is made with the server's key and kept nowhere, so reading tickets no longer lets anyone write into one.
+- [x] **0.13.1.** The portal's times and the report periods on the workspace's clock; rebuilt on Ferrum-Frontend 06bd1a2 with `mountApp`.
+- [x] **0.13.0.** One secret in a ticket's mail, and calendars by name only.
+- [x] **0.12.0.** The secret in a ticket's mail comes from Helpdesk's own key in the platform's vault and is kept nowhere, so reading tickets does not let anyone write into one.
 - [x] **0.10.3.** Screens for brands, Mail registration, per-agreement calendars, held mail and mail that fails authentication.
 - [x] **0.10.2.** Hours per agreement, inbound mail through Mail's registration, the platform's tags, calendars and files, public help-centre counts, brands.
 - [x] **0.10.1.** Screens for the ticket page, macros, queues, administration, the help centre and reports.
@@ -606,7 +607,7 @@ real bar and session, with hot reload.
 ```text
 app.yaml              the manifest: id, version, roles, shell entries, notifications, assistant notes
 connectors/erp/       the connector that adds a ticket's invoice and a contract's order
-packages/helpdesk/    entities (support, desk, inbound), roles, messages, seeds, sql/001_targets.sql
+packages/helpdesk/    entities (support, desk, inbound), roles, messages, seeds, sql/002_mail_tokens.sql
 packages/helpdesk_erp/ the two link fields
 src/                  ticket, inbound, outgoing, mail, routing, hours, macros, tags, merge, survey,
                       help, site (portal), warranty, visits, reports
