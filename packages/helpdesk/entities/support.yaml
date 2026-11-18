@@ -242,16 +242,28 @@
     - {label: Product, collapsible: true, fields: [item, serial_no, sales_invoice]}
   actions:
     - {name: merge_tickets, label: Merge Tickets Into This One, permission: write, condition: "doc.status != 'Closed'",
-       params: [{name: numbers, label: Tickets to merge, type: text, required: true, description: "The numbers of the duplicates, separated by commas or lines. They must be this customer's; their conversation, files, watchers and tags move here, and they close as merged"}]}
+       params: [{name: numbers, label: Tickets to merge, type: text, required: true, description: "The numbers of the duplicates, separated by commas or lines. They must be this customer's; their conversation, files, watchers and tags move here, and they close as merged"}],
+       contract: {effect: transactional_action, completion: "Each ticket named is closed as merged into this one, and its conversation, files, comments, watchers and tags are on this one, committed with this receipt. It is not undone",
+                  returns: {type: object, properties: {merged: {type: array, items: {type: string}}, messages_moved: {type: integer}, message: {type: string}}}}}
     - {name: apply_macro, label: Apply a Macro, permission: write, condition: "doc.status != 'Closed'",
-       params: [{name: macro, label: Macro, type: link, to: SupportMacro, required: true, description: "Its steps run in order on this ticket, all or none"}]}
+       params: [{name: macro, label: Macro, type: link, to: SupportMacro, required: true, description: "Its steps run in order on this ticket, all or none"}],
+       contract: {effect: transactional_action, completion: "Every step of the macro is applied to the ticket in one save, or none is, committed with this receipt; a reply step is sent as any reply is",
+                  returns: {type: object, properties: {applied: {type: integer}, macro: {type: string}}}}}
     - {name: rate, label: Rate the Help, permission: read, condition: "(doc.status == 'Resolved' || doc.status == 'Closed') && !(doc.satisfaction_rating > 0)",
-       params: [{name: rating, label: "How did we do? (1 to 5)", type: int, required: true, description: "1 is poor, 5 is excellent"}, {name: feedback, label: Comment, type: text}]}
-    - {name: make_warranty_claim, label: Create Warranty Claim, permission: write, condition: "doc.item != null && doc.customer != null"}
+       params: [{name: rating, label: "How did we do? (1 to 5)", type: int, required: true, description: "1 is poor, 5 is excellent"}, {name: feedback, label: Comment, type: text}],
+       contract: {effect: transactional_action, completion: "The rating and comment are kept on the ticket, once; a low rating has reopened it or told the lead where Support Settings say so",
+                  returns: {type: object, properties: {rated: {type: integer}}}}}
+    - {name: make_warranty_claim, label: Create Warranty Claim, permission: write, condition: "doc.item != null && doc.customer != null",
+       contract: {effect: transactional_action, completion: "A warranty claim for the ticket's customer and item exists and names this ticket, committed with this receipt",
+                  returns: {type: object, properties: {entity: {type: string}, id: {type: string, format: uuid, "x-ferrum-link": WarrantyClaim}, number: {type: [string, "null"]}}}}}
     - {name: approve_outside_entitlement, label: Approve Work Outside Entitlement, permission: write, condition: "doc.entitlement_approval == 'Waiting'",
-       params: [{name: reason, label: Why, type: data, required: true, description: "Why this customer's ticket is worked though their contract does not cover it"}]}
+       params: [{name: reason, label: Why, type: data, required: true, description: "Why this customer's ticket is worked though their contract does not cover it"}],
+       contract: {effect: transactional_action, completion: "The ticket is Open and marked Approved, with who decided and why, committed with this receipt",
+                  returns: {type: object, properties: {status: {type: string}, entitlement_approval: {type: string}}}}}
     - {name: decline_outside_entitlement, label: Decline Work Outside Entitlement, permission: write, condition: "doc.entitlement_approval == 'Waiting'",
-       params: [{name: reason, label: Why, type: data, required: true, description: "Why it is not worked: the customer is told once someone replies"}]}
+       params: [{name: reason, label: Why, type: data, required: true, description: "Why it is not worked: the customer is told once someone replies"}],
+       contract: {effect: transactional_action, completion: "The ticket is Resolved and marked Declined, with who decided and why, committed with this receipt",
+                  returns: {type: object, properties: {status: {type: string}, entitlement_approval: {type: string}}}}}
   targets:
     - {name: respond, label: First Response, calendar: helpdesk_hours, calendar_field: sla_calendar, start_field: sla_start, within: "doc.response_secs > 0 ? 'PT' + string(doc.response_secs) + 'S' : ''", pause_when: "(doc.status == 'On Hold' && doc.sla_pause_hold) || (doc.status == 'Replied' && doc.sla_pause_replied)",
        met_when: "!isEmpty(doc.first_responded_at)", due_field: response_by, state_field: response_state}
@@ -274,9 +286,13 @@
     - {name: body, type: markdown, required: true, max_length: 20000}
     - {name: uses, type: int, label: Times Used, default: 0, read_only: true, no_copy: true, in_list: true}
   actions:
-    - {name: used, label: Count a Use, permission: read}
+    - {name: used, label: Count a Use, permission: read,
+       contract: {effect: transactional_action, completion: "The reply's count of uses is one higher",
+                  returns: {type: object, properties: {uses: {type: integer}}}}}
     - {name: render, label: Fill In for a Ticket, permission: read, read_only: true,
-       params: [{name: ticket, label: Ticket, type: link, to: Ticket, required: true}]}
+       params: [{name: ticket, label: Ticket, type: link, to: Ticket, required: true}],
+       contract: {effect: query, completion: "The reply's text with its merge fields filled in from the ticket; nothing is changed or sent",
+                  returns: {type: object, properties: {body: {type: string}}}}}
   list: {columns: [title, scope, team, uses], sort: uses desc}
 
 - name: KbCategory
@@ -311,8 +327,12 @@
     - {name: summary, type: data, max_length: 300, description: "A line for the help centre's list and for search engines"}
     - {name: views, type: int, default: 0, read_only: true, no_copy: true, label: Views}
   actions:
-    - {name: mark_helpful, label: Helpful, permission: read, condition: "doc.status == 'Published'"}
-    - {name: mark_not_helpful, label: Not Helpful, permission: read, condition: "doc.status == 'Published'"}
+    - {name: mark_helpful, label: Helpful, permission: read, condition: "doc.status == 'Published'",
+       contract: {effect: transactional_action, completion: "The article's helpful count is one higher",
+                  returns: {type: object, properties: {helpful_count: {type: integer}}}}}
+    - {name: mark_not_helpful, label: Not Helpful, permission: read, condition: "doc.status == 'Published'",
+       contract: {effect: transactional_action, completion: "The article's not-helpful count is one higher",
+                  returns: {type: object, properties: {not_helpful_count: {type: integer}}}}}
   list: {columns: [number, title, category, status, helpful_count], sort: title asc}
 
 - name: WarrantyClaim
@@ -341,7 +361,9 @@
   rules:
     - {name: delivered_before_claim, check: "doc.delivery_date == null || doc.delivery_date <= doc.claim_date", message: "The delivery date is after the claim date"}
   actions:
-    - {name: make_maintenance_visit, label: Create Maintenance Visit, permission: write, condition: "doc.status != 'Closed'"}
+    - {name: make_maintenance_visit, label: Create Maintenance Visit, permission: write, condition: "doc.status != 'Closed'",
+       contract: {effect: transactional_action, completion: "A draft maintenance visit exists for the claim, committed with this receipt; it is not submitted",
+                  returns: {type: object, properties: {entity: {type: string}, id: {type: string, format: uuid, "x-ferrum-link": MaintenanceVisit}, number: {type: [string, "null"]}}}}}
   list: {columns: [number, customer_name, item_name, serial_no, warranty_status, status], sort: claim_date desc}
 
 - name: MaintenanceScheduleItem
@@ -388,7 +410,10 @@
     - {name: schedules, type: table, of: MaintenanceScheduleDetail, label: Visit Plan, read_only: true, no_copy: true}
     - {name: status, type: select, options: [Draft, Active, Completed, Cancelled], default: Draft, read_only: true, no_copy: true, in_list: true, in_filter: true}
   actions:
-    - {name: make_visit, label: Create Maintenance Visit, docstatus: [1], permission: read, condition: "doc.status == 'Active'"}
+    - {name: make_visit, label: Create Maintenance Visit, docstatus: [1], permission: read, condition: "doc.status == 'Active'",
+       params: [{name: schedule_detail, label: Planned Visit, type: data, description: "The id of the visit-plan row to carry out; the first pending one when empty"}],
+       contract: {effect: transactional_action, completion: "A draft maintenance visit exists for the planned visit named, or the first pending one, committed with this receipt; it is not submitted",
+                  returns: {type: object, properties: {entity: {type: string}, id: {type: string, format: uuid, "x-ferrum-link": MaintenanceVisit}, number: {type: [string, "null"]}}}}}
   list: {columns: [number, customer_name, transaction_date, assigned_to, status], sort: transaction_date desc}
 
 - name: MaintenanceVisitPurpose

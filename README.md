@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.14.0-7c3aed?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.14.1-7c3aed?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -44,7 +44,7 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 
 | | |
 |---|---|
-| **Version** | 0.14.0 (platform `>=0.4.0, <0.5`) |
+| **Version** | 0.14.1 (platform `>=0.4.0, <0.5`) |
 | **Kind** | Own interface at `/helpdesk/` (agent inbox, ticket workspace, administration, help centre editor, reports) and a page in the customer portal |
 | **What it adds** | 28 entities (21 main, 7 child tables) in 2 packages, 3 roles, 9 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
 | **Depends on** | Ferrum core, shared customers and items |
@@ -404,7 +404,7 @@ Upkeep (on a schedule): target checks and escalation, auto-close, reassignment, 
 | **Platform calendars and service targets** | Working hours, time zones, holidays, targets and breach events | Platform |
 | **Platform published lists** | The public help centre and its sitemap | Platform |
 | **Webhooks and automations** | Events such as the ticket's updated event on a breach | Platform |
-| **MCP** | AI agents work with tickets under each person's permissions | Platform's MCP server |
+| **MCP** | AI agents work with tickets under each person's permissions; each action states what done means and what it returns | Platform's MCP server |
 
 ## 📊 How it compares
 
@@ -482,6 +482,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 
 ### ✅ Recently shipped
 
+- [x] **0.14.1.** Every action states what done means and what it returns, for processes and agents; the planned visit of a maintenance schedule is a declared parameter.
 - [x] **0.14.0.** Upkeep runs one workspace at a time, on whichever replica is free; needs Ferrum 0.4.0.
 - [x] **0.13.4.** Built against Mail 0.26: Helpdesk hands the kernel to Mail's address registration, which now counts the workspace's Mail Domain only while the workspace has proven it.
 - [x] **0.13.3.** Who is away, what a support contract covers and the day a warranty claim is resolved follow the workspace's day, not UTC's.
