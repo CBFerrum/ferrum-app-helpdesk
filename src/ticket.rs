@@ -446,7 +446,7 @@ async fn decide_outside_entitlement(hc: &mut HookCtx<'_>, doc: &Doc, approve: bo
 }
 
 /// The start of a message on one line, for the inbox's list.
-fn preview(text: &str) -> String {
+pub(crate) fn preview(text: &str) -> String {
     let flat: String = text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
     let line = flat.split_whitespace().collect::<Vec<_>>().join(" ");
     if line.chars().count() <= 140 { line } else { format!("{}…", line.chars().take(139).collect::<String>().trim_end()) }
@@ -473,6 +473,76 @@ fn conversation_clocks(doc: &mut Doc, status: &str) {
     let from = first.map(|f| public.iter().map(|(_, t)| *t).chain([f]).chain(ts(doc, "sla_start")).max().unwrap_or(f));
     set(doc, "reply_owed_since", owed.map_or(Value::Null, ts_value));
     set(doc, "update_from", from.map_or(Value::Null, ts_value));
+}
+
+/// A ticket's parent, children and links. The parent is read under its row lock, and a parent's own save holds that lock
+/// while it reads its children: a child is never put under a resolved parent, and a parent never resolved over an open child.
+/// One level only (a child has no children), so there is no cycle to look for.
+async fn related(hc: &mut HookCtx<'_>, doc: &Doc, old: Option<&Doc>, errors: &mut Vec<FieldError>) -> Result<()> {
+    let me = id(doc, "id");
+    let status = s(doc, "status").unwrap_or("Open");
+    if let Some(p) = id(doc, "parent_ticket")
+        && old.is_none_or(|o| id(o, "parent_ticket") != Some(p))
+    {
+        let bad = |m: &str| FieldError::new("parent_ticket", m);
+        // A ticket as its own parent is the platform's refusal ("a record cannot be its own parent").
+        if me != Some(p) {
+            match hc.kernel.get_tx(&sys(hc.ctx), hc.tx, "Ticket", p, true).await {
+                Err(Error::NotFound(_)) => errors.push(bad("there is no such ticket")),
+                Err(e) => return Err(e),
+                Ok(parent) => {
+                    let has_children = match me {
+                        Some(me) => {
+                            sqlx::query_scalar("select exists (select 1 from e_ticket where tenant_id = $1 and parent_ticket = $2)")
+                                .bind(hc.ctx.tenant)
+                                .bind(me)
+                                .fetch_one(&mut **hc.tx)
+                                .await?
+                        }
+                        None => false,
+                    };
+                    if id(&parent, "parent_ticket").is_some() {
+                        errors.push(bad("is a child ticket itself: a child has no children"));
+                    } else if has_children {
+                        errors.push(bad("has child tickets: it cannot become a child"));
+                    } else if OPEN.contains(&status) && matches!(s(&parent, "status"), Some("Resolved" | "Closed")) {
+                        errors.push(bad("is resolved: reopen it first"));
+                    }
+                }
+            }
+        }
+    }
+    let finishing = |st: Option<&str>| matches!(st, Some("Resolved" | "Closed"));
+    if let Some(me) = me
+        && finishing(Some(status))
+        && !old.is_some_and(|o| finishing(s(o, "status")))
+    {
+        let open: Vec<String> = sqlx::query_scalar(
+            "select coalesce(number, id::text) from e_ticket where tenant_id = $1 and parent_ticket = $2 and status = any($3) order by number limit 5",
+        )
+        .bind(hc.ctx.tenant)
+        .bind(me)
+        .bind(&OPEN[..])
+        .fetch_all(&mut **hc.tx)
+        .await?;
+        if !open.is_empty() {
+            errors.push(FieldError::new("status", format!("waits for its child tickets: {}", open.join(", "))));
+        }
+    }
+    let links = rows(doc, "links");
+    if links.len() > 50 {
+        errors.push(FieldError::new("links", "at most 50 linked tickets"));
+    }
+    let mut seen = HashSet::new();
+    for (i, l) in links.iter().enumerate() {
+        let Some(other) = id(l, "ticket") else { continue };
+        if Some(other) == me {
+            errors.push(FieldError::new("ticket", "a ticket is not linked to itself").in_row("links", i));
+        } else if !seen.insert(other) {
+            errors.push(FieldError::new("ticket", "is linked already").in_row("links", i));
+        }
+    }
+    Ok(())
 }
 
 /// The stored version of the document being saved (`None` while it is being created).
@@ -764,6 +834,7 @@ impl DocHook for TicketHook {
         if rated && !matches!(s(doc, "status"), Some("Resolved" | "Closed")) {
             errors.push(FieldError::new("satisfaction_rating", "can be given once the ticket is resolved"));
         }
+        related(hc, doc, old.as_ref(), &mut errors).await?;
         if errors.is_empty() { Ok(()) } else { Err(Error::Validation(errors)) }
     }
 
@@ -783,6 +854,9 @@ impl DocHook for TicketHook {
         }
         if name == "merge_tickets" {
             return crate::merge::merge(hc, doc, params).await.map(Some);
+        }
+        if name == "split_message" {
+            return crate::split::split(hc, doc, params).await.map(Some);
         }
         if name != "make_warranty_claim" {
             return Ok(None);

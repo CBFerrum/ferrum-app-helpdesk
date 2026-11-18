@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.17.0-7c3aed?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.18.0-7c3aed?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -44,9 +44,9 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 
 | | |
 |---|---|
-| **Version** | 0.17.0 (platform `>=0.4.0, <0.5`) |
+| **Version** | 0.18.0 (platform `>=0.4.0, <0.5`) |
 | **Kind** | Own interface at `/helpdesk/` (agent inbox, ticket workspace, administration, help centre editor, reports) and a page in the customer portal |
-| **What it adds** | 29 entities (22 main, 7 child tables) in 2 packages, 3 roles, 9 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
+| **What it adds** | 30 entities (22 main, 8 child tables) in 2 packages, 3 roles, 9 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
 | **Depends on** | Ferrum core, shared customers and items |
 | **Works with** | Mail (inbound and outbound email, version 0.20 or later), ERP (invoices and orders through a connector), Field Service (visits from tickets), the platform's calendars and service targets |
 | **Languages** | English, Arabic (right to left), Hindi; a workspace can change any interface word |
@@ -385,8 +385,9 @@ ticket by number to open a visit.
 
 | Entity | What it is | Key fields or states |
 |---|---|---|
-| **Ticket** | A customer's request and its conversation | Number, subject, status (the stage), workspace status, priority, channel, customer, team, assignee, SLA states, entitlement, tags |
-| Ticket message (child) | One message | Author, body, internal, sent at, attachments, copies, verified sender |
+| **Ticket** | A customer's request and its conversation | Number, subject, status (the stage), workspace status, parent ticket, linked tickets, priority, channel, customer, team, assignee, SLA states, entitlement, tags |
+| Ticket message (child) | One message | Author, body, internal, sent at, attachments, copies, verified sender, split into |
+| Linked ticket (child) | A ticket related to this one, kept where the link was made and found from both | Ticket |
 | **Support Address** | An address customers write to | Address, brand, team, default priority and type, Mail account, enabled, registered |
 | **Support Brand** | What a customer knows an address by | Name, display name, signature, header, footer |
 | **Inbound Log** | What became of each mail | Outcome, reason, sender, ticket |
@@ -501,6 +502,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 
 ### ✅ Recently shipped
 
+- [x] **0.18.0.** Parent, child and linked tickets, and splitting a customer's message into a ticket of its own, on the server.
 - [x] **0.17.0.** Escalation by any condition on the ticket, the customer's latest words as a field for conditions, and triggers proven on the platform's automations.
 - [x] **0.16.0.** Two more clocks: the next reply and the customer update, on the platform's service targets.
 - [x] **0.15.0.** A workspace's own statuses, each inside one of four stages that the clocks, queues and reports read.

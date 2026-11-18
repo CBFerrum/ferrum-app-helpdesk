@@ -155,6 +155,7 @@
     - {name: sent_at, type: datetime, default_expr: now, in_list: true}
     - {name: attachments, type: json, description: "Files sent with the message: [{id}] of files uploaded through /api/files (up to 10, 20 MB together). The server fills in each file's name and size"}
     - {name: merged_from, type: data, read_only: true, no_copy: true, label: Merged From, description: "The ticket this message came from, when its ticket was merged into this one"}
+    - {name: split_into, type: data, read_only: true, no_copy: true, label: Split Into, description: "The number of the ticket made from this message, when it was split off"}
     - {name: sender_unverified, type: check, read_only: true, no_copy: true, label: Sender Not Verified, description: "The mail server did not verify the sender of this message (it failed a check, or gave no result); not proof of forgery"}
     - {name: emailed, type: check, read_only: true, no_copy: true, description: "A reply that was emailed to the ticket's contact when it was sent (the address stays on the ticket, where a personal-data erasure reaches it)"}
     - {name: message_id, type: data, read_only: true, no_copy: true, hidden: true, description: "The mail's Message-ID, to thread a reply to it"}
@@ -176,6 +177,12 @@
   rules:
     - {name: not_a_stage, field: status_name, check: "!(lower(doc.status_name) in ['open', 'replied', 'on hold', 'resolved', 'closed'])", message: "That is a stage's own name: choose another"}
   list: {columns: [status_name, category, enabled], sort: status_name asc}
+
+- name: TicketLink
+  label: Linked Ticket
+  kind: child
+  fields:
+    - {name: ticket, type: link, to: Ticket, required: true, in_list: true}
 
 - name: Ticket
   label: Ticket
@@ -255,6 +262,8 @@
     - {name: channel_address, type: link, to: SupportAddress, read_only: true, no_copy: true, in_filter: true, label: Support Address, description: "The support address the customer wrote to"}
     - {name: cc, type: text, no_copy: true, label: Copied, description: "Addresses copied on the customer's mail; replies to the customer are copied to them too"}
     - {name: related_ticket, type: link, to: Ticket, read_only: true, no_copy: true, label: Follows Up, description: "The closed ticket this one continues: mail arrived on a ticket that was closed"}
+    - {name: parent_ticket, type: link, to: Ticket, label: Parent Ticket, no_copy: true, in_filter: true, index: true, description: "The ticket this one is a part of. A parent cannot be resolved while a child is open; a child has no children of its own"}
+    - {name: links, type: table, of: TicketLink, label: Linked Tickets, no_copy: true, description: "Tickets related to this one. A link is kept on the ticket where it was made and found from both"}
     - {name: language, type: data, max_length: 35, in_filter: true, description: "The customer's language (a tag such as en or hi): assignment rules can look for agents who speak it"}
     - {name: routed_by, type: link, to: TicketAssignmentRule, read_only: true, no_copy: true}
     - {name: routed_at, type: datetime, read_only: true, no_copy: true}
@@ -267,6 +276,7 @@
     - {label: Customer, fields: [customer, customer_name, contact_name, contact_email, cc]}
     - {label: Assignment, fields: [team, assigned_to, language]}
     - {label: Conversation, fields: [conversation]}
+    - {label: Related, collapsible: true, fields: [parent_ticket, links, related_ticket, merged_into]}
     - {label: Resolution, fields: [resolution_details, satisfaction_rating, feedback]}
     - {label: Entitlement, collapsible: true, fields: [support_contract, entitlement, entitlement_approval, entitlement_decided_by, entitlement_reason]}
     - {label: Service Level, collapsible: true, fields: [escalation_level, escalated_at, service_level_agreement, sla_status, response_by, resolution_by, response_breached, resolution_breached, opened_at, first_responded_at, resolved_at, closed_at, first_response_hours, resolution_hours, response_state, resolution_state, next_reply_state, next_reply_by, update_state, update_by]}
@@ -284,6 +294,17 @@
        params: [{name: rating, label: "How did we do? (1 to 5)", type: int, required: true, description: "1 is poor, 5 is excellent"}, {name: feedback, label: Comment, type: text}],
        contract: {effect: transactional_action, completion: "The rating and comment are kept on the ticket, once; a low rating has reopened it or told the lead where Support Settings say so",
                   returns: {type: object, properties: {rated: {type: integer}}}}}
+    - name: split_message
+      label: Split a Message Into a New Ticket
+      permission: write
+      condition: "doc.status != 'Closed'"
+      params:
+        - {name: message, label: Message, type: data, required: true, description: "The id of a public message from the customer in this ticket's conversation"}
+        - {name: subject, label: Subject, type: data, description: "The new ticket's subject; the start of the message when empty"}
+      contract:
+        effect: transactional_action
+        completion: "A new ticket holds the message as its description, for the same customer and contact, linked to this one, and the message is marked with its number, committed with this receipt"
+        returns: {type: object, properties: {entity: {type: string}, id: {type: string, format: uuid, "x-ferrum-link": Ticket}, number: {type: [string, "null"]}}}
     - {name: make_warranty_claim, label: Create Warranty Claim, permission: write, condition: "doc.item != null && doc.customer != null",
        contract: {effect: transactional_action, completion: "A warranty claim for the ticket's customer and item exists and names this ticket, committed with this receipt",
                   returns: {type: object, properties: {entity: {type: string}, id: {type: string, format: uuid, "x-ferrum-link": WarrantyClaim}, number: {type: [string, "null"]}}}}}

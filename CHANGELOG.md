@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.18.0
+
+Needs the same platform as 0.17.0. The package is 0.10.0: Ticket gains `parent_ticket` and a `links` table (`TicketLink`), a message gains a read-only `split_into`, and Ticket a `split_message` action. Columns are added empty. No interface change yet (the screens come next).
+
+- **Parent and child.** A ticket can name a parent through the ordinary create and update; one level only (a child has no children). A parent cannot be resolved or closed while a child is open, and an open ticket cannot be put under a resolved parent: the parent's row lock orders the two. A customer's reply reopening a child is never refused.
+- **Linked tickets.** A link is one row on the ticket where it was made, found from the other with the list filter `["links.ticket", "=", id]`. Not to itself, not twice, at most 50.
+- **Split a message.** Split a Message Into a New Ticket makes a ticket of a customer's public message, as the person, for the same customer and contact, linked to the original; the message stays and is marked with the new number, once.
+- **Merge** carries children and links to the surviving ticket, dropping a link that would name it twice or from itself; merging a parent into its own child is refused.
+
 ## 0.17.0
 
 Needs the same platform as 0.16.0. The package is 0.9.0: an escalation rule may have a condition, and Ticket has a read-only `last_customer_message` (filled at each ticket's next save). No interface change.
