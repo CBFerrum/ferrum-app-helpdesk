@@ -1,5 +1,5 @@
 package: helpdesk
-version: 0.6.0
+version: 0.7.0
 label: Support
 description: Helpdesk tickets with business-hours SLAs, teams with automatic assignment, a knowledge base, warranty claims and maintenance contracts with planned visits.
 # Customers and items are shared with other apps; the links to ERP's invoices and orders come with
@@ -18,7 +18,7 @@ modules:
     icon: life-buoy
     order: 45
     items: [Ticket, SavedReply, SupportMacro, WarrantyClaim, MaintenanceSchedule, MaintenanceVisit, KbArticle, KbCategory, ServiceLevelAgreement, SupportContract, EscalationRule,
-            SupportTeam, TicketAssignmentRule, AgentProfile, TicketTag, TagRule, TicketType, SupportAddress, SupportBrand, InboundLog, SupportSettings, report:support_ticket_summary,
+            SupportTeam, TicketAssignmentRule, AgentProfile, TicketTag, TagRule, TicketType, TicketStatus, SupportAddress, SupportBrand, InboundLog, SupportSettings, report:support_ticket_summary,
             report:support_sla_compliance, report:support_response_times, report:support_agent_workload, report:support_customer_satisfaction, report:support_backlog,
             report:support_volume, report:support_reopens, report:support_articles]
 
@@ -33,6 +33,7 @@ roles:
     permissions:
       - {entity: Ticket, read: true, write: true, create: true, export: true}
       - {entity: TicketType, read: true}
+      - {entity: TicketStatus, read: true}
       - {entity: SupportTeam, read: true}
       - {entity: ServiceLevelAgreement, read: true}
       - {entity: SupportContract, read: true}
@@ -61,6 +62,7 @@ roles:
     permissions:
       - {entity: Ticket, read: true, write: true, create: true, delete: true, export: true, import: true}
       - {entity: TicketType, read: true, write: true, create: true, delete: true}
+      - {entity: TicketStatus, read: true, write: true, create: true, delete: true}
       - {entity: SupportTeam, read: true, write: true, create: true, delete: true}
       - {entity: TicketAssignmentRule, read: true, write: true, create: true, delete: true}
       - {entity: ServiceLevelAgreement, read: true, write: true, create: true, delete: true}

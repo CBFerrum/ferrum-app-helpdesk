@@ -313,6 +313,29 @@ describe("the details beside a ticket", () => {
     expect(draw()).toContain("raj@acme.test");
   });
 
+  it("offers the workspace's own statuses when there are any, and not when there are none", () => {
+    const seeded = (statuses: unknown[], extra: Partial<RailTicket> = {}) => {
+      const qc = new QueryClient();
+      qc.setQueryData(["helpdesk", "statuses"], statuses);
+      return renderToStaticMarkup(
+        <QueryClientProvider client={qc}>
+          <MemoryRouter>
+            <Rail meta={{ name: "Ticket", linked_from: [] } as unknown as EntityMeta} t={{ ...t, ...extra }} me="priya@acme.test" people={[]} name={name} editable save={async () => {}} />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    };
+    const html = seeded([
+      { id: "s1", status_name: "Waiting on supplier", category: "On Hold", enabled: true },
+      { id: "s2", status_name: "Fixed in next release", category: "Resolved", enabled: true },
+    ]);
+    expect(html).toContain('id="hd-custom-status"');
+    expect(html).toContain("Waiting on supplier");
+    expect(html).not.toContain("Fixed in next release");
+    expect(seeded([])).not.toContain('id="hd-custom-status"');
+    expect(seeded([], { custom_status: "s9", _titles: { custom_status: "Old bucket" } })).toContain("Old bucket");
+  });
+
   it("changes nothing for someone who may not", () => {
     const html = page(<Rail meta={{ name: "Ticket" } as unknown as EntityMeta} t={t} me="priya@acme.test" people={[]} name={name} editable={false} save={async () => {}} />);
     expect(html).not.toContain("Assign to me");
@@ -328,6 +351,9 @@ describe("resolving", () => {
     expect(draw()).toContain("How it was resolved");
     expect(draw()).not.toContain("Also send this");
     expect(draw({ tell: "Ada" })).toContain("Also send this to Ada as a reply");
+    expect(draw()).not.toContain("Resolved as");
+    expect(draw({ resolvedAs: [{ id: "s2", status_name: "Fixed in next release" }] })).toContain("Fixed in next release");
+    expect(draw({ status: "Closed", resolvedAs: [{ id: "s2", status_name: "Fixed in next release" }] })).not.toContain("Resolved as");
   });
 
   it("warns that closing is final", () => {

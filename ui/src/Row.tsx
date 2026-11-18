@@ -5,7 +5,7 @@ import { memo } from "react";
 import { Link } from "react-router";
 import { Badge, Button, Icon } from "@ferrum/kit";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@ferrum/kit/primitives";
-import { type Carried, dueAt, dueLabel, initials, lastSpeaker, requester, type Ticket, waitLabel } from "./inbox";
+import { type Carried, dueAt, dueLabel, initials, lastSpeaker, requester, statusName, type Ticket, waitLabel } from "./inbox";
 import { t as tr, isolate } from "@ferrum/client";
 import { PRIORITY_TONES, SLA_TONES, STATUS_TONES } from "./tones";
 
@@ -53,7 +53,7 @@ export const Row = memo(function Row({ t, now, me, who, picked, current, writabl
       </Link>
       <span className="hd-row-chips">
         {t.priority && PRIORITY_TONES[t.priority] && <Badge tone={PRIORITY_TONES[t.priority]}>{isolate(t.priority)}</Badge>}
-        {t.status && t.status !== "Open" && <Badge tone={STATUS_TONES[t.status] ?? "neutral"}>{isolate(t.status)}</Badge>}
+        {t.status && (t.status !== "Open" || t.custom_status) && <Badge tone={STATUS_TONES[t.status] ?? "neutral"}>{isolate(statusName(t))}</Badge>}
         {t.sla_status && SLA_SHOWN.includes(t.sla_status) && <Badge tone={SLA_TONES[t.sla_status]}>{isolate(t.sla_status)}</Badge>}
         {due && <span className={due.startsWith("overdue") ? "hd-overdue" : "faint"}>{isolate(due)}</span>}
         {wait && <span className="faint">{isolate(wait)}</span>}

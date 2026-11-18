@@ -19,8 +19,8 @@ import type { Current } from "./macros";
 import { copyList } from "./copywords";
 import { Conversation } from "./Conversation";
 import { type AuditEvent, buildFeed, type FeedFilter, type Message, type Story, whatChanged } from "./feed";
-import { prefersReducedMotion, useMedia, useNames, useQuiet } from "./hooks";
-import { type Carried, inboxLink, initials, requester } from "./inbox";
+import { prefersReducedMotion, useMedia, useNames, useQuiet, useStatuses } from "./hooks";
+import { type Carried, inboxLink, initials, requester, statusName } from "./inbox";
 import { command, isTyping } from "./keys";
 import { Rail, type RailTicket } from "./Rail";
 import { ResolveDialog, type Resolution } from "./Resolve";
@@ -89,6 +89,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
   const [asked] = useSearchParams();
   const me = useMe().data?.user;
   const { name, people } = useNames();
+  const statuses = useStatuses();
   const index = useMetaIndex().data;
   const { record, save } = useRecord(meta, id);
   const t = record.data as TicketDoc | undefined;
@@ -247,7 +248,12 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
   const finish = async (r: Resolution): Promise<boolean> => {
     if (!t || !resolving) return false;
     const reply = r.reply ? [{ author_kind: "Agent", body: r.resolution, is_internal: false }] : [];
-    const saved = await write({ status: resolving, resolution_details: r.resolution, ...(reply.length ? { conversation: [...existing(), ...reply] } : {}) });
+    const saved = await write({
+      status: resolving,
+      resolution_details: r.resolution,
+      ...(r.custom_status ? { custom_status: r.custom_status } : {}),
+      ...(reply.length ? { conversation: [...existing(), ...reply] } : {}),
+    });
     if (!saved) return false;
     toast(r.reply ? `${resolving}. ${sentNote(saved, false)}` : resolving);
     // The next ticket of the list is the next job.
@@ -356,7 +362,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
           </p>
           <h1 className="page-title">{t.subject || tr("No subject")}</h1>
           <p className="row">
-            <Badge tone={STATUS_TONES[status] ?? "neutral"}>{isolate(status)}</Badge>
+            <Badge tone={STATUS_TONES[status] ?? "neutral"}>{isolate(statusName(t))}</Badge>
             {t.priority && t.priority !== "Medium" && <Badge tone={PRIORITY_TONES[t.priority] ?? "neutral"}>{isolate(t.priority)}</Badge>}
             {t.assigned_to ? (
               <span className="hd-owner" title={t.assigned_to}>
@@ -542,6 +548,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
         status={resolving ?? "Resolved"}
         what={t.number ?? tr("the ticket")}
         tell={t.contact_email ? (t.contact_name ?? t.contact_email) : null}
+        resolvedAs={(statuses.data ?? []).filter((s) => s.enabled !== false && s.category === "Resolved")}
         onClose={() => setResolving(null)}
         onSubmit={finish}
       />

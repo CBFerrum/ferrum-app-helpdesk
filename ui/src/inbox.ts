@@ -12,6 +12,8 @@ export interface Ticket {
   number?: string | null;
   subject?: string | null;
   status?: string | null;
+  /** The workspace's own status (its name is in `_titles`); the stage is `status`. */
+  custom_status?: string | null;
   priority?: string | null;
   channel?: string | null;
   team?: string | null;
@@ -53,6 +55,10 @@ export const ACTIVE = ["Open", "Replied", "On Hold"];
 export const SLA_ALERTS = ["Breached", "At Risk"];
 const PRIORITY = ["Urgent", "High", "Medium", "Low"];
 export const PRIORITIES = ["Low", "Medium", "High", "Urgent"];
+
+/** What a ticket's status badge says: the workspace's own status where it has one, else its stage. */
+export const statusName = (t: { status?: string | null; custom_status?: unknown; _titles?: Record<string, string> }): string =>
+  (t.custom_status ? t._titles?.custom_status : undefined) || t.status || "Open";
 export const CHANNELS = ["Email", "Portal", "Phone", "Chat", "Web Form"];
 
 const rank = (list: string[], v?: string | null) => {

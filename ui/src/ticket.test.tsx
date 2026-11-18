@@ -90,6 +90,12 @@ describe("a ticket's workspace", () => {
     expect(html).toContain("Customer");
   });
 
+  it("shows the workspace's own status in the header, toned by its stage", () => {
+    const html = draw({ doc: { status: "On Hold", custom_status: "s1", _titles: { custom_status: "Waiting on supplier" } } });
+    expect(html).toContain("Waiting on supplier");
+    expect(draw()).not.toContain("Waiting on supplier");
+  });
+
   it("tells the agent a colleague has the ticket before they answer over them", () => {
     expect(draw()).toContain("Raj Rao has this ticket. Sending takes it over.");
   });

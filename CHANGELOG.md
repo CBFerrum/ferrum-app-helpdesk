@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.15.0
+
+Needs the same platform as 0.14.1. The package is 0.7.0: one new master, `TicketStatus`, and one new field on Ticket, `custom_status` (added empty: an existing ticket has none). Rebuilt interface.
+
+- **A workspace's own statuses.** A Support Manager adds statuses such as "Waiting on supplier" (On Hold) or "Fixed in next release" (Resolved), each inside one of four stages: Open, Replied, On Hold, Resolved. Choosing one on a ticket (by a person, a macro's Set Status step or an agent through `helpdesk.ticket.update`) moves the ticket to its stage; a change of stage it no longer fits (a customer's reply reopening the ticket) takes it off; a ticket closed from Resolved keeps the Resolved-stage status it had. Queues, service targets, the portal and reports keep reading the stage, so nothing that worked changes. A status's stage cannot change while tickets have it, and the five stage names cannot be used as a status's name.
+- **Screens.** Administration, Statuses; the ticket's header and the inbox show the workspace status; the details beside a ticket offer it; resolving offers "Resolved as"; a macro's Set Status lists the workspace's statuses. The ticket summary report groups by Workspace Status.
+
 ## 0.14.1
 
 Needs the same platform as 0.14.0. No database change. No interface change.

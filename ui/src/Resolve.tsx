@@ -9,6 +9,8 @@ export interface Resolution {
   resolution: string;
   /** Also send the words to the customer as a reply. */
   reply: boolean;
+  /** The workspace's own Resolved-stage status it was resolved as, where one was chosen. */
+  custom_status?: string | null;
 }
 
 export function ResolveDialog({
@@ -16,6 +18,7 @@ export function ResolveDialog({
   status,
   what,
   tell,
+  resolvedAs,
   onClose,
   onSubmit,
 }: {
@@ -25,6 +28,8 @@ export function ResolveDialog({
   what: string;
   /** Whom the words can also be sent to; without it the choice is not offered. */
   tell?: string | null;
+  /** The workspace's own Resolved-stage statuses to choose from (one ticket being resolved); none: no choice offered. */
+  resolvedAs?: { id: string; status_name: string }[];
   onClose: () => void;
   /** Resolves true when it is done, which closes the dialog; false keeps it for another try. */
   onSubmit: (r: Resolution) => Promise<boolean>;
@@ -32,9 +37,11 @@ export function ResolveDialog({
   const [text, setText] = useState("");
   const [reply, setReply] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [as, setAs] = useState("");
   useEffect(() => {
     if (open) {
       setText("");
+      setAs("");
       setBusy(false);
     }
   }, [open]);
@@ -43,7 +50,7 @@ export function ResolveDialog({
     e.preventDefault();
     if (!text.trim() || busy) return;
     setBusy(true);
-    const done = await onSubmit({ resolution: text.trim(), reply: !!tell && reply });
+    const done = await onSubmit({ resolution: text.trim(), reply: !!tell && reply, custom_status: as || null });
     setBusy(false);
     if (done) onClose();
   };
@@ -66,6 +73,18 @@ export function ResolveDialog({
         <Field label={t("How it was resolved")} htmlFor="hd-resolution" required hint={t("Kept with the ticket, and shown to the customer once it is resolved.")}>
           <textarea id="hd-resolution" className="textarea" rows={4} value={text} onChange={(e) => setText(e.target.value)} />
         </Field>
+        {status === "Resolved" && !!resolvedAs?.length && (
+          <Field label={t("Resolved as")} htmlFor="hd-resolved-as">
+            <select id="hd-resolved-as" className="select" value={as} onChange={(e) => setAs(e.target.value)}>
+              <option value="">{t("Resolved")}</option>
+              {resolvedAs.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {isolate(s.status_name)}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
         {tell && (
           <label className="hd-check">
             <input type="checkbox" checked={reply} onChange={(e) => setReply(e.target.checked)} />

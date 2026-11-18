@@ -12,6 +12,7 @@ import { Copies } from "./Copies";
 import { fileSize } from "./feed";
 import { TicketTags } from "./Tags";
 import { PRIORITIES, requester, type Ticket } from "./inbox";
+import { useStatuses } from "./hooks";
 import { type SlaTicket, slaCards } from "./sla";
 
 /** What a customer's support contract is called on a ticket and in the catalog. */
@@ -153,6 +154,7 @@ export function Rail({
               ))}
             </select>
           </div>
+          <StatusPick t={t} editable={editable} save={save} />
           <div className="field">
             <label className="field-label" htmlFor="hd-assignee">
               {tr("Assigned to")}
@@ -246,5 +248,31 @@ export function Rail({
         {tr("Every field, in the form")}
       </Link>
     </aside>
+  );
+}
+
+/** The workspace's own status, where it has any: choosing one moves the ticket to its stage. A Resolved-stage status
+ *  is chosen when resolving (it needs the resolution), so only the ticket's current one of those is listed here. */
+function StatusPick({ t, editable, save }: { t: RailTicket; editable: boolean; save: (field: string, value: unknown) => Promise<void> }) {
+  const statuses = useStatuses();
+  const current = t.custom_status ?? "";
+  const offered = (statuses.data ?? []).filter((s) => s.enabled !== false && s.category !== "Resolved" && s.id !== current);
+  if (statuses.isSuccess && !offered.length && !current) return null;
+  return (
+    <div className="field">
+      <label className="field-label" htmlFor="hd-custom-status">
+        {tr("Workspace status")}
+      </label>
+      <select id="hd-custom-status" className="select" disabled={!editable || statuses.isPending} value={current} onChange={(e) => void save("custom_status", e.target.value || null)}>
+        <option value="">{tr("None")}</option>
+        {current && <option value={current}>{isolate(statuses.data?.find((s) => s.id === current)?.status_name ?? t._titles?.custom_status ?? current)}</option>}
+        {offered.map((s) => (
+          <option key={s.id} value={s.id}>
+            {isolate(s.status_name)}
+          </option>
+        ))}
+      </select>
+      {statuses.isError && <p className="faint">{tr("The statuses could not be loaded.")}</p>}
+    </div>
   );
 }

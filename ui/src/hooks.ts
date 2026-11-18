@@ -2,6 +2,8 @@
 // arrive in bursts, drafts that survive a page change, and the people agents know each other by.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api, docPath } from "@ferrum/client";
 import { usePeople, type Person } from "@ferrum/records";
 
 /** Whether a media query matches now, and as the window changes. */
@@ -111,4 +113,22 @@ export function useNow(every = 60_000): number {
     return () => clearInterval(t);
   }, [every]);
   return now;
+}
+
+/** A workspace's own status: a name the team reads, inside one of the four working stages (`category`). */
+export interface WorkspaceStatus {
+  id: string;
+  status_name: string;
+  category: "Open" | "Replied" | "On Hold" | "Resolved";
+  enabled?: boolean;
+}
+
+/** The workspace's own statuses, one query for every screen that offers them. */
+export function useStatuses() {
+  return useQuery({
+    queryKey: ["helpdesk", "statuses"],
+    staleTime: 60_000,
+    queryFn: ({ signal }) =>
+      api.get<{ rows: WorkspaceStatus[] }>(docPath("TicketStatus"), { fields: "status_name,category,enabled", sort: "status_name asc", limit: 200 }, signal).then((r) => r.rows),
+  });
 }

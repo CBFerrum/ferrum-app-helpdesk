@@ -262,6 +262,32 @@ impl DocHook for TeamHook {
     }
 }
 
+// ───────────────────────────── a workspace's own statuses ─────────────────────────────
+
+/// A workspace status, read as the system (`None` when there is none).
+async fn custom_status(hc: &mut HookCtx<'_>, status: Uuid) -> Result<Option<Doc>> {
+    linked(hc.kernel, &sys(hc.ctx), hc.tx, "TicketStatus", status).await
+}
+
+/// A status keeps its stage while a ticket has it: the ticket's status would no longer be the status's stage.
+pub struct StatusHook;
+
+#[async_trait]
+impl DocHook for StatusHook {
+    async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+        let (Some(old), Some(status)) = (stored(hc, doc).await?, id(doc, "id")) else { return Ok(()) };
+        if s(&old, "category") == s(doc, "category") {
+            return Ok(());
+        }
+        let used: bool = sqlx::query_scalar("select exists (select 1 from e_ticket where tenant_id = $1 and custom_status = $2)")
+            .bind(hc.ctx.tenant)
+            .bind(status)
+            .fetch_one(&mut **hc.tx)
+            .await?;
+        if used { Err(Error::field("category", "tickets have this status: add a new status for the other stage")) } else { Ok(()) }
+    }
+}
+
 pub struct RuleHook;
 
 #[async_trait]
@@ -434,6 +460,20 @@ impl DocHook for TicketHook {
             };
         }
 
+        // A workspace's own status chosen in this save moves the ticket to its stage (it wins over a status sent with it).
+        let mut chosen: Option<String> = None;
+        if let Some(cs) = id(doc, "custom_status")
+            && old.as_ref().is_none_or(|o| id(o, "custom_status") != Some(cs))
+        {
+            let st = custom_status(hc, cs).await?.ok_or_else(|| Error::field("custom_status", "there is no such status"))?;
+            if !b(&st, "enabled") {
+                return Err(Error::field("custom_status", "is switched off"));
+            }
+            let category = s(&st, "category").unwrap_or("Open").to_string();
+            set(doc, "status", category.as_str());
+            chosen = Some(category);
+        }
+
         // (The secret in the mail sent about the ticket is kept nowhere: its hash is recorded when the ticket is made and
         // as mail goes, in helpdesk_mail_token.)
 
@@ -512,6 +552,17 @@ impl DocHook for TicketHook {
             if id(doc, "customer").is_some() && s(doc, "entitlement") != Some("Covered") && holds_outside_entitlement(hc).await? {
                 set(doc, "status", "On Hold");
                 set(doc, "entitlement_approval", "Waiting");
+            }
+        }
+        // A workspace status belongs to the ticket's stage (or to Resolved once it is Closed): a stage it no longer fits takes it off.
+        if let Some(cs) = id(doc, "custom_status") {
+            let category = match chosen {
+                Some(c) => Some(c),
+                None => custom_status(hc, cs).await?.and_then(|st| s(&st, "category").map(str::to_string)),
+            };
+            let status = s(doc, "status").unwrap_or("Open");
+            if !category.is_some_and(|c| c == status || (status == "Closed" && c == "Resolved")) {
+                set(doc, "custom_status", Value::Null);
             }
         }
         let status = s(doc, "status").unwrap_or("Open").to_string();

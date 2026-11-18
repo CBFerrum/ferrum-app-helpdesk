@@ -158,6 +158,22 @@
     - {name: communication, type: data, read_only: true, no_copy: true, hidden: true, description: "The Mail message this one is (its id), when it came or went through Mail"}
     - {name: cc, type: text, read_only: true, no_copy: true, description: "Who else the message was copied to"}
 
+- name: TicketStatus
+  label: Ticket Status
+  label_plural: Ticket Statuses
+  kind: master
+  module: support
+  title_field: status_name
+  description: "A workspace's own name for where a ticket stands, inside one of the four working stages. The stage is what queues, service targets and reports read; this is what the team reads."
+  fields:
+    - {name: status_name, type: data, required: true, unique: true, in_list: true, max_length: 60}
+    - {name: category, type: select, label: Stage, options: [Open, Replied, On Hold, Resolved], required: true, in_list: true, in_filter: true, description: "The stage a ticket is in while it has this status. Open: waits for the team. Replied: waits for the customer. On Hold: parked. Resolved: done"}
+    - {name: enabled, type: check, default: true, in_list: true, in_filter: true, description: "Switched off, it can no longer be chosen; tickets that have it keep it"}
+    - {name: description, type: text}
+  rules:
+    - {name: not_a_stage, field: status_name, check: "!(lower(doc.status_name) in ['open', 'replied', 'on hold', 'resolved', 'closed'])", message: "That is a stage's own name: choose another"}
+  list: {columns: [status_name, category, enabled], sort: status_name asc}
+
 - name: Ticket
   label: Ticket
   kind: document
@@ -170,6 +186,7 @@
     - {name: subject, type: data, required: true, in_list: true, max_length: 300}
     - {name: description, type: markdown}
     - {name: status, type: select, options: [Open, Replied, On Hold, Resolved, Closed], required: true, default: Open, in_list: true, in_filter: true, index: true}
+    - {name: custom_status, type: link, to: TicketStatus, label: Workspace Status, no_copy: true, in_filter: true, index: true, description: "The workspace's own status. Choosing one moves the ticket to its stage; a change of stage that no longer fits takes it off"}
     - {name: priority, type: select, options: [Low, Medium, High, Urgent], required: true, default: Medium, in_list: true, in_filter: true}
     - {name: ticket_type, type: link, to: TicketType, label: Type, in_filter: true}
     - {name: channel, type: select, options: [Email, Portal, Phone, Chat, Web Form], required: true, default: Email, in_filter: true}
@@ -232,7 +249,7 @@
     - {name: survey_sent_at, type: datetime, read_only: true, no_copy: true}
     - {name: rated_at, type: datetime, read_only: true, no_copy: true}
   form:
-    - {label: Ticket, fields: [subject, status, priority, ticket_type, channel, description]}
+    - {label: Ticket, fields: [subject, status, custom_status, priority, ticket_type, channel, description]}
     - {label: Customer, fields: [customer, customer_name, contact_name, contact_email, cc]}
     - {label: Assignment, fields: [team, assigned_to, language]}
     - {label: Conversation, fields: [conversation]}

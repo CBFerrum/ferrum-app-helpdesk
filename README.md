@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.14.1-7c3aed?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.15.0-7c3aed?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -44,9 +44,9 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 
 | | |
 |---|---|
-| **Version** | 0.14.1 (platform `>=0.4.0, <0.5`) |
+| **Version** | 0.15.0 (platform `>=0.4.0, <0.5`) |
 | **Kind** | Own interface at `/helpdesk/` (agent inbox, ticket workspace, administration, help centre editor, reports) and a page in the customer portal |
-| **What it adds** | 28 entities (21 main, 7 child tables) in 2 packages, 3 roles, 9 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
+| **What it adds** | 29 entities (22 main, 7 child tables) in 2 packages, 3 roles, 9 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
 | **Depends on** | Ferrum core, shared customers and items |
 | **Works with** | Mail (inbound and outbound email, version 0.20 or later), ERP (invoices and orders through a connector), Field Service (visits from tickets), the platform's calendars and service targets |
 | **Languages** | English, Arabic (right to left), Hindi; a workspace can change any interface word |
@@ -167,6 +167,10 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 - **Ticket** (`TKT-2026-000001`). Subject, description, status (Open, Replied, On Hold, Resolved, Closed), priority
   (Low, Medium, High, Urgent), type, channel, customer, contact, team,
   assignee, language, product and serial number.
+- **Workspace statuses.** A Support Manager adds the desk's own statuses (Administration, Statuses), each inside one of
+  four stages: Open, Replied, On Hold, Resolved. Choosing one moves the ticket to its stage; a change of stage it no
+  longer fits takes it off; closing keeps a Resolved-stage status. Queues, targets, reports and the portal read the
+  stage, and customers see only the stage.
 - **Channel.** Email is set on a ticket made from mail and Portal on one a customer raises. Phone, Chat and Web Form are
   labels an agent picks when logging a ticket by hand; no phone, chat or web-form channel brings a ticket in.
 - **Conversation.** An append-only feed of messages, each from an agent or the customer, public or internal.
@@ -282,7 +286,7 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 
 | Report | What it shows |
 |---|---|
-| **Ticket Summary** | Tickets counted by status, priority and more |
+| **Ticket Summary** | Tickets counted by status, workspace status, priority and more |
 | **SLA Compliance** | Targets met and missed |
 | **Response Times** | First response and resolution in working hours |
 | **Agent Workload** | Open tickets and work by agent |
@@ -367,7 +371,7 @@ ticket by number to open a visit.
 
 | Entity | What it is | Key fields or states |
 |---|---|---|
-| **Ticket** | A customer's request and its conversation | Number, subject, status, priority, channel, customer, team, assignee, SLA states, entitlement, tags |
+| **Ticket** | A customer's request and its conversation | Number, subject, status (the stage), workspace status, priority, channel, customer, team, assignee, SLA states, entitlement, tags |
 | Ticket message (child) | One message | Author, body, internal, sent at, attachments, copies, verified sender |
 | **Support Address** | An address customers write to | Address, brand, team, default priority and type, Mail account, enabled, registered |
 | **Support Brand** | What a customer knows an address by | Name, display name, signature, header, footer |
@@ -379,6 +383,7 @@ ticket by number to open a visit.
 | **Escalation Rule** | What happens at risk or breach | Level, trigger, actions |
 | **Support Contract** | A customer's entitlement | Period, agreement, included tickets |
 | **Ticket Type, Ticket Tag, Tag Rule** | Classifying tickets | Name, colour, condition |
+| **Ticket Status** | A workspace's own status inside one of four stages (Open, Replied, On Hold, Resolved); the stage is what queues, clocks and reports read | Name, stage, on |
 | **Saved Reply, Support Macro** | Written once, used often | Scope, body or steps, uses |
 | **Knowledge Base Article, Category** | Answers | Status, visibility, slug, views, votes |
 | **Warranty Claim** | A warranty complaint | Item, serial, delivery, warranty status |
@@ -422,7 +427,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 | Merge duplicate tickets | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Parent, child and linked tickets | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Tags and custom fields | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Custom statuses | ❌ | ✅ | 🟡 | ✅ | ✅ | 🟡 |
+| Custom statuses | ✅ | ✅ | 🟡 | ✅ | ✅ | 🟡 |
 | CC and followers | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Saved replies and macros with merge fields | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Triggers and automations on conversation content | 🟡² | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -482,6 +487,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 
 ### ✅ Recently shipped
 
+- [x] **0.15.0.** A workspace's own statuses, each inside one of four stages that the clocks, queues and reports read.
 - [x] **0.14.1.** Every action states what done means and what it returns, for processes and agents; the planned visit of a maintenance schedule is a declared parameter.
 - [x] **0.14.0.** Upkeep runs one workspace at a time, on whichever replica is free; needs Ferrum 0.4.0.
 - [x] **0.13.4.** Built against Mail 0.26: Helpdesk hands the kernel to Mail's address registration, which now counts the workspace's Mail Domain only while the workspace has proven it.
@@ -504,7 +510,6 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 - [ ] **WhatsApp and SMS** conversations in the inbox.
 - [ ] **Article suggestions** while an agent replies, with article translations.
 - [ ] **AI help**: a suggested reply, a ticket summary and triage.
-- [ ] **Custom statuses** that drive the clock and the queues.
 - [ ] **Parent, child and linked tickets**, and a problem-and-incident link.
 
 ### 🔭 Later

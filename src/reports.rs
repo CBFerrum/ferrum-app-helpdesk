@@ -16,9 +16,10 @@ use uuid::Uuid;
 
 pub struct SupportReports;
 
-/// Groupings: label → SQL over the ticket `a`, its team `tm`, type `tt` and agreement `sl`.
-const GROUPS: [(&str, &str); 9] = [
+/// Groupings: label → SQL over the ticket `a`, its team `tm`, type `tt`, agreement `sl` and workspace status `cs`.
+const GROUPS: [(&str, &str); 10] = [
     ("Status", "a.status"),
+    ("Workspace Status", "coalesce(cs.status_name, a.status)"),
     ("Priority", "a.priority"),
     ("Team", "coalesce(tm.team_name, 'No Team')"),
     ("Agent", "coalesce(a.assigned_to, 'Unassigned')"),
@@ -61,7 +62,8 @@ fn tickets_with(ctx: &Ctx, columns: &str, joins: &str) -> Result<QueryBuilder<Po
         "select {columns} from e_ticket a \
          left join e_support_team tm on tm.tenant_id = a.tenant_id and tm.id = a.team \
          left join e_ticket_type tt on tt.tenant_id = a.tenant_id and tt.id = a.ticket_type \
-         left join e_service_level_agreement sl on sl.tenant_id = a.tenant_id and sl.id = a.service_level_agreement {joins} \
+         left join e_service_level_agreement sl on sl.tenant_id = a.tenant_id and sl.id = a.service_level_agreement \
+         left join e_ticket_status cs on cs.tenant_id = a.tenant_id and cs.id = a.custom_status {joins} \
          where a.tenant_id = "
     ));
     qb.push_bind(ctx.tenant);

@@ -13,6 +13,7 @@ import { Brands } from "./Brands";
 import { Inbound } from "./Inbound";
 import { MacrosAdmin } from "./MacrosAdmin";
 import { Routing } from "./Routing";
+import { StatusesAdmin } from "./StatusesAdmin";
 import { Survey } from "./Survey";
 import { TagsAdmin } from "./TagsAdmin";
 import { StatePanel } from "@ferrum/kit";
@@ -24,6 +25,7 @@ const SECTIONS = [
   { id: "inbound", get label() { return t("Inbound mail"); }, Page: Inbound },
   { id: "agents", get label() { return t("Agent profiles"); }, Page: Agents },
   { id: "tags", get label() { return t("Tags and tag rules"); }, Page: TagsAdmin },
+  { id: "statuses", get label() { return t("Statuses"); }, Page: StatusesAdmin },
   { id: "routing", get label() { return t("Assignment rules"); }, Page: Routing },
   { id: "macros", get label() { return t("Macros"); }, Page: MacrosAdmin },
   { id: "survey", get label() { return t("Satisfaction survey"); }, Page: Survey },
