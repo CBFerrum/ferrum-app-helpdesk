@@ -1,5 +1,5 @@
 package: helpdesk
-version: 0.7.0
+version: 0.8.0
 label: Support
 description: Helpdesk tickets with business-hours SLAs, teams with automatic assignment, a knowledge base, warranty claims and maintenance contracts with planned visits.
 # Customers and items are shared with other apps; the links to ERP's invoices and orders come with

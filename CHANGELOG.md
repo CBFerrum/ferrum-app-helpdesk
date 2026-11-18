@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.16.0
+
+Needs the same platform as 0.15.0. The package is 0.8.0: two optional hours on an agreement's targets and ten read-only fields on Ticket (added empty), with two more of the platform's service targets. Rebuilt interface.
+
+- **Next reply and customer update.** An agreement may set, per priority, Next Reply Time (each later message from the customer answered within so much working time) and Update the Customer Every (the longest a customer goes without a public message while the ticket is Open or On Hold). Both run on the platform's service targets on the agreement's calendar, are shown beside the ticket, breach once and raise the ticket's `updated` event, count in the SLA status, and are counted in SLA Compliance (Next Reply Late, Update Missed). An agreement without them is as before; open tickets take up new hours at the next upkeep.
+- **Known limit.** On a ticket kept On Hold, a second missed update in the same round moves the due moment but is not counted again: the platform records one breach per round.
+- The inbox's due moment is the earlier of the next reply and the resolution once the ticket has been answered.
+
 ## 0.15.0
 
 Needs the same platform as 0.14.1. The package is 0.7.0: one new master, `TicketStatus`, and one new field on Ticket, `custom_status` (added empty: an existing ticket has none). Rebuilt interface.

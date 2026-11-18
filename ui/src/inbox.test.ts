@@ -59,6 +59,9 @@ describe("the agent inbox", () => {
     expect(dueAt(t("a", { response_by: "R", resolution_by: "S" }))).toBe("R");
     expect(dueAt(t("b", { response_by: "R", resolution_by: "S", first_responded_at: "x" }))).toBe("S");
     expect(dueAt(t("c"))).toBeNull();
+    const answered = { first_responded_at: "x", resolution_by: "2026-11-05T10:00:00Z" };
+    expect(dueAt(t("d", { ...answered, next_reply_by: "2026-11-03T10:00:00Z" }))).toBe("2026-11-03T10:00:00Z");
+    expect(dueAt(t("e", { ...answered, next_reply_by: "2026-11-06T10:00:00Z" }))).toBe("2026-11-05T10:00:00Z");
   });
 
   it("says when in words", () => {

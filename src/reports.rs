@@ -131,26 +131,28 @@ async fn compliance(ctx: &Ctx, p: &Params<'_>, tx: &mut Tx) -> Result<Value> {
         &format!(
             "{expr}, count(*), count(*) filter (where a.first_responded_at is not null and not a.response_breached), \
              count(*) filter (where a.response_breached), count(*) filter (where a.resolved_at is not null and not a.resolution_breached), \
-             count(*) filter (where a.resolution_breached)"
+             count(*) filter (where a.resolution_breached), count(*) filter (where a.next_reply_breached), count(*) filter (where a.update_breached)"
         ),
     )?;
     within(&mut qb, "a.opened_at", span);
     qb.push(" and a.service_level_agreement is not null group by 1 order by 1");
-    let data: Vec<(String, i64, i64, i64, i64, i64)> = qb.build_query_as().fetch_all(&mut **tx).await?;
-    let row = |group: String, n: i64, rm: i64, rb: i64, zm: i64, zb: i64| {
+    let data: Vec<(String, i64, i64, i64, i64, i64, i64, i64)> = qb.build_query_as().fetch_all(&mut **tx).await?;
+    let row = |group: String, [n, rm, rb, zm, zb, nl, um]: [i64; 7]| {
         json!({"group": group, "tickets": n,
             "response_met": rm, "response_breached": rb, "response_pending": n - rm - rb, "response_pct": pct(rm, rm + rb),
-            "resolution_met": zm, "resolution_breached": zb, "resolution_pending": n - zm - zb, "resolution_pct": pct(zm, zm + zb)})
+            "resolution_met": zm, "resolution_breached": zb, "resolution_pending": n - zm - zb, "resolution_pct": pct(zm, zm + zb),
+            "next_reply_late": nl, "update_missed": um})
     };
-    let mut t = (0, 0, 0, 0, 0);
+    let mut t = [0i64; 7];
     let rows: Vec<Value> = data
         .into_iter()
-        .map(|(g, n, rm, rb, zm, zb)| {
-            t = (t.0 + n, t.1 + rm, t.2 + rb, t.3 + zm, t.4 + zb);
-            row(g, n, rm, rb, zm, zb)
+        .map(|(g, n, rm, rb, zm, zb, nl, um)| {
+            let r = [n, rm, rb, zm, zb, nl, um];
+            t.iter_mut().zip(r).for_each(|(a, b)| *a += b);
+            row(g, r)
         })
         .collect();
-    let mut totals = row(String::new(), t.0, t.1, t.2, t.3, t.4);
+    let mut totals = row(String::new(), t);
     if let Value::Object(m) = &mut totals {
         m.remove("group");
     }
@@ -159,7 +161,8 @@ async fn compliance(ctx: &Ctx, p: &Params<'_>, tx: &mut Tx) -> Result<Value> {
             col("response_met", "Response Met", "int"), col("response_breached", "Response Breached", "int"), col("response_pending", "Response Pending", "int"),
             col("response_pct", "Response Compliance %", "decimal"),
             col("resolution_met", "Resolution Met", "int"), col("resolution_breached", "Resolution Breached", "int"), col("resolution_pending", "Resolution Pending", "int"),
-            col("resolution_pct", "Resolution Compliance %", "decimal")],
+            col("resolution_pct", "Resolution Compliance %", "decimal"),
+            col("next_reply_late", "Next Reply Late", "int"), col("update_missed", "Update Missed", "int")],
         "rows": rows,
         "totals": totals,
         "meta": meta(span, label),

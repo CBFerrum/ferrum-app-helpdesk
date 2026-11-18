@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.15.0-7c3aed?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.16.0-7c3aed?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -44,7 +44,7 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 
 | | |
 |---|---|
-| **Version** | 0.15.0 (platform `>=0.4.0, <0.5`) |
+| **Version** | 0.16.0 (platform `>=0.4.0, <0.5`) |
 | **Kind** | Own interface at `/helpdesk/` (agent inbox, ticket workspace, administration, help centre editor, reports) and a page in the customer portal |
 | **What it adds** | 29 entities (22 main, 7 child tables) in 2 packages, 3 roles, 9 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
 | **Depends on** | Ferrum core, shared customers and items |
@@ -227,6 +227,12 @@ skill and shift, and the same data set holds the customer's contracts, equipment
   A reopened ticket's resolution starts again from the reopening.
 - **States.** Running, paused, met, met late or breached for each of first response and resolution. A ticket's
   SLA status is On Track, At Risk (after 75% of the time, a setting), Breached or Fulfilled.
+- **Next reply and customer update.** Two more clocks an agreement may set per priority: the time to answer each
+  later message from the customer (from the oldest one nobody has answered; a second message does not move it), and
+  how long a customer may go without a public message while the ticket is Open or On Hold. Each shows beside the ticket,
+  breaches once, and counts in the SLA status and the compliance report; a ticket keeps the mark that a later reply or
+  an update was ever late. Limit: on a ticket kept On Hold, a second missed update in the same round moves the due moment
+  but is not counted again (the platform's clock records one breach per round).
 - **Breach recorded once** and raising the ticket's updated event, so automations and webhooks can act.
 - **Priority raised.** Moves the due moment from the save.
 - **Escalation rules.** At Risk or Breached, by level, once per ticket: assign, move to a team, raise priority to
@@ -287,7 +293,7 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 | Report | What it shows |
 |---|---|
 | **Ticket Summary** | Tickets counted by status, workspace status, priority and more |
-| **SLA Compliance** | Targets met and missed |
+| **SLA Compliance** | Targets met and missed, with late next replies and missed customer updates |
 | **Response Times** | First response and resolution in working hours |
 | **Agent Workload** | Open tickets and work by agent |
 | **Customer Satisfaction** | Ratings by agent, team and month, counted from the rating's own date |
@@ -433,7 +439,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 | Triggers and automations on conversation content | 🟡² | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Routing by skill, language and shift | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | SLA targets in working hours with holidays and pauses | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| More clocks: next reply, periodic update | ❌ | ✅ | ✅ | 🟡 | ✅ | ✅ |
+| More clocks: next reply, periodic update | ✅ | ✅ | ✅ | 🟡 | ✅ | ✅ |
 | Escalation rules | 🟡³ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Entitlement by support contract | ✅ | 🟡 | 🟡 | ❌ | ✅ | ❌ |
 | Knowledge base and public help centre | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -487,6 +493,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 
 ### ✅ Recently shipped
 
+- [x] **0.16.0.** Two more clocks: the next reply and the customer update, on the platform's service targets.
 - [x] **0.15.0.** A workspace's own statuses, each inside one of four stages that the clocks, queues and reports read.
 - [x] **0.14.1.** Every action states what done means and what it returns, for processes and agents; the planned visit of a maintenance schedule is a declared parameter.
 - [x] **0.14.0.** Upkeep runs one workspace at a time, on whichever replica is free; needs Ferrum 0.4.0.
@@ -527,7 +534,6 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 - [ ] A Merged mark on the inbox rows.
 
 **Service levels**
-- [ ] More clocks: next reply and periodic update.
 - [ ] Agreements chosen by channel, tag or brand.
 - [ ] Escalations that can do anything an automation can.
 

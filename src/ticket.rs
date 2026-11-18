@@ -64,8 +64,17 @@ pub struct Sla {
     pause_on_replied: bool,
     /// The working calendar its targets count on, when it names one the workspace has.
     calendar: Option<String>,
-    /// priority → (response, resolution) in seconds of working time.
-    targets: HashMap<String, (i64, i64)>,
+    /// priority → what it promises, in seconds of working time.
+    targets: HashMap<String, Promise>,
+}
+
+/// One priority's targets, in seconds of working time; the next reply and the customer update are optional.
+#[derive(Clone, Copy)]
+struct Promise {
+    response: i64,
+    resolution: i64,
+    next_reply: Option<i64>,
+    update: Option<i64>,
 }
 
 fn hours_to_secs(h: Decimal) -> i64 {
@@ -76,7 +85,16 @@ impl Sla {
     fn from_doc(doc: &Doc, calendars: &std::collections::BTreeSet<String>) -> Option<Sla> {
         let targets = rows(doc, "priorities")
             .iter()
-            .filter_map(|r| Some((s(r, "priority")?.to_string(), (hours_to_secs(d(r, "response_hours")), hours_to_secs(d(r, "resolution_hours"))))))
+            .filter_map(|r| {
+                let optional = |f: &str| r.get(f).filter(|v| !v.is_null()).map(|_| hours_to_secs(d(r, f)));
+                let promise = Promise {
+                    response: hours_to_secs(d(r, "response_hours")),
+                    resolution: hours_to_secs(d(r, "resolution_hours")),
+                    next_reply: optional("next_reply_hours"),
+                    update: optional("update_hours"),
+                };
+                Some((s(r, "priority")?.to_string(), promise))
+            })
             .collect();
         Some(Sla {
             id: id(doc, "id")?,
@@ -139,10 +157,12 @@ pub fn policy_fields(slas: &[Sla], groups: &[Uuid], doc: &Doc) -> Doc {
     let mut out = Doc::new();
     let priority = s(doc, "priority").unwrap_or("Medium");
     match pick(slas, doc, groups).and_then(|x| x.targets.get(priority).map(|t| (x, *t))) {
-        Some((x, (response, resolution))) => {
+        Some((x, p)) => {
             out.insert("service_level_agreement".into(), json!(x.id.to_string()));
-            out.insert("response_secs".into(), json!(response));
-            out.insert("resolution_secs".into(), json!(resolution));
+            out.insert("response_secs".into(), json!(p.response));
+            out.insert("resolution_secs".into(), json!(p.resolution));
+            out.insert("next_reply_secs".into(), json!(p.next_reply));
+            out.insert("update_secs".into(), json!(p.update));
             out.insert("sla_pause_hold".into(), json!(x.pause_on_hold));
             out.insert("sla_pause_replied".into(), json!(x.pause_on_replied));
             out.insert("sla_calendar".into(), x.calendar.as_ref().map_or(Value::Null, |c| json!(c)));
@@ -151,6 +171,8 @@ pub fn policy_fields(slas: &[Sla], groups: &[Uuid], doc: &Doc) -> Doc {
             out.insert("service_level_agreement".into(), Value::Null);
             out.insert("response_secs".into(), Value::Null);
             out.insert("resolution_secs".into(), Value::Null);
+            out.insert("next_reply_secs".into(), Value::Null);
+            out.insert("update_secs".into(), Value::Null);
             out.insert("sla_pause_hold".into(), json!(false));
             out.insert("sla_pause_replied".into(), json!(false));
             out.insert("sla_calendar".into(), Value::Null);
@@ -430,6 +452,29 @@ fn preview(text: &str) -> String {
     if line.chars().count() <= 140 { line } else { format!("{}…", line.chars().take(139).collect::<String>().trim_end()) }
 }
 
+/// Where the next-reply and customer-update targets start, from the conversation: `reply_owed_since`, the oldest public
+/// customer message no public reply has followed (once the ticket has had its first response; a second message does not
+/// move it), and `update_from`, the latest public message of either side, not before the first response or a reopening.
+fn conversation_clocks(doc: &mut Doc, status: &str) {
+    let public: Vec<(bool, Ts)> = rows(doc, "conversation")
+        .iter()
+        .filter(|m| !b(m, "is_internal"))
+        .filter_map(|m| Some((s(m, "author_kind") == Some("Customer"), ts(m, "sent_at")?)))
+        .collect();
+    let first = ts(doc, "first_responded_at");
+    let agent_last = public.iter().filter(|(c, _)| !c).map(|(_, t)| *t).max();
+    let owed = match first {
+        Some(f) if !matches!(status, "Resolved" | "Closed") => {
+            let after = agent_last.map_or(f, |a| a.max(f));
+            public.iter().filter(|(c, t)| *c && *t > after).map(|(_, t)| *t).min()
+        }
+        _ => None,
+    };
+    let from = first.map(|f| public.iter().map(|(_, t)| *t).chain([f]).chain(ts(doc, "sla_start")).max().unwrap_or(f));
+    set(doc, "reply_owed_since", owed.map_or(Value::Null, ts_value));
+    set(doc, "update_from", from.map_or(Value::Null, ts_value));
+}
+
 /// The stored version of the document being saved (`None` while it is being created).
 async fn stored(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Option<Doc>> {
     match id(doc, "id") {
@@ -628,6 +673,7 @@ impl DocHook for TicketHook {
         if reopened || ts(doc, "sla_start").is_none() {
             set(doc, "sla_start", ts_value(if reopened { Utc::now().max(opened) } else { opened }));
         }
+        conversation_clocks(doc, &status);
         Ok(())
     }
 
@@ -832,7 +878,9 @@ pub async fn verdicts(tx: &mut Tx, tenant: Uuid, only: Option<Uuid>) -> Result<V
            select t.id, \
              case \
                when t.response_state is null and t.resolution_state is null then null \
-               when t.response_state in ('breached', 'met_late') or t.resolution_state in ('breached', 'met_late') then 'Breached' \
+               when t.response_state in ('breached', 'met_late') or t.resolution_state in ('breached', 'met_late') \
+                 or t.next_reply_state in ('breached', 'met_late') or t.update_state in ('breached', 'met_late') \
+                 or coalesce(t.next_reply_breached, false) or coalesce(t.update_breached, false) then 'Breached' \
                when t.resolution_state = 'met' then 'Fulfilled' \
                when exists (select 1 from record_target r where r.tenant_id = t.tenant_id and r.entity = 'Ticket' and r.record_id = t.id and r.started_at is not null \
                               and r.met_at is null and r.paused_at is null and r.breached_at is null and r.due_at is not null \
@@ -840,13 +888,16 @@ pub async fn verdicts(tx: &mut Tx, tenant: Uuid, only: Option<Uuid>) -> Result<V
                else 'On Track' end as status, \
              coalesce(t.response_state in ('breached', 'met_late'), false) as rb, \
              coalesce(t.resolution_state in ('breached', 'met_late'), false) as zb, \
+             coalesce(t.next_reply_breached, false) or coalesce(t.next_reply_state in ('breached', 'met_late'), false) as nb, \
+             coalesce(t.update_breached, false) or coalesce(t.update_state in ('breached', 'met_late'), false) as ub, \
              (select round(r.worked_secs / 3600.0, 2) from record_target r where r.tenant_id = t.tenant_id and r.entity = 'Ticket' and r.record_id = t.id and r.target = 'respond' and r.met_at is not null) as frh, \
              (select round(r.worked_secs / 3600.0, 2) from record_target r where r.tenant_id = t.tenant_id and r.entity = 'Ticket' and r.record_id = t.id and r.target = 'resolve' and r.met_at is not null) as zh \
            from e_ticket t where t.tenant_id = $1 and (($3::uuid is not null and t.id = $3) or ($3::uuid is null and t.status = any($4)))) \
-         update e_ticket t set sla_status = v.status, response_breached = v.rb, resolution_breached = v.zb, \
+         update e_ticket t set sla_status = v.status, response_breached = v.rb, resolution_breached = v.zb, next_reply_breached = v.nb, update_breached = v.ub, \
                 first_response_hours = coalesce(v.frh, t.first_response_hours), resolution_hours = coalesce(v.zh, t.resolution_hours) \
          from v where t.tenant_id = $1 and t.id = v.id \
            and (t.sla_status is distinct from v.status or t.response_breached is distinct from v.rb or t.resolution_breached is distinct from v.zb \
+                or t.next_reply_breached is distinct from v.nb or t.update_breached is distinct from v.ub \
                 or t.first_response_hours is distinct from coalesce(v.frh, t.first_response_hours) or t.resolution_hours is distinct from coalesce(v.zh, t.resolution_hours)) \
          returning t.id, t.assigned_to, coalesce(t.number, 'Ticket'), coalesce(t.subject, ''), v.status",
     )
@@ -1141,5 +1192,19 @@ mod tests {
         let half = sla("Half", None, None, None, None, &[("Medium", "0.5", "1.25")]);
         let f = policy_fields(&[half], &[], &ticket(json!({"priority": "Medium"})));
         assert_eq!((f["response_secs"].clone(), f["resolution_secs"].clone()), (json!(1800), json!(4500)));
+        assert_eq!((f["next_reply_secs"].clone(), f["update_secs"].clone()), (Value::Null, Value::Null), "no such clock when the row sets none");
+        let mut both = sla("Both", None, None, None, None, &[]);
+        both.targets.insert("Medium".into(), Promise { response: 3600, resolution: 7200, next_reply: Some(1800), update: Some(28800) });
+        let f = policy_fields(&[both], &[], &ticket(json!({"priority": "Medium"})));
+        assert_eq!((f["next_reply_secs"].clone(), f["update_secs"].clone()), (json!(1800), json!(28800)));
+        let mut doc = Doc::new();
+        doc.insert("id".into(), json!(Uuid::now_v7().to_string()));
+        doc.insert(
+            "priorities".into(),
+            json!([{"priority": "Low", "response_hours": "1", "resolution_hours": "2", "next_reply_hours": "0.5", "update_hours": null}]),
+        );
+        let read = Sla::from_doc(&doc, &Default::default()).unwrap();
+        let p = read.targets["Low"];
+        assert_eq!((p.next_reply, p.update), (Some(1800), None), "read from the agreement's row");
     }
 }

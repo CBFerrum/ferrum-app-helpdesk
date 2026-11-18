@@ -81,6 +81,8 @@
     - {name: priority, type: select, options: [Low, Medium, High, Urgent], required: true, in_list: true}
     - {name: response_hours, type: decimal, label: Response Time (Hours), required: true, min: "0.01", max: "87600", in_list: true}
     - {name: resolution_hours, type: decimal, label: Resolution Time (Hours), required: true, min: "0.01", max: "87600", in_list: true}
+    - {name: next_reply_hours, type: decimal, label: Next Reply Time (Hours), min: "0.01", max: "87600", in_list: true, description: "Working time to answer each later message from the customer, after the first response; empty: no such clock"}
+    - {name: update_hours, type: decimal, label: Update the Customer Every (Hours), min: "0.01", max: "87600", in_list: true, description: "The longest a customer goes without a public message while the ticket is Open or On Hold; empty: no such clock"}
   rules:
     - {name: resolution_after_response, check: "doc.resolution_hours >= doc.response_hours", message: "The resolution time cannot be shorter than the response time"}
 
@@ -228,6 +230,16 @@
     - {name: resolution_hours, type: decimal, precision: 2, read_only: true, no_copy: true, description: "Working hours resolution took, pauses excluded"}
     - {name: response_state, type: select, options: [running, paused, met, met_late, breached], read_only: true, no_copy: true, in_filter: true, label: Response Target, description: "The platform's service target: the breach is recorded once and raises the ticket's updated event"}
     - {name: resolution_state, type: select, options: [running, paused, met, met_late, breached], read_only: true, no_copy: true, in_filter: true, label: Resolution Target}
+    - {name: next_reply_by, type: datetime, read_only: true, no_copy: true}
+    - {name: next_reply_state, type: select, options: [running, paused, met, met_late, breached], read_only: true, no_copy: true, in_filter: true, label: Next Reply Target}
+    - {name: update_by, type: datetime, read_only: true, no_copy: true}
+    - {name: update_state, type: select, options: [running, paused, met, met_late, breached], read_only: true, no_copy: true, in_filter: true, label: Customer Update Target}
+    - {name: next_reply_breached, type: check, read_only: true, no_copy: true, in_filter: true, description: "A later reply was late at least once on this ticket"}
+    - {name: update_breached, type: check, read_only: true, no_copy: true, in_filter: true, description: "The customer went without an update too long at least once on this ticket"}
+    - {name: next_reply_secs, type: int, read_only: true, no_copy: true, hidden: true}
+    - {name: update_secs, type: int, read_only: true, no_copy: true, hidden: true}
+    - {name: reply_owed_since, type: datetime, read_only: true, no_copy: true, in_filter: true, label: Reply Owed Since, description: "When the customer wrote the oldest message nobody has answered yet; empty: nothing is owed"}
+    - {name: update_from, type: datetime, read_only: true, no_copy: true, hidden: true, description: "The latest public message of either side, which the customer-update clock counts from"}
     - {name: response_secs, type: int, read_only: true, no_copy: true, hidden: true, description: "Seconds of working time the agreement gives for a first response to this ticket's priority"}
     - {name: resolution_secs, type: int, read_only: true, no_copy: true, hidden: true}
     - {name: sla_calendar, type: data, read_only: true, no_copy: true, hidden: true, description: "The working calendar of the agreement that applies, which both targets count on; empty: helpdesk_hours"}
@@ -255,7 +267,7 @@
     - {label: Conversation, fields: [conversation]}
     - {label: Resolution, fields: [resolution_details, satisfaction_rating, feedback]}
     - {label: Entitlement, collapsible: true, fields: [support_contract, entitlement, entitlement_approval, entitlement_decided_by, entitlement_reason]}
-    - {label: Service Level, collapsible: true, fields: [escalation_level, escalated_at, service_level_agreement, sla_status, response_by, resolution_by, response_breached, resolution_breached, opened_at, first_responded_at, resolved_at, closed_at, first_response_hours, resolution_hours, response_state, resolution_state]}
+    - {label: Service Level, collapsible: true, fields: [escalation_level, escalated_at, service_level_agreement, sla_status, response_by, resolution_by, response_breached, resolution_breached, opened_at, first_responded_at, resolved_at, closed_at, first_response_hours, resolution_hours, response_state, resolution_state, next_reply_state, next_reply_by, update_state, update_by]}
     - {label: Product, collapsible: true, fields: [item, serial_no, sales_invoice]}
   actions:
     - {name: merge_tickets, label: Merge Tickets Into This One, permission: write, condition: "doc.status != 'Closed'",
@@ -286,6 +298,13 @@
        met_when: "!isEmpty(doc.first_responded_at)", due_field: response_by, state_field: response_state}
     - {name: resolve, label: Resolution, calendar: helpdesk_hours, calendar_field: sla_calendar, start_field: sla_start, within: "doc.resolution_secs > 0 ? 'PT' + string(doc.resolution_secs) + 'S' : ''", pause_when: "(doc.status == 'On Hold' && doc.sla_pause_hold) || (doc.status == 'Replied' && doc.sla_pause_replied)",
        met_when: "doc.status == 'Resolved' || doc.status == 'Closed'", due_field: resolution_by, state_field: resolution_state}
+    - {name: next_reply, label: Next Reply, calendar: helpdesk_hours, calendar_field: sla_calendar, start_field: reply_owed_since, start_when: "!isEmpty(doc.reply_owed_since)",
+       within: "doc.next_reply_secs > 0 ? 'PT' + string(doc.next_reply_secs) + 'S' : ''", pause_when: "(doc.status == 'On Hold' && doc.sla_pause_hold) || (doc.status == 'Replied' && doc.sla_pause_replied)",
+       met_when: "isEmpty(doc.reply_owed_since)", due_field: next_reply_by, state_field: next_reply_state}
+    # No pause_when on purpose: every public message moves update_from, and re-anchoring a round is only right when it never paused.
+    - {name: update, label: Customer Update, calendar: helpdesk_hours, calendar_field: sla_calendar, start_field: update_from, start_when: "!isEmpty(doc.update_from) && (doc.status == 'Open' || doc.status == 'On Hold')",
+       within: "doc.update_secs > 0 ? 'PT' + string(doc.update_secs) + 'S' : ''",
+       met_when: "doc.status == 'Replied' || doc.status == 'Resolved' || doc.status == 'Closed'", due_field: update_by, state_field: update_state}
   list: {columns: [number, subject, customer_name, priority, status, assigned_to, sla_status], sort: opened_at desc}
 
 - name: SavedReply

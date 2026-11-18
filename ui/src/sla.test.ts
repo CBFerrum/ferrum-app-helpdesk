@@ -12,6 +12,14 @@ describe("the target cards", () => {
     expect([z.title, z.state, z.text]).toEqual(["Resolution", "due", "Due in 2 d"]);
   });
 
+  it("add the next reply and the customer update where the agreement sets them", () => {
+    expect(cards(base)).toHaveLength(2);
+    const all = cards({ ...base, next_reply_secs: 7200, next_reply_state: "running", next_reply_by: "2026-11-02T14:00:00Z", update_secs: 28800, update_state: "met" });
+    expect(all.map((c) => c.id)).toEqual(["response", "resolution", "next_reply", "update"]);
+    expect([all[2].title, all[2].state, all[2].text]).toEqual(["Next reply", "due", "Due in 2 h"]);
+    expect([all[3].title, all[3].state]).toEqual(["Customer update", "fulfilled"]);
+  });
+
   it("turn red once the platform calls a target breached", () => {
     const [r] = cards({ ...base, response_state: "breached", response_by: "2026-11-02T11:01:00Z" });
     expect([r.state, r.text]).toEqual(["overdue", "Breached: overdue by 59 min"]);
