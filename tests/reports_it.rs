@@ -70,7 +70,7 @@ async fn scenario() {
     e.update("Ticket", b, json!({"status": "Resolved", "resolution_details": "Done"})).await;
     e.exec("update e_ticket set opened_at = now() - interval '10 days' where tenant_id = $1 and id = $2", &[d]).await;
     k.sweep_targets_at(Utc::now() + Duration::days(30)).await.unwrap();
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
 
     // ── volume: by channel, tag, customer, team ──
     let by_channel = run("support_volume", "Channel").await;

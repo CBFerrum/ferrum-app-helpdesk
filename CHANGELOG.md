@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.0
+
+Needs Ferrum 0.4.0 (apps' upkeep runs one workspace at a time, on whichever replica is free), and builds against Mail (Comms) 0.27.0. No database or interface change.
+
+**Upkeep is one workspace's.** `maintenance(k, tenant)` does Helpdesk's upkeep (hours, mailboxes, SLAs, surveys, escalation, auto-close) for the one workspace the platform hands it; the list of workspaces and the installation check are the platform's.
+
 ## 0.13.4
 
 Needs the same platform as 0.13.3, and builds against Mail (Comms) 0.26.0. No database change. No interface change.
