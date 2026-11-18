@@ -12,7 +12,7 @@ const full = (at: string) => formatMoment(at, { dateStyle: "medium", timeStyle: 
 
 const ICONS: Record<EventItem["icon"], string> = { status: "refresh", person: "user", priority: "up", clock: "calendar", alert: "alert", star: "check" };
 
-function Message({ m, address }: { m: MessageItem; address: string | null }) {
+function Message({ m, address, onSplit }: { m: MessageItem; address: string | null; onSplit?: (m: MessageItem) => void }) {
   return (
     <li className="hd-msg" data-side={m.side} data-internal={m.internal || undefined}>
       <span className="hd-avatar" aria-hidden="true">
@@ -23,6 +23,12 @@ function Message({ m, address }: { m: MessageItem; address: string | null }) {
           <strong>{isolate(m.author)}</strong>
           {m.internal ? <span className="hd-note-chip">{t("Internal note")}</span> : m.side === "agent" && <span className="hd-public-chip">{t("Public reply")}</span>}
           {m.mergedFrom && <span className="hd-from-chip">{t("From {n}, merged", { n: m.mergedFrom })}</span>}
+          {m.splitInto && <span className="hd-from-chip">{t("Split into {n}", { n: m.splitInto })}</span>}
+          {onSplit && m.side === "customer" && !m.internal && m.id && !m.splitInto && (
+            <button type="button" className="btn btn-sm" onClick={() => onSplit(m)}>
+              {t("Split into a new ticket")}
+            </button>
+          )}
           {m.unverified && (
             <span className="hd-from-chip" title={t("The mail server did not verify who sent this. That is not proof it is forged.")}>
               {t("Sender not verified")}
@@ -96,6 +102,7 @@ export function Conversation({
   onFilter,
   address,
   endRef,
+  onSplit,
 }: {
   items: FeedItem[];
   filter: FeedFilter;
@@ -103,6 +110,8 @@ export function Conversation({
   /** The ticket's contact address, which an email went to. */
   address: string | null;
   endRef: Ref<HTMLLIElement>;
+  /** Offered on the customer's public messages when the person may split one off into a ticket of its own. */
+  onSplit?: (m: MessageItem) => void;
 }) {
   const n = counts(items);
   const shown = filterFeed(items, filter);
@@ -132,7 +141,7 @@ export function Conversation({
                   <span>{isolate(dayLabel(item.at, today))}</span>
                 </li>
               )}
-              {item.kind === "message" ? <Message m={item} address={address} /> : <Event e={item} />}
+              {item.kind === "message" ? <Message m={item} address={address} onSplit={onSplit} /> : <Event e={item} />}
             </Fragment>
           ))}
           <li ref={endRef} aria-hidden="true" className="hd-feed-end" />

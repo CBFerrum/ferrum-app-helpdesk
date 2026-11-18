@@ -96,6 +96,10 @@ describe("a ticket's workspace", () => {
     expect(draw()).not.toContain("Waiting on supplier");
   });
 
+  it("draws the related tickets in the workspace", () => {
+    expect(draw()).toContain("Related tickets");
+  });
+
   it("tells the agent a colleague has the ticket before they answer over them", () => {
     expect(draw()).toContain("Raj Rao has this ticket. Sending takes it over.");
   });

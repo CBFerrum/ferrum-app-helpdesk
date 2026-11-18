@@ -23,6 +23,8 @@ export interface Message {
   emailed?: boolean | null;
   /** The number of the ticket this message came from, when that ticket was merged into this one. */
   merged_from?: string | null;
+  /** The number of the ticket this message was split off into. */
+  split_into?: string | null;
   /** The mail server did not verify the sender (a failed check, or no result): not proof of forgery. */
   sender_unverified?: boolean | null;
   /** The addresses copied on the message, a text of addresses the server read from the mail or put on the reply. */
@@ -74,6 +76,9 @@ export interface MessageItem {
   emailed: boolean;
   /** The ticket it came from, when it was merged into this one. */
   mergedFrom: string | null;
+  /** The message's own id (none for the request itself), and the ticket it was split off into. */
+  id: string | null;
+  splitInto: string | null;
   /** The mail server did not verify who sent it. */
   unverified: boolean;
   /** The addresses copied on it, if any. */
@@ -147,6 +152,8 @@ export function buildFeed(t: Story, events: AuditEvent[], name: (email: string) 
     attachments: [],
     emailed: false,
     mergedFrom: null,
+    id: null,
+    splitInto: null,
     unverified: false,
     cc: null,
   });
@@ -164,6 +171,8 @@ export function buildFeed(t: Story, events: AuditEvent[], name: (email: string) 
       attachments: m.attachments ?? [],
       emailed: !!m.emailed,
       mergedFrom: m.merged_from || null,
+      id: m.id ?? null,
+      splitInto: m.split_into || null,
       unverified: !!m.sender_unverified,
       cc: m.cc?.trim() || null,
     });

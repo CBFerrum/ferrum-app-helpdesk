@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.18.0-7c3aed?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.19.0-7c3aed?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -44,7 +44,7 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 
 | | |
 |---|---|
-| **Version** | 0.18.0 (platform `>=0.4.0, <0.5`) |
+| **Version** | 0.19.0 (platform `>=0.4.0, <0.5`) |
 | **Kind** | Own interface at `/helpdesk/` (agent inbox, ticket workspace, administration, help centre editor, reports) and a page in the customer portal |
 | **What it adds** | 30 entities (22 main, 8 child tables) in 2 packages, 3 roles, 9 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
 | **Depends on** | Ferrum core, shared customers and items |
@@ -167,6 +167,11 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 - **Ticket** (`TKT-2026-000001`). Subject, description, status (Open, Replied, On Hold, Resolved, Closed), priority
   (Low, Medium, High, Urgent), type, channel, customer, contact, team,
   assignee, language, product and serial number.
+- **Parent, child and linked tickets.** Beside a ticket, the card Related tickets shows its parent, its children and
+  the tickets linked to it either way, and makes a child ticket, links or unlinks a ticket by its number, or moves the
+  ticket under a parent or out. One level: a child has no children. A parent cannot be resolved while a child is open.
+- **Split a message.** A customer's public message can be split off into a ticket of its own for the same customer,
+  linked to the original; the message stays and is marked with the new number, once.
 - **Workspace statuses.** A Support Manager adds the desk's own statuses (Administration, Statuses), each inside one of
   four stages: Open, Replied, On Hold, Resolved. Choosing one moves the ticket to its stage; a change of stage it no
   longer fits takes it off; closing keeps a Resolved-stage status. Queues, targets, reports and the portal read the
@@ -440,7 +445,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 | Phone and voicemail | ❌ | ✅ | ✅ | 🟡 | ✅ | 🟡 |
 | Social channels | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Merge duplicate tickets | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Parent, child and linked tickets | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Parent, child and linked tickets | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Tags and custom fields | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Custom statuses | ✅ | ✅ | 🟡 | ✅ | ✅ | 🟡 |
 | CC and followers | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -502,6 +507,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 
 ### ✅ Recently shipped
 
+- [x] **0.19.0.** The screens for parent, child and linked tickets, and splitting a message.
 - [x] **0.18.0.** Parent, child and linked tickets, and splitting a customer's message into a ticket of its own, on the server.
 - [x] **0.17.0.** Escalation by any condition on the ticket, the customer's latest words as a field for conditions, and triggers proven on the platform's automations.
 - [x] **0.16.0.** Two more clocks: the next reply and the customer update, on the platform's service targets.
@@ -528,7 +534,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 - [ ] **WhatsApp and SMS** conversations in the inbox.
 - [ ] **Article suggestions** while an agent replies, with article translations.
 - [ ] **AI help**: a suggested reply, a ticket summary and triage.
-- [ ] **Parent, child and linked tickets**, and a problem-and-incident link.
+- [ ] A problem-and-incident link between tickets.
 
 ### 🔭 Later
 

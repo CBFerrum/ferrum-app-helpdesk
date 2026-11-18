@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.0
+
+Needs the same platform as 0.18.0. No database change (the package stays 0.10.0). Rebuilt interface.
+
+- **Related tickets** beside a ticket: its parent, its children and the tickets linked to it either way, each with its status. Make a child ticket (for the same customer and contact), link or unlink a ticket by its number, move the ticket under a parent or out of it. The server's refusals (a parent with open children, a child under a resolved parent) are shown in its words.
+- **Split into a new ticket** on a customer's public message; a message split off shows "Split into" with the new number.
+
 ## 0.18.0
 
 Needs the same platform as 0.17.0. The package is 0.10.0: Ticket gains `parent_ticket` and a `links` table (`TicketLink`), a message gains a read-only `split_into`, and Ticket a `split_message` action. Columns are added empty. No interface change yet (the screens come next).

@@ -19,6 +19,13 @@ const events = (feed: ReturnType<typeof buildFeed>) => feed.filter((i): i is Eve
 const messages = (feed: ReturnType<typeof buildFeed>) => feed.filter((i): i is MessageItem => i.kind === "message");
 
 describe("a ticket's feed", () => {
+  it("gives each message its id and the ticket it was split off into", () => {
+    const feed = buildFeed(story({ conversation: [{ id: "m9", author_kind: "Customer", body: "Also the invoice.", sent_at: "2026-11-01T10:00:00Z", split_into: "TKT-2026-000042" }] }), [], name);
+    const [request, m] = messages(feed);
+    expect([request.id, request.splitInto]).toEqual([null, null]);
+    expect([m.id, m.splitInto]).toEqual(["m9", "TKT-2026-000042"]);
+  });
+
   it("starts with the request as the customer wrote it, then replies and notes in the order they were sent", () => {
     const feed = buildFeed(
       story({

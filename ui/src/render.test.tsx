@@ -14,6 +14,7 @@ import { day, when } from "./Portal";
 import { MergeDialog } from "./Merge";
 import { Queues } from "./Queues";
 import { Rail, type RailTicket } from "./Rail";
+import { relationKeys, Relations } from "./Relations";
 import { ResolveDialog } from "./Resolve";
 import { Row } from "./Row";
 import { START, type Ticket } from "./inbox";
@@ -340,6 +341,79 @@ describe("the details beside a ticket", () => {
     const html = page(<Rail meta={{ name: "Ticket" } as unknown as EntityMeta} t={t} me="priya@acme.test" people={[]} name={name} editable={false} save={async () => {}} />);
     expect(html).not.toContain("Assign to me");
     expect(html).toContain("disabled");
+  });
+});
+
+describe("related tickets", () => {
+  const draw = (t: Parameters<typeof Relations>[0]["t"], seed: (qc: QueryClient) => void, editable = true) => {
+    // A failed list stays failed when drawn (no fetch again on mount, as there is none on the server either).
+    const qc = new QueryClient({ defaultOptions: { queries: { retryOnMount: false } } });
+    seed(qc);
+    return renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <Relations t={t} editable={editable} save={async () => {}} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  };
+  const seeded = (qc: QueryClient) => {
+    qc.setQueryData(relationKeys.children("t1"), [{ id: "c1", number: "TKT-2", subject: "Pune office", status: "Open" }]);
+    qc.setQueryData(relationKeys.linkedHere("t1"), [{ id: "h1", number: "TKT-3", subject: "Links here", status: "Replied", links: [{ id: "r9", ticket: "t1" }] }]);
+    qc.setQueryData(relationKeys.linked(["l1"]), [{ id: "l1", number: "TKT-4", subject: "Linked from here", status: "Resolved" }]);
+  };
+  const parentOf = (qc: QueryClient) => {
+    qc.setQueryData(relationKeys.children("t1"), []);
+    qc.setQueryData(relationKeys.linkedHere("t1"), []);
+    qc.setQueryData(relationKeys.parent("p1"), { id: "p1", number: "TKT-1", subject: "Outage", status: "Open" });
+  };
+
+  it("shows the parent, the children and the links both ways", () => {
+    const html = draw({ id: "t1", links: [{ id: "r1", ticket: "l1" }] }, seeded);
+    for (const words of ["Related tickets", "Child tickets", "TKT-2", "Pune office", "Linked", "TKT-3", "Links here", "TKT-4", "Linked from here", "Resolved"]) expect(html).toContain(words);
+    const child = draw({ id: "t1", parent_ticket: "p1" }, parentOf);
+    expect(child).toContain("Parent");
+    expect(child).toContain("Outage");
+  });
+
+  it("offers no child ticket to a child", () => {
+    const html = draw({ id: "t1", parent_ticket: "p1" }, parentOf);
+    expect(html).not.toContain("New child ticket");
+    expect(html).toContain("Remove from its parent");
+    expect(draw({ id: "t1" }, seeded)).toContain("New child ticket");
+  });
+
+  it("shows nothing to change to someone who may only read", () => {
+    const html = draw({ id: "t1", links: [{ id: "r1", ticket: "l1" }] }, seeded, false);
+    expect(html).toContain("Pune office");
+    for (const words of ["New child ticket", "Link a ticket", "Remove"]) expect(html).not.toContain(words);
+  });
+
+  it("says when the lists could not be loaded", () => {
+    const html = draw({ id: "t1" }, (qc) => {
+      qc.getQueryCache().build(qc, { queryKey: relationKeys.children("t1") }).setState({ status: "error", error: new Error("down"), fetchStatus: "idle" });
+    });
+    expect(html).toContain("They could not be loaded.");
+  });
+
+  it("offers to split a customer's message, once", () => {
+    const feed = buildFeed(
+      {
+        ...story,
+        conversation: [
+          { id: "m1", author_kind: "Customer", body: "Also my invoice.", sent_at: "2026-11-01T10:00:00Z" },
+          { id: "m2", author_kind: "Agent", author: "priya@acme.test", body: "On it.", sent_at: "2026-11-01T10:05:00Z" },
+          { id: "m3", author_kind: "Agent", author: "priya@acme.test", body: "Note.", is_internal: true, sent_at: "2026-11-01T10:06:00Z" },
+          { id: "m4", author_kind: "Customer", body: "Split already.", sent_at: "2026-11-01T10:07:00Z", split_into: "TKT-2026-000042" },
+        ],
+      },
+      [],
+      name,
+    );
+    const html = page(<Conversation items={feed} filter="all" onFilter={() => {}} address={null} endRef={null} onSplit={() => {}} />);
+    expect(html.split("Split into a new ticket").length - 1).toBe(1);
+    expect(html).toContain("Split into TKT-2026-000042");
+    expect(page(<Conversation items={feed} filter="all" onFilter={() => {}} address={null} endRef={null} />)).not.toContain("Split into a new ticket");
   });
 });
 

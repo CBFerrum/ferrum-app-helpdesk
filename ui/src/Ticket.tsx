@@ -12,6 +12,7 @@ import { Alert, Badge, Button, confirmDialog, Icon, Menu, MenuItem, placed, Read
 import { can, type Doc, type EntityMeta, useEntityMeta, useMe, useMetaIndex, useRecord } from "@ferrum/records";
 import { MacroPicker } from "./MacroPicker";
 import { MergeDialog, type Merged } from "./Merge";
+import { SplitDialog } from "./Relations";
 import { SignatureDialog } from "./Signature";
 import type { MergeTicket } from "./duplicates";
 import { Composer, type Mode, type Outgoing } from "./Composer";
@@ -98,6 +99,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
   const [resolving, setResolving] = useState<"Resolved" | "Closed" | null>(null);
   const [deciding, setDeciding] = useState<Decision | null>(null);
   const [merging, setMerging] = useState(false);
+  const [splitting, setSplitting] = useState<string | null>(null);
   const [help, setHelp] = useState(false);
   const [macros, setMacros] = useState(false);
   const [signing, setSigning] = useState(false);
@@ -518,7 +520,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
       <div className="hd-ws-body" data-rail={showRail || undefined}>
         <div className="hd-ws-main">
           {audit.error && <p className="faint">{tr("What happened to the ticket could not be loaded; the conversation is complete.")}</p>}
-          <Conversation items={feed} filter={filter} onFilter={setFilter} address={t.contact_email ?? null} endRef={feedEnd} />
+          <Conversation items={feed} filter={filter} onFilter={setFilter} address={t.contact_email ?? null} endRef={feedEnd} onSplit={writable ? (m) => setSplitting(m.id) : undefined} />
           {writable ? (
             <Composer
               ticket={id}
@@ -551,6 +553,16 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
         resolvedAs={(statuses.data ?? []).filter((s) => s.enabled !== false && s.category === "Resolved")}
         onClose={() => setResolving(null)}
         onSubmit={finish}
+      />
+      <SplitDialog
+        ticket={id}
+        message={splitting}
+        onClose={() => setSplitting(null)}
+        onDone={(made) => {
+          toast(tr("Ticket {number} made from the message", { number: made.number ?? "" }));
+          refresh();
+          void qc.invalidateQueries({ queryKey: ["helpdesk", "linked-here", id] });
+        }}
       />
       <MergeDialog
         open={merging}
