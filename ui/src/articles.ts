@@ -35,3 +35,21 @@ export function helpfulShare(helpful?: number | null, notHelpful?: number | null
   const [h, n] = [helpful ?? 0, notHelpful ?? 0];
   return h + n === 0 ? null : t("{h} of {all} found it helpful", { h, all: h + n });
 }
+
+/** An article as `suggest_articles` answers it. */
+export interface SuggestedArticle {
+  id: string;
+  title: string;
+  summary?: string | null;
+  slug?: string | null;
+  visibility: string;
+  category?: string | null;
+}
+
+/** Where a customer reads an article: the public help centre's page for a Public one with an address, the portal's page
+ *  for one for signed-in customers; none for an Internal one (or a Public one without an address). */
+export function articleLink(a: { id: string; slug?: string | null; visibility: string }, at: { protocol: string; host: string; slug: string }): string | null {
+  if (a.visibility === "Public" && a.slug && at.slug) return `${at.protocol}//${at.host}/public/${at.slug}/lists/help-centre/${a.slug}`;
+  if (a.visibility === "Customers Only") return `${at.protocol}//${at.host}/portal/tickets/articles/${a.id}`;
+  return null;
+}

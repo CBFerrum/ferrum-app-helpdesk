@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.19.0-7c3aed?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.20.0-7c3aed?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -44,7 +44,7 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 
 | | |
 |---|---|
-| **Version** | 0.19.0 (platform `>=0.4.0, <0.5`) |
+| **Version** | 0.20.0 (platform `>=0.4.0, <0.5`) |
 | **Kind** | Own interface at `/helpdesk/` (agent inbox, ticket workspace, administration, help centre editor, reports) and a page in the customer portal |
 | **What it adds** | 30 entities (22 main, 8 child tables) in 2 packages, 3 roles, 9 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
 | **Depends on** | Ferrum core, shared customers and items |
@@ -279,6 +279,11 @@ skill and shift, and the same data set holds the customer's contracts, equipment
   page for each article, search and a sitemap. The workspace can change or take it down.
 - **In the portal.** Customers search the articles they may read, read them and say whether one helped (once a day).
   Articles that fit are offered under the subject while they write a request.
+- **While replying.** The composer's Articles button offers the published articles that fit the ticket (its subject
+  and the customer's latest words), Internal ones included, as far as the agent may read articles; other words can be
+  searched. Open one to read, or insert a link to one the customer may read (an Internal article cannot be linked).
+  The same search is the operation `helpdesk.ticket.suggest_articles`, a query an AI agent can call; it changes
+  nothing and counts no view.
 - **Counts.** Views and helpful votes from the portal and the public page are added together on the article.
 - **Editor.** A list of what each article is, who it reaches and how it was received, and an editor with category,
   body, a preview, visibility, state, publish and archive.
@@ -457,7 +462,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 | Escalation rules | ✅³ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Entitlement by support contract | ✅ | 🟡 | 🟡 | ❌ | ✅ | ❌ |
 | Knowledge base and public help centre | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Article suggestions for agents while replying | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Article suggestions for agents while replying | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Article translations and versions | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Customer satisfaction survey by mailed link | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | NPS and CES surveys | ❌ | 🟡 | 🟡 | ✅ | ✅ | ❌ |
@@ -507,6 +512,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 
 ### ✅ Recently shipped
 
+- [x] **0.20.0.** Article suggestions while an agent replies, as an operation and in the composer.
 - [x] **0.19.0.** The screens for parent, child and linked tickets, and splitting a message.
 - [x] **0.18.0.** Parent, child and linked tickets, and splitting a customer's message into a ticket of its own, on the server.
 - [x] **0.17.0.** Escalation by any condition on the ticket, the customer's latest words as a field for conditions, and triggers proven on the platform's automations.
@@ -532,7 +538,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 - [ ] **Public web form** that opens a ticket without sign-in, with a rate limit.
 - [ ] **Live chat** on the customer's site, because customers expect it.
 - [ ] **WhatsApp and SMS** conversations in the inbox.
-- [ ] **Article suggestions** while an agent replies, with article translations.
+- [ ] **Article translations** and published versions.
 - [ ] **AI help**: a suggested reply, a ticket summary and triage.
 - [ ] A problem-and-incident link between tickets.
 

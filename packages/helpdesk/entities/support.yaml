@@ -294,6 +294,19 @@
        params: [{name: rating, label: "How did we do? (1 to 5)", type: int, required: true, description: "1 is poor, 5 is excellent"}, {name: feedback, label: Comment, type: text}],
        contract: {effect: transactional_action, completion: "The rating and comment are kept on the ticket, once; a low rating has reopened it or told the lead where Support Settings say so",
                   returns: {type: object, properties: {rated: {type: integer}}}}}
+    - name: suggest_articles
+      label: Suggest Articles
+      permission: read
+      read_only: true
+      hidden: true
+      params:
+        - {name: q, label: Words, type: data, description: "What to look for; the ticket's subject and the customer's latest message when empty"}
+      contract:
+        effect: query
+        completion: "Up to eight published articles that fit the words, the best fit first, among those the caller may read; nothing is changed, and no view is counted"
+        returns: {type: object, properties: {articles: {type: array, items: {type: object, properties: {
+          id: {type: string, format: uuid, "x-ferrum-link": KbArticle}, title: {type: string}, summary: {type: [string, "null"]},
+          slug: {type: [string, "null"]}, visibility: {type: string}, category: {type: [string, "null"]}}}}}}
     - name: split_message
       label: Split a Message Into a New Ticket
       permission: write

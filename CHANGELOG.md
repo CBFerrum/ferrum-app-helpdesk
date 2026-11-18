@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.20.0
+
+Needs the same platform as 0.19.0. The package is 0.11.0: Ticket gains the hidden, read-only action `suggest_articles` (a query). No database change. Rebuilt interface.
+
+- **Article suggestions while replying.** Articles in the composer offers up to eight published articles that fit the ticket's subject and the customer's latest words (or the words typed), Internal ones included, as far as the agent may read articles. Open one in a new tab, or insert a link to one a customer may read: the public help centre's page for a Public article, the portal's for a Customers Only one. An Internal article cannot be linked.
+- **One search.** The portal's article search and the agents' suggestions are one query (`help::search`); the portal still sees only Public and Customers Only articles.
+
 ## 0.19.0
 
 Needs the same platform as 0.18.0. No database change (the package stays 0.10.0). Rebuilt interface.

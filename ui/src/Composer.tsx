@@ -8,6 +8,7 @@ import { Alert, Button, Icon, toast } from "@ferrum/kit";
 import { fileSize } from "./feed";
 import { useDraft, useLeaveWarning } from "./hooks";
 import { ReplyPicker } from "./ReplyPicker";
+import { ArticlePicker } from "./ArticlePicker";
 import { insertAt, leftover } from "./replies";
 import { SignatureLine } from "./Signature";
 
@@ -47,6 +48,7 @@ export function Composer({
   assignee,
   agent,
   replies,
+  articles = false,
   onMacros,
   onSignature,
   conflict,
@@ -71,6 +73,8 @@ export function Composer({
   onSignature: () => void;
   /** Whether the workspace has saved replies at all. */
   replies: boolean;
+  /** Whether the workspace has a knowledge base to suggest articles from. */
+  articles?: boolean;
   /** Set when the ticket changed under the agent while they were writing. */
   conflict: string | null;
   /** Resolves true when it was sent, which empties the box. */
@@ -82,6 +86,7 @@ export function Composer({
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(0);
   const [picker, setPicker] = useState(false);
+  const [articlePicker, setArticlePicker] = useState(false);
   const [dropping, setDropping] = useState(false);
 
   const body = mode === "reply" ? reply : note;
@@ -166,6 +171,7 @@ export function Composer({
     const next = insertAt(body, el?.selectionStart ?? body.length, el?.selectionEnd ?? body.length, text);
     setBody(next.text);
     setPicker(false);
+    setArticlePicker(false);
     requestAnimationFrame(() => {
       el?.focus();
       el?.setSelectionRange(next.caret, next.caret);
@@ -280,6 +286,18 @@ export function Composer({
             {tr("Macros")}
           </button>
         )}
+        {articles && (
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            aria-haspopup="dialog"
+            aria-expanded={articlePicker}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => setArticlePicker((p) => !p)}
+          >
+            {tr("Articles")}
+          </button>
+        )}
         <label className="btn btn-ghost btn-sm">
           <Icon name="upload" />
           {tr("Attach")}
@@ -292,6 +310,7 @@ export function Composer({
         </Button>
       </div>
       {picker && <ReplyPicker ticket={ticket} draft={body} onPick={pasted} onClose={() => setPicker(false)} />}
+      {articlePicker && <ArticlePicker ticket={ticket} onPick={pasted} onClose={() => setArticlePicker(false)} />}
     </section>
   );
 }

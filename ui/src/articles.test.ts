@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { helpfulShare, reach, suggestQuery } from "./articles";
+import { articleLink, helpfulShare, reach, suggestQuery } from "./articles";
 
 describe("who an article reaches", () => {
   it("is nobody but agents while it is a draft or archived, whatever its visibility", () => {
@@ -28,5 +28,15 @@ describe("how helpful an article was", () => {
     expect(helpfulShare(0, 0)).toBeNull();
     expect(helpfulShare(null, undefined)).toBeNull();
     expect(helpfulShare(7, 3)).toBe("7 of 10 found it helpful");
+  });
+});
+
+describe("the link a customer can open", () => {
+  const at = { protocol: "https:", host: "acme.example.test", slug: "acme" };
+  it("is the public page for a Public article, the portal's for one for customers, none for an Internal one", () => {
+    expect(articleLink({ id: "a1", slug: "reset-password", visibility: "Public" }, at)).toBe("https://acme.example.test/public/acme/lists/help-centre/reset-password");
+    expect(articleLink({ id: "a2", slug: "warranty", visibility: "Customers Only" }, at)).toBe("https://acme.example.test/portal/tickets/articles/a2");
+    expect(articleLink({ id: "a3", slug: "playbook", visibility: "Internal" }, at)).toBeNull();
+    expect(articleLink({ id: "a4", slug: null, visibility: "Public" }, at)).toBeNull();
   });
 });

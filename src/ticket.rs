@@ -849,6 +849,9 @@ impl DocHook for TicketHook {
         if name == "rate" {
             return crate::survey::rate(hc, doc, params).await.map(Some);
         }
+        if name == "suggest_articles" {
+            return crate::help::suggest(hc, doc, params).await.map(Some);
+        }
         if name == "apply_macro" {
             return crate::macros::apply(hc, doc, params).await.map(Some);
         }

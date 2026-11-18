@@ -11,8 +11,10 @@
 //! article's `views`, `helpful_count` and `not_helpful_count` are the sum of both ways in.
 
 use ferrum_domain::util::{b, id, s, set, sys};
-use ferrum_kernel::{Ctx, Doc, Error, Kernel, Result, Tx};
+use ferrum_kernel::ctx::RowScope;
+use ferrum_kernel::{Action, Ctx, Doc, Error, HookCtx, Kernel, Result, Tx, row_scope};
 use serde_json::{Value, json};
+use sqlx::{Postgres, QueryBuilder};
 use uuid::Uuid;
 
 /// The address an article gets: its title in lowercase ASCII words joined by dashes, at most 80 characters.
@@ -97,21 +99,54 @@ fn words(text: &str) -> Vec<String> {
 /// Published articles customers may read, best fit first: those holding the words of `text` (a title counts most). With no
 /// words, the newest. Read as the workspace: only Published articles that are Public or Customers Only are ever here.
 pub async fn find(tx: &mut Tx, tenant: Uuid, text: Option<&str>, limit: i64) -> Result<Vec<Value>> {
+    search(tx, tenant, text, limit, &["Public", "Customers Only"], None).await
+}
+
+/// The one search over articles: Published ones of the given visibilities (and, for staff, within their record scope on
+/// articles), those holding the words of `text` first (title 3, summary 2, text 1), else the newest.
+pub async fn search(tx: &mut Tx, tenant: Uuid, text: Option<&str>, limit: i64, visibilities: &[&str], scope: Option<&RowScope>) -> Result<Vec<Value>> {
     let w = words(text.unwrap_or_default());
+    let visibilities: Vec<String> = visibilities.iter().map(|v| v.to_string()).collect();
     type Row = (Uuid, String, Option<String>, Option<String>, Option<String>, Option<String>);
-    let found: Vec<Row> = sqlx::query_as(
-        "select a.id, a.title, a.summary, a.slug, a.visibility, c.category_name from e_kb_article a left join e_kb_category c on c.tenant_id = a.tenant_id and c.id = a.category \
-         where a.tenant_id = $1 and a.status = 'Published' and a.visibility in ('Public', 'Customers Only') \
-           and (cardinality($2::text[]) = 0 or exists (select 1 from unnest($2::text[]) w where a.title ilike '%' || w || '%' or coalesce(a.summary, '') ilike '%' || w || '%' or a.content ilike '%' || w || '%')) \
-         order by (select coalesce(sum((case when a.title ilike '%' || w || '%' then 3 else 0 end) + (case when coalesce(a.summary, '') ilike '%' || w || '%' then 2 else 0 end) \
-                                    + (case when a.content ilike '%' || w || '%' then 1 else 0 end)), 0) from unnest($2::text[]) w) desc, a.published_at desc nulls last, a.id limit $3",
-    )
-    .bind(tenant)
-    .bind(&w)
-    .bind(limit)
-    .fetch_all(&mut **tx)
-    .await?;
+    let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
+        "select a.id, a.title, a.summary, a.slug, a.visibility, c.category_name from e_kb_article a \
+         left join e_kb_category c on c.tenant_id = a.tenant_id and c.id = a.category where a.tenant_id = ",
+    );
+    qb.push_bind(tenant).push(" and a.status = 'Published' and a.visibility = any(").push_bind(visibilities).push(")");
+    qb.push(" and (cardinality(").push_bind(w.clone()).push("::text[]) = 0 or exists (select 1 from unnest(").push_bind(w.clone());
+    qb.push("::text[]) w where a.title ilike '%' || w || '%' or coalesce(a.summary, '') ilike '%' || w || '%' or a.content ilike '%' || w || '%'))");
+    if let Some(scope) = scope {
+        scope.push_sql(&mut qb, "a");
+    }
+    qb.push(
+        " order by (select coalesce(sum((case when a.title ilike '%' || w || '%' then 3 else 0 end) + (case when coalesce(a.summary, '') ilike '%' || w || '%' then 2 else 0 end) \
+                    + (case when a.content ilike '%' || w || '%' then 1 else 0 end)), 0) from unnest(",
+    );
+    qb.push_bind(w).push("::text[]) w) desc, a.published_at desc nulls last, a.id limit ").push_bind(limit);
+    let found: Vec<Row> = qb.build_query_as().fetch_all(&mut **tx).await?;
     Ok(found.into_iter().map(|(i, title, summary, slug, visibility, category)| json!({"id": i, "title": title, "summary": summary, "slug": slug, "visibility": visibility, "category": category})).collect())
+}
+
+/// `suggest_articles` on a ticket: up to eight published articles for the words given, else the ticket's subject and the
+/// customer's latest words, Internal ones included, as far as the caller may read articles. Changes nothing.
+pub async fn suggest(hc: &mut HookCtx<'_>, ticket: &Doc, params: &Value) -> Result<Value> {
+    let q = params.get("q").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+    if q.chars().count() > 200 {
+        return Err(Error::field("q", "at most 200 characters"));
+    }
+    let text = if q.is_empty() {
+        format!("{} {}", s(ticket, "subject").unwrap_or_default(), s(ticket, "last_customer_message").unwrap_or_default())
+    } else {
+        q.to_string()
+    };
+    let Some(ent) = hc.ctx.schema.entity("KbArticle") else { return Ok(json!({"articles": []})) };
+    let scope = match row_scope(hc.ctx, ent, Action::Read) {
+        Ok(scope) => scope,
+        Err(Error::Forbidden(_)) => return Ok(json!({"articles": []})),
+        Err(e) => return Err(e),
+    };
+    let found = search(hc.tx, hc.ctx.tenant, Some(&text), 8, &["Internal", "Customers Only", "Public"], Some(&scope)).await?;
+    Ok(json!({"articles": found}))
 }
 
 /// One article for a customer, counting the view (a signed-in customer's: the public page counts its visitors itself).

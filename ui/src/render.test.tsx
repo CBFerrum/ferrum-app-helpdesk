@@ -15,6 +15,7 @@ import { MergeDialog } from "./Merge";
 import { Queues } from "./Queues";
 import { Rail, type RailTicket } from "./Rail";
 import { relationKeys, Relations } from "./Relations";
+import { ArticlePicker, suggestKey } from "./ArticlePicker";
 import { ResolveDialog } from "./Resolve";
 import { Row } from "./Row";
 import { START, type Ticket } from "./inbox";
@@ -222,6 +223,11 @@ describe("the composer", () => {
     expect(html).toContain("Internal note");
   });
 
+  it("offers articles when the workspace has a knowledge base, and not otherwise", () => {
+    expect(draw({ articles: true })).toContain(">Articles<");
+    expect(draw()).not.toContain(">Articles<");
+  });
+
   it("names the copies a reply carries", () => {
     const html = draw({ cc: ["bob@shop.test", "eve@shop.test"] });
     expect(html).toContain("and copied to");
@@ -414,6 +420,28 @@ describe("related tickets", () => {
     expect(html.split("Split into a new ticket").length - 1).toBe(1);
     expect(html).toContain("Split into TKT-2026-000042");
     expect(page(<Conversation items={feed} filter="all" onFilter={() => {}} address={null} endRef={null} />)).not.toContain("Split into a new ticket");
+  });
+});
+
+describe("articles while replying", () => {
+  it("lists what fits and will not link an article only agents may read", () => {
+    const qc = new QueryClient();
+    qc.setQueryData(suggestKey("t1", ""), [
+      { id: "a1", title: "Clearing a printer jam", summary: "Open the rear tray", slug: "jam", visibility: "Internal" },
+      { id: "a2", title: "Warranty terms", summary: null, slug: "warranty", visibility: "Customers Only" },
+    ]);
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <ArticlePicker ticket="t1" onPick={() => {}} onClose={() => {}} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(html).toContain("Clearing a printer jam");
+    expect(html).toContain("Warranty terms");
+    expect(html).toContain("Agents only: it cannot be sent to a customer");
+    expect(html).toContain("Customers signed in");
+    expect(html).toContain('disabled=""');
   });
 });
 

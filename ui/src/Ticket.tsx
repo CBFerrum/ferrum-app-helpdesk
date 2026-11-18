@@ -317,6 +317,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
 
   const showRail = railChoice ?? wide;
   const hasReplies = !!index?.entities.some((e) => e.name === "SavedReply");
+  const hasArticles = !!index?.entities.some((e) => e.name === "KbArticle");
   const hasMacros = !!index?.entities.some((e) => e.name === "SupportMacro") && meta.actions.some((a) => a.name === "apply_macro");
   const owner = t.assigned_to && t.assigned_to.toLowerCase() !== me.email.toLowerCase() ? name(t.assigned_to) : null;
   const who = requester(t);
@@ -535,6 +536,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
               onMacros={hasMacros ? () => setMacros(true) : undefined}
               onSignature={() => setSigning(true)}
               replies={hasReplies}
+              articles={hasArticles}
               conflict={conflict}
               onSend={send}
             />
