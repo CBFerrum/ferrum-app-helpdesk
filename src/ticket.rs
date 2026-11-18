@@ -14,7 +14,7 @@ use ferrum_domain::flow::created;
 use ferrum_domain::util::{b, d, get, id, rows, s, set, sys};
 use ferrum_kernel::value::parse_datetime;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, Filter, HookCtx, Kernel, Result, Tx, notify, outbox, store};
-use ferrum_meta::Expr;
+use ferrum_meta::{Expr, Scope};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use serde_json::{Value, json};
@@ -576,6 +576,15 @@ impl DocHook for TicketHook {
         let last = sent.iter().filter(|m| !b(m, "is_internal")).max_by_key(|m| ts(m, "sent_at")).and_then(|m| s(m, "body")).or(s(doc, "description"));
         let line = last.map(preview).filter(|p| !p.is_empty());
         set(doc, "last_message_preview", line.map_or(Value::Null, Value::String));
+        // The customer's latest words, whole, for conditions (tag and escalation rules, the workspace's automations).
+        let words = sent
+            .iter()
+            .filter(|m| !b(m, "is_internal") && s(m, "author_kind") == Some("Customer"))
+            .max_by_key(|m| ts(m, "sent_at"))
+            .and_then(|m| s(m, "body"))
+            .or(s(doc, "description"))
+            .map(str::to_string);
+        set(doc, "last_customer_message", words.map_or(Value::Null, Value::String));
 
         // The status follows the conversation unless this save sets it: a customer reply reopens,
         // the first public agent reply on an open ticket marks it replied.
@@ -926,11 +935,13 @@ pub async fn refresh_verdicts(k: &Kernel, ctx: &Ctx) -> Result<usize> {
     Ok(breached.len())
 }
 
-/// A rule of what happens to a ticket whose agreement is in trouble.
-#[derive(Debug, Clone)]
+/// A rule of what happens to a ticket whose agreement is in trouble, or that a condition picks out.
+#[derive(Clone)]
 pub struct Escalation {
     pub level: i64,
     trigger: String,
+    /// The rule's condition on the ticket; `Err` when it does not compile (a rule saved before conditions were checked).
+    condition: Option<std::result::Result<Expr, String>>,
     priority: Option<String>,
     team: Option<Uuid>,
     assign_to: Option<String>,
@@ -945,6 +956,10 @@ impl Escalation {
         Escalation {
             level: int(doc, "level"),
             trigger: text("trigger").unwrap_or_default(),
+            condition: text("condition").map(|c| {
+                Expr::compile(&c)
+                    .inspect_err(|e| tracing::warn!(level = int(doc, "level"), "an escalation rule's condition does not compile, so it never applies: {e}"))
+            }),
             priority: text("priority"),
             team: id(doc, "team"),
             assign_to: text("assign_to"),
@@ -954,30 +969,39 @@ impl Escalation {
         }
     }
 
-    fn applies(&self, doc: &Doc) -> bool {
+    /// Whether the rule fits the ticket: its trigger (Condition is always due), priority and team, then its condition on
+    /// the ticket's view (`view`, as conditions read it). A condition that fails on this ticket skips the rule for it.
+    fn applies(&self, doc: &Doc, view: &Value, user: &Value) -> bool {
         let verdict = s(doc, "sla_status").unwrap_or_default();
-        let due = verdict == "Breached" || (self.trigger == "At Risk" && verdict == "At Risk");
-        due && self.priority.as_deref().is_none_or(|p| s(doc, "priority") == Some(p)) && self.team.is_none_or(|t| id(doc, "team") == Some(t))
+        let due = match self.trigger.as_str() {
+            "Condition" => true,
+            "At Risk" => matches!(verdict, "At Risk" | "Breached"),
+            _ => verdict == "Breached",
+        };
+        if !(due && self.priority.as_deref().is_none_or(|p| s(doc, "priority") == Some(p)) && self.team.is_none_or(|t| id(doc, "team") == Some(t))) {
+            return false;
+        }
+        match &self.condition {
+            None => true,
+            Some(Err(_)) => false,
+            Some(Ok(e)) => e.eval_bool(&Scope { doc: view, old: None, parent: None, user }).unwrap_or_else(|err| {
+                tracing::warn!(level = self.level, ticket = s(doc, "number").unwrap_or_default(), "an escalation rule's condition failed: {err}");
+                false
+            }),
+        }
     }
 }
 
 /// The next rule for a ticket: the lowest level above the one it reached that applies to it.
-pub fn next_escalation<'a>(rules: &'a [Escalation], doc: &Doc) -> Option<&'a Escalation> {
+pub fn next_escalation<'a>(rules: &'a [Escalation], doc: &Doc, view: &Value, user: &Value) -> Option<&'a Escalation> {
     let reached = int(doc, "escalation_level");
-    rules.iter().filter(|r| r.level > reached && r.applies(doc)).min_by_key(|r| r.level)
+    rules.iter().filter(|r| r.level > reached && r.applies(doc, view, user)).min_by_key(|r| r.level)
 }
 
 /// Fires what is due on tickets in trouble. A level is recorded on the ticket, so a rule fires once
 /// however often this runs, on however many replicas: rows are re-read under a lock.
 pub async fn escalate(k: &Kernel, ctx: &Ctx) -> Result<usize> {
     let ent = k.entity(ctx, "Ticket")?;
-    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-    let rows_: Vec<(Uuid,)> =
-        sqlx::query_as("select id from e_ticket where tenant_id = $1 and status = any($2) and sla_status in ('At Risk', 'Breached') order by id")
-            .bind(ctx.tenant)
-            .bind(&OPEN[..])
-            .fetch_all(&mut *tx)
-            .await?;
     let rules: Vec<Escalation> = k
         .list(ctx, "EscalationRule", &ferrum_kernel::ListQuery { limit: Some(100), filters: vec![Filter::eq("enabled", json!(true))], ..Default::default() })
         .await?
@@ -985,18 +1009,36 @@ pub async fn escalate(k: &Kernel, ctx: &Ctx) -> Result<usize> {
         .iter()
         .map(Escalation::from_doc)
         .collect();
+    let Some(top) = rules.iter().map(|r| r.level).max() else { return Ok(0) };
+    // A Condition rule may pick out any open ticket; the others only those whose agreement is in trouble.
+    let any_condition = rules.iter().any(|r| r.trigger == "Condition");
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let rows_: Vec<(Uuid,)> = sqlx::query_as(
+        "select id from e_ticket where tenant_id = $1 and status = any($2) and coalesce(escalation_level, 0) < $3 \
+         and ($4 or sla_status in ('At Risk', 'Breached')) order by id",
+    )
+    .bind(ctx.tenant)
+    .bind(&OPEN[..])
+    .bind(top)
+    .bind(any_condition)
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
-    if rules.is_empty() {
-        return Ok(0);
-    }
+    let user = ctx.user_value();
+    let due = |doc: &Doc| next_escalation(&rules, doc, &ent.cel_view(&Value::Object(doc.clone()), &ctx.schema), &user).cloned();
     let mut fired = 0;
     for (ticket,) in rows_ {
         let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+        // Looked at without a lock first, then chosen again from the locked row (another replica may have fired it).
+        let Some(doc) = store::load(&mut tx, &ctx.schema, &ent, ctx.tenant, ticket, false).await? else { continue };
+        if due(&doc).is_none() {
+            continue;
+        }
         let Some(doc) = store::load(&mut tx, &ctx.schema, &ent, ctx.tenant, ticket, true).await? else { continue };
         if !s(&doc, "status").is_some_and(|st| OPEN.contains(&st)) {
             continue;
         }
-        let Some(rule) = next_escalation(&rules, &doc) else { continue };
+        let Some(rule) = due(&doc) else { continue };
         let mut values = Doc::new();
         values.insert("escalation_level".into(), json!(rule.level));
         values.insert("escalated_at".into(), ts_value(Utc::now()));
@@ -1009,13 +1051,16 @@ pub async fn escalate(k: &Kernel, ctx: &Ctx) -> Result<usize> {
         if let Some(priority) = &rule.raise_priority_to {
             values.insert("priority".into(), json!(priority));
         }
+        // What the escalation replaced, so an automation on the ticket's updated event can tell it from any other change.
+        let was: serde_json::Map<String, Value> =
+            values.iter().filter(|(f, v)| doc.get(*f) != Some(*v)).map(|(f, _)| (f.clone(), doc.get(f).cloned().unwrap_or(Value::Null))).collect();
         k.set_values_tx(ctx, &mut tx, "Ticket", ticket, values).await?;
         let label = format!("{} {}", s(&doc, "number").unwrap_or("Ticket"), s(&doc, "subject").unwrap_or_default());
         let title = format!("Escalated: {label}");
         for who in rule.assign_to.iter().chain(rule.notify.iter()).map(String::as_str).chain(s(&doc, "assigned_to")) {
             notify_agent(&mut tx, ctx.tenant, who, SLA, &title, ticket).await?;
         }
-        let payload = json!({"entity": "Ticket", "id": ticket, "event": "updated", "actor": Value::Null, "depth": ctx.depth, "doc": store::load(&mut tx, &ctx.schema, &ent, ctx.tenant, ticket, false).await?});
+        let payload = json!({"entity": "Ticket", "id": ticket, "event": "updated", "actor": Value::Null, "depth": ctx.depth, "doc": store::load(&mut tx, &ctx.schema, &ent, ctx.tenant, ticket, false).await?, "was": was});
         outbox::enqueue(&mut tx, ctx.tenant, "Ticket.updated", Some("Ticket"), Some(ticket), payload).await?;
         ferrum_kernel::audit::record(&mut tx, ctx, "Ticket", ticket, "escalate", None, json!({"level": rule.level})).await?;
         tx.commit().await?;
@@ -1100,6 +1145,7 @@ mod tests {
         Escalation {
             level,
             trigger: trigger.into(),
+            condition: None,
             priority: priority.map(str::to_string),
             team: None,
             assign_to: None,
@@ -1112,7 +1158,7 @@ mod tests {
     #[test]
     fn escalations_fire_in_order_and_once() {
         let rules = [rule(2, "Breached", None), rule(1, "At Risk", None), rule(3, "Breached", Some("Urgent"))];
-        let level = |fields: Value| next_escalation(&rules, &ticket(fields)).map(|r| r.level);
+        let level = |fields: Value| next_escalation(&rules, &ticket(fields.clone()), &fields, &json!({})).map(|r| r.level);
         assert_eq!(level(json!({"sla_status": "On Track"})), None, "nothing is wrong");
         assert_eq!(level(json!({"sla_status": "At Risk"})), Some(1));
         assert_eq!(level(json!({"sla_status": "At Risk", "escalation_level": 1})), None, "a rule does not fire twice");
@@ -1120,6 +1166,22 @@ mod tests {
         assert_eq!(level(json!({"sla_status": "Breached"})), Some(1), "from the bottom, one at a time");
         assert_eq!(level(json!({"sla_status": "Breached", "escalation_level": 2, "priority": "Low"})), None, "not this priority");
         assert_eq!(level(json!({"sla_status": "Breached", "escalation_level": 2, "priority": "Urgent"})), Some(3));
+
+        // A Condition rule is due whatever the SLA says, once its condition holds; a condition that fails skips the rule.
+        let mut reopened = rule(1, "Condition", None);
+        reopened.condition = Some(Expr::compile("doc.reopen_count >= 2"));
+        let mut hindi = rule(2, "Breached", None);
+        hindi.condition = Some(Expr::compile("doc.language == 'hi'"));
+        let mut broken = rule(3, "Condition", None);
+        broken.condition = Some(Expr::compile("doc.nothing.deeper > 1"));
+        let mut never = rule(4, "Condition", None);
+        never.condition = Some(Err("does not compile".into()));
+        let rules = [reopened, hindi, broken, never];
+        let level = |fields: Value| next_escalation(&rules, &ticket(fields.clone()), &fields, &json!({})).map(|r| r.level);
+        assert_eq!(level(json!({"sla_status": "On Track", "reopen_count": 2})), Some(1));
+        assert_eq!(level(json!({"sla_status": "On Track", "reopen_count": 2, "escalation_level": 1})), None, "fired once; the others do not hold");
+        assert_eq!(level(json!({"sla_status": "Breached", "language": "hi", "escalation_level": 1})), Some(2));
+        assert_eq!(level(json!({"sla_status": "Breached", "language": "en", "escalation_level": 1})), None, "the condition narrows the SLA rule");
     }
 
     fn sla(name: &str, customer: Option<Uuid>, group: Option<Uuid>, team: Option<Uuid>, ticket_type: Option<Uuid>, priorities: &[(&str, &str, &str)]) -> Sla {

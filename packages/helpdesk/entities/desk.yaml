@@ -19,7 +19,7 @@
   fields:
     - {name: rule_name, type: data, required: true, unique: true, in_list: true}
     - {name: tag, type: link, to: TicketTag, required: true, in_list: true}
-    - {name: condition, type: code, required: true, description: "CEL on the ticket, e.g. doc.subject.contains('refund') || doc.priority == 'Urgent'"}
+    - {name: condition, type: code, required: true, description: "CEL on the ticket, e.g. doc.subject.contains('refund') || doc.priority == 'Urgent', or doc.last_customer_message.contains('refund')"}
     - {name: enabled, type: check, default: true, in_list: true}
   list: {columns: [rule_name, tag, enabled], sort: rule_name asc}
 

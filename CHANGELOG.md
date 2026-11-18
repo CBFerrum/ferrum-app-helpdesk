@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.17.0
+
+Needs the same platform as 0.16.0. The package is 0.9.0: an escalation rule may have a condition, and Ticket has a read-only `last_customer_message` (filled at each ticket's next save). No interface change.
+
+- **Escalation by condition.** A rule's trigger can be Condition: a CEL condition on the ticket alone decides (reopened twice, a late next reply, a language, a customer). With At Risk or Breached, a condition narrows the rule. A condition that does not compile is refused when the rule is saved. A rule still fires once per ticket, chosen again under the ticket's row lock.
+- **What the escalation changed.** The ticket's `updated` event from an escalation carries `was`, so a workspace's automation can tell an escalation from any other change and tell a role, message the customer or apply a macro.
+- **The customer's latest words** are a field, `last_customer_message`, for tag rules, assignment rules, escalation conditions and automations. A trigger on what the customer wrote is the platform's automation calling Apply a Macro through the gate (the README gives the recipe).
+
 ## 0.16.0
 
 Needs the same platform as 0.15.0. The package is 0.8.0: two optional hours on an agreement's targets and ten read-only fields on Ticket (added empty), with two more of the platform's service targets. Rebuilt interface.

@@ -111,12 +111,13 @@
   kind: master
   module: support
   title_field: rule_name
-  description: "What happens when a ticket's agreement is at risk or breached. Rules fire in order of level, each at most once on a ticket, one per run of the SLA check."
+  description: "What happens when a ticket's agreement is at risk or breached, or when a condition holds. Rules fire in order of level, each at most once on a ticket, one per run of the check."
   fields:
     - {name: rule_name, type: data, label: Name, required: true, unique: true, in_list: true}
     - {name: enabled, type: check, default: true, in_list: true, in_filter: true}
     - {name: level, type: int, required: true, default: 1, min: 1, max: 9, in_list: true}
-    - {name: trigger, type: select, options: [At Risk, Breached], required: true, default: Breached, in_list: true}
+    - {name: trigger, type: select, options: [At Risk, Breached, Condition], required: true, default: Breached, in_list: true, description: "At Risk or Breached: the ticket's SLA status. Condition: the condition below alone decides"}
+    - {name: condition, type: code, required_if: "doc.trigger == 'Condition'", description: "CEL on the ticket, e.g. doc.reopen_count >= 2, or doc.next_reply_state == 'breached'. With At Risk or Breached it must hold as well; empty: every ticket the trigger fits"}
     - {name: priority, type: select, options: [Low, Medium, High, Urgent], in_list: true, description: "Tickets of this priority; empty: any"}
     - {name: team, type: link, to: SupportTeam, in_list: true, description: "Tickets of this team; empty: any"}
     - {name: assign_to, type: email, description: "Who takes the ticket over"}
@@ -211,6 +212,7 @@
     - {name: last_customer_message_at, type: datetime, read_only: true, no_copy: true, description: "When the customer last wrote"}
     - {name: last_agent_message_at, type: datetime, read_only: true, no_copy: true, description: "When the team last answered the customer (an internal note does not answer)"}
     - {name: last_message_preview, type: data, max_length: 200, read_only: true, no_copy: true, description: "The start of the latest message the customer could read, for the inbox"}
+    - {name: last_customer_message, type: text, max_length: 20000, read_only: true, no_copy: true, hidden: true, description: "The latest public message from the customer, whole; before any, the ticket's description. For conditions: doc.last_customer_message.contains('refund')"}
     - {name: support_contract, type: link, to: SupportContract, read_only: true, no_copy: true, in_filter: true}
     - {name: contract_sla, type: link, to: ServiceLevelAgreement, read_only: true, hidden: true, no_copy: true}
     - {name: entitlement, type: select, options: [Covered, Expired, Exhausted, None], read_only: true, no_copy: true, in_filter: true, description: "Whether a support contract covers this ticket, as of when it was opened"}

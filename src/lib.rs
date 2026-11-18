@@ -37,6 +37,7 @@ pub fn register(hooks: &mut HookRegistry) {
         .register("SupportTeam", Arc::new(ticket::TeamHook))
         .register("TicketStatus", Arc::new(ticket::StatusHook))
         .register("TicketAssignmentRule", Arc::new(ticket::RuleHook))
+        .register("EscalationRule", Arc::new(ticket::RuleHook))
         .register("KbArticle", Arc::new(kb::ArticleHook))
         .register("SavedReply", Arc::new(replies::ReplyHook))
         .register("WarrantyClaim", Arc::new(warranty::ClaimHook))

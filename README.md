@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.16.0-7c3aed?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.17.0-7c3aed?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -44,7 +44,7 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 
 | | |
 |---|---|
-| **Version** | 0.16.0 (platform `>=0.4.0, <0.5`) |
+| **Version** | 0.17.0 (platform `>=0.4.0, <0.5`) |
 | **Kind** | Own interface at `/helpdesk/` (agent inbox, ticket workspace, administration, help centre editor, reports) and a page in the customer portal |
 | **What it adds** | 29 entities (22 main, 7 child tables) in 2 packages, 3 roles, 9 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
 | **Depends on** | Ferrum core, shared customers and items |
@@ -235,8 +235,11 @@ skill and shift, and the same data set holds the customer's contracts, equipment
   but is not counted again (the platform's clock records one breach per round).
 - **Breach recorded once** and raising the ticket's updated event, so automations and webhooks can act.
 - **Priority raised.** Moves the due moment from the save.
-- **Escalation rules.** At Risk or Breached, by level, once per ticket: assign, move to a team, raise priority to
-  High or Urgent, or notify an address.
+- **Escalation rules.** At Risk, Breached, or a condition on the ticket (`doc.reopen_count >= 2`,
+  `doc.next_reply_state == 'breached'`), by level, once per ticket: assign, move to a team, raise priority to High or
+  Urgent, or notify an address. With At Risk or Breached a condition narrows the rule. The ticket's updated event carries
+  what the escalation changed (`was`), so an automation on `doc.escalation_level > old.escalation_level` can tell a
+  role, message the customer or apply a macro.
 - **Entitlement.** Support Contract: a customer's period, an optional agreement and an optional number of tickets. A
   ticket is marked Covered, Expired, Exhausted or None. Settings choose to inform or to Hold for Approval: the ticket waits On Hold with no reply to
   the customer until a Support Manager approves or declines it, saying why.
@@ -249,6 +252,11 @@ skill and shift, and the same data set holds the customer's contracts, equipment
   or remove a tag, send a public reply, add a private note. All steps apply or none. A picker previews what each step changes
   and warns first when one sends the customer a reply. Applied once, with an idempotency key.
 - **Tags and tag rules.** See above.
+- **Triggers.** The customer's latest words are a field, `last_customer_message`, that tag rules, assignment rules,
+  escalation conditions and the platform's automations read. A trigger is an automation on Ticket, for example event
+  `updated`, condition `doc.last_customer_message_at != old.last_customer_message_at && doc.last_customer_message.contains('refund')`,
+  and action `invoke` of `helpdesk.ticket.apply_macro` with input `{"id": "doc.id", "params": "{'macro': '<the macro>'}"}`.
+  It runs once per event; a reply a macro sends this way counts as a reply (it is mailed and answers the clocks).
 - **Seeded.** Four ticket types (Question, Incident, Problem, Feature Request), a knowledge base category and three saved replies.
 
 ### ⭐ Satisfaction
@@ -436,11 +444,11 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 | Custom statuses | ✅ | ✅ | 🟡 | ✅ | ✅ | 🟡 |
 | CC and followers | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Saved replies and macros with merge fields | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Triggers and automations on conversation content | 🟡² | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Triggers and automations on conversation content | ✅² | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Routing by skill, language and shift | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | SLA targets in working hours with holidays and pauses | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | More clocks: next reply, periodic update | ✅ | ✅ | ✅ | 🟡 | ✅ | ✅ |
-| Escalation rules | 🟡³ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Escalation rules | ✅³ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Entitlement by support contract | ✅ | 🟡 | 🟡 | ❌ | ✅ | ❌ |
 | Knowledge base and public help centre | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Article suggestions for agents while replying | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -461,8 +469,8 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 | No per-agent subscription | ✅ | ❌ | ❌ | ❌ | ❌ | 🟡⁷ |
 
 ¹ Signed-in customers raise tickets, reply, follow and rate them, and read articles. There is no sign-in-free web form yet.
-² Platform automations and tag rules read ticket fields; there are no string functions on message text yet.
-³ Escalation can assign, move a team, raise priority or notify an address.
+² A trigger is the platform's automation on the ticket: its condition reads `doc.last_customer_message` (the customer's latest words) and it can apply a macro through the gate.
+³ Escalation fires on At Risk, Breached or any condition on the ticket, and can assign, move a team, raise priority or notify an address; its updated event says what changed, so an automation can do the rest.
 ⁴ A second agent saving over the first is told and loses nothing, but nobody sees who is viewing.
 ⁵ Nine ready reports, downloadable as CSV; more in the platform's report builder.
 ⁶ A brand sets name, signature and wrapper per support address; there is no separate portal or help centre per brand.
@@ -493,6 +501,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 
 ### ✅ Recently shipped
 
+- [x] **0.17.0.** Escalation by any condition on the ticket, the customer's latest words as a field for conditions, and triggers proven on the platform's automations.
 - [x] **0.16.0.** Two more clocks: the next reply and the customer update, on the platform's service targets.
 - [x] **0.15.0.** A workspace's own statuses, each inside one of four stages that the clocks, queues and reports read.
 - [x] **0.14.1.** Every action states what done means and what it returns, for processes and agents; the planned visit of a maintenance schedule is a declared parameter.
@@ -535,7 +544,6 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 
 **Service levels**
 - [ ] Agreements chosen by channel, tag or brand.
-- [ ] Escalations that can do anything an automation can.
 
 **Customers**
 - [ ] A richer portal: company-wide view, reopen, status words of your own.
