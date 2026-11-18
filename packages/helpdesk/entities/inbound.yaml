@@ -52,8 +52,12 @@
     - {name: body, type: text, read_only: true, no_copy: true, perm_group: held_mail, max_length: 20000, label: Held Mail, description: "What the held mail said, for an administrator to read before opening a ticket from it or discarding it. Only roles given the field group held_mail read it; it goes with the mail when the sender is erased"}
     - {name: payload, type: json, read_only: true, hidden: true, no_copy: true, description: "The held mail, kept until staff release or discard it"}
   actions:
-    - {name: release, label: Open a Ticket From It, permission: write, condition: "doc.outcome == 'Held'"}
-    - {name: discard, label: Discard, permission: write, condition: "doc.outcome == 'Held'"}
+    - {name: release, label: Open a Ticket From It, permission: write, condition: "doc.outcome == 'Held'",
+       contract: {effect: transactional_action, completion: "The held mail is a new ticket, or a message on the ticket it answers, and the log row says which, committed with this receipt",
+                  returns: {type: object, properties: {ticket: {type: string, format: uuid, "x-ferrum-link": Ticket}, outcome: {type: string}}}}}
+    - {name: discard, label: Discard, permission: write, condition: "doc.outcome == 'Held'",
+       contract: {effect: transactional_action, completion: "The held mail is marked Ignored, discarded by staff, and its body is no longer kept in the log",
+                  returns: {type: object, properties: {outcome: {type: string}}}}}
   list: {columns: [received_at, from_address, subject, outcome, reason, ticket], sort: received_at desc}
 
 - name: AgentProfile

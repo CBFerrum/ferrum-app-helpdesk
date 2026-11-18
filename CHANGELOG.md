@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.1
+
+Needs the same platform as 0.14.0. No database change. No interface change.
+
+- **Every action says what done means.** The fourteen actions (merge, macro, rating, warranty claim, outside-entitlement decisions, saved replies, helpful votes, maintenance visits, held mail) carry a `contract:`, so a process or an AI agent finds in the catalog what each one promises and the shape of what it returns. The package is 0.6.0.
+- **Fix:** Create Maintenance Visit on a schedule took a `schedule_detail` parameter it never declared; it is declared now.
+
 ## 0.14.0
 
 Needs Ferrum 0.4.0 (apps' upkeep runs one workspace at a time, on whichever replica is free), and builds against Mail (Comms) 0.27.0. No database or interface change.
