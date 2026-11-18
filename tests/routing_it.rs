@@ -164,24 +164,24 @@ async fn scenario() {
         }
     };
     age(5).await;
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
     assert_eq!(e.get("Ticket", idle).await["assigned_to"], json!("ann@acme.test"), "off by default: reassignment is a setting");
     e.update("SupportSettings", settings, json!({"reassign_unanswered_hours": 4, "max_reassignments": 1})).await;
     age(3).await;
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
     assert_eq!(e.get("Ticket", idle).await["assigned_to"], json!("ann@acme.test"), "not yet: unanswered for 3 of the 4 hours");
     age(5).await;
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
     let moved = e.get("Ticket", idle).await;
     assert!(moved["assigned_to"].is_string() && moved["assigned_to"] != json!("ann@acme.test"), "the next agent: {}", moved["assigned_to"]);
     assert_eq!(moved["reassigned_count"], json!(1));
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
     assert_eq!(e.get("Ticket", idle).await["reassigned_count"], json!(1), "one move, as the setting says, though it is still unanswered");
     // Answered tickets stay put.
     let answered =
         uid(&e.insert("Ticket", json!({"subject": "Answered", "contact_email": "cust@x.test", "assigned_to": "bo@acme.test", "team": team.to_string()})).await);
     say(&e, answered, json!({"author_kind": "Agent", "author": "bo@acme.test", "body": "On it"})).await;
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
     assert_eq!(e.get("Ticket", answered).await["assigned_to"], json!("bo@acme.test"));
 
     // ── unanswered time is working time, on the calendar of the ticket's agreement ──
@@ -219,7 +219,7 @@ async fn scenario() {
     };
     waited().await;
     e.update("SupportSettings", settings, json!({"reassign_unanswered_hours": 10, "max_reassignments": 3})).await;
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
     let kept = e.get("Ticket", off_hours).await;
     assert_eq!(
         (kept["assigned_to"].clone(), kept["reassigned_count"].clone()),
@@ -229,7 +229,7 @@ async fn scenario() {
     // On the workspace's own calendar (open all day, every day) the same wait is two days of working time.
     e.update("ServiceLevelAgreement", agreement, json!({"calendar": null})).await;
     waited().await;
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
     let moved = e.get("Ticket", off_hours).await;
     assert!(moved["assigned_to"].is_string() && moved["assigned_to"] != json!("ann@acme.test"), "gone to the next agent: {}", moved["assigned_to"]);
     assert_eq!(moved["reassigned_count"], json!(1));

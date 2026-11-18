@@ -150,7 +150,7 @@ async fn scenario() {
         tx.commit().await.unwrap();
     }
     other_app(&e, "desk@acme.test", true).await;
-    ferrum_app_helpdesk::maintenance(&e.k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&e.k, e.tenant).await.unwrap();
     assert_eq!(registered(&e).await, ["billing@acme.test", "desk@acme.test", "support@acme.test"]);
     let fixed = e.get("SupportAddress", desk).await;
     assert_eq!((fixed["mail_registered"].clone(), fixed["registration_note"].clone()), (json!(true), Value::Null));

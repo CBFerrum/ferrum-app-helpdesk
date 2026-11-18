@@ -55,40 +55,30 @@ pub fn reports() -> Vec<Arc<dyn ReportSource>> {
     vec![Arc::new(reports::SupportReports)]
 }
 
-/// Periodic upkeep (every few minutes on every replica; must be idempotent and safe to run concurrently):
-/// re-evaluates the SLA of open tickets and closes tickets resolved longer than the grace period.
-/// A failing tenant is logged and does not stop the others; the first error is returned.
-pub async fn maintenance(k: &Kernel) -> Result<()> {
-    let mut tx = k.db.system_tx().await?;
-    let tenants: Vec<Uuid> = sqlx::query_scalar("select id from tenant where status = 'active' order by id").fetch_all(&mut *tx).await?;
-    tx.commit().await?;
-    let mut first_error = None;
-    for tenant in tenants {
-        let res = async {
-            let schema = k.registry.schema(tenant).await?;
-            if schema.entity("Ticket").is_none() {
-                return Ok(());
-            }
-            let ctx = Ctx::system(tenant, schema);
-            hours::ensure_for_tenant(k, &ctx).await?;
-            mail::sync_all(k, &ctx).await?;
-            help::ensure_defaults(k, &ctx).await?;
-            let refreshed = ticket::refresh_slas(k, &ctx).await? + ticket::refresh_verdicts(k, &ctx).await?;
-            survey::send_due(k, &ctx).await?;
-            let escalated = ticket::escalate(k, &ctx).await? + routing::reassign_unanswered(k, &ctx).await?;
-            let closed = ticket::auto_close(k, &ctx).await?;
-            if refreshed + escalated + closed > 0 {
-                tracing::info!(%tenant, refreshed, escalated, closed, "support maintenance");
-            }
-            Ok::<_, Error>(())
+/// One workspace's upkeep, which the platform runs every few minutes where Helpdesk is installed, on whichever replica is
+/// free, and may run again: re-evaluates the SLA of open tickets and closes tickets resolved longer than the grace
+/// period. A failing step is logged and the first error is returned.
+pub async fn maintenance(k: &Kernel, tenant: Uuid) -> Result<()> {
+    let res = async {
+        let schema = k.registry.schema(tenant).await?;
+        let ctx = Ctx::system(tenant, schema);
+        hours::ensure_for_tenant(k, &ctx).await?;
+        mail::sync_all(k, &ctx).await?;
+        help::ensure_defaults(k, &ctx).await?;
+        let refreshed = ticket::refresh_slas(k, &ctx).await? + ticket::refresh_verdicts(k, &ctx).await?;
+        survey::send_due(k, &ctx).await?;
+        let escalated = ticket::escalate(k, &ctx).await? + routing::reassign_unanswered(k, &ctx).await?;
+        let closed = ticket::auto_close(k, &ctx).await?;
+        if refreshed + escalated + closed > 0 {
+            tracing::info!(%tenant, refreshed, escalated, closed, "support maintenance");
         }
-        .await;
-        if let Err(e) = res {
-            tracing::warn!(%tenant, "support maintenance failed: {e}");
-            first_error.get_or_insert(e);
-        }
+        Ok::<_, Error>(())
     }
-    first_error.map_or(Ok(()), Err)
+    .await;
+    if let Err(e) = &res {
+        tracing::warn!(%tenant, "support maintenance failed: {e}");
+    }
+    res
 }
 
 /// A whole-number field (missing or empty reads as 0).

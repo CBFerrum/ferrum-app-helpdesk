@@ -30,13 +30,13 @@ async fn scenario() {
     };
     let first = solve("Printer jam", "ada@cust.test", "sam@acme.test").await;
     // A workspace upgraded from before: no survey settings, nothing is asked.
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
     drain(&k).await;
     assert!(sent_to("ada@cust.test").is_empty(), "off until the workspace turns it on");
 
     let settings = e.settings(json!({"survey_enabled": true, "survey_delay_hours": 0, "survey_reopen_at_or_below": 2, "survey_alert_at_or_below": 2, "survey_alert_to": "lead@acme.test"})).await;
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
     drain(&k).await;
     let mails = sent_to("ada@cust.test");
     assert_eq!(mails.len(), 1, "once, however often the upkeep runs: {mails:?}");
@@ -66,7 +66,7 @@ async fn scenario() {
     // A good rating changes nothing else; a closed ticket takes the rating without reopening.
     let second = solve("Invoice", "bob@cust.test", "kim@acme.test").await;
     let third = solve("Login", "cy@cust.test", "kim@acme.test").await;
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
     drain(&k).await;
     let rate = |who: &'static str, rating: i64| {
         let k = k.clone();
@@ -90,7 +90,7 @@ async fn scenario() {
     // Tickets with no address, merged ones and tickets solved before the link could last are not asked.
     let none = uid(&e.insert("Ticket", json!({"subject": "Phone call"})).await);
     e.update("Ticket", none, json!({"status": "Resolved", "resolution_details": "Done"})).await;
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
     let asked: i64 = e.sql("select count(*) from e_ticket where tenant_id = $1 and survey_sent_at is not null", &[]).await.unwrap();
     assert_eq!(asked, 3);
 
@@ -116,8 +116,8 @@ async fn scenario() {
     let quiet = solve("Quiet", "quiet@cust.test", "sam@acme.test").await;
     let chatty = solve("Chatty", "chatty@cust.test", "sam@acme.test").await;
     k.set_message_opt_out(&e.admin, "quiet@cust.test", "email", true).await.unwrap();
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
     drain(&k).await;
     assert!(sent_to("quiet@cust.test").is_empty(), "opted out");
     assert_eq!(sent_to("chatty@cust.test").len(), 1);

@@ -44,7 +44,7 @@ async fn scenario() {
         k.published_list("help", "help-centre").await.unwrap().is_none(),
         "nothing is public until the upkeep has made the list (a workspace not yet updated)"
     );
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
     let list = k.published_list("help", "help-centre").await.unwrap().expect("the help centre");
     let titles: Vec<String> = list.rows.iter().map(|r| r["title"].as_str().unwrap().to_string()).collect();
     assert_eq!(titles.len(), 2, "only Public and Published: {titles:?}");
@@ -91,7 +91,7 @@ async fn scenario() {
     )
     .await
     .unwrap();
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
     assert!(k.published_list("help", "help-centre").await.unwrap().is_none(), "once for a workspace");
 
     // ── the portal: search, suggestions, views, votes ──

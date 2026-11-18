@@ -39,7 +39,7 @@ async fn scenario() {
         .await);
     let calendars = || async { e.sql::<String>("select zone from logic_calendar where tenant_id = $1 and name = 'helpdesk_hours'", &[]).await };
     assert_eq!(calendars().await, None, "nothing is made until a ticket needs it");
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
     assert_eq!(calendars().await.as_deref(), Some("UTC"), "the upkeep makes it when the workspace has agreements");
     let open: Option<bool> = e.sql("select hours is null and weekends = '{}' from logic_calendar where tenant_id = $1 and name = 'helpdesk_hours'", &[]).await;
     assert_eq!(open, Some(true), "round the clock");
@@ -50,7 +50,7 @@ async fn scenario() {
     )
     .unwrap();
     k.set_logic_calendar(&e.admin, &mine).await.expect("the administrator's hours");
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
     assert_eq!(calendars().await.as_deref(), Some("America/New_York"));
 
     // ── policies as records: by priority, then team ──
@@ -96,7 +96,7 @@ async fn scenario() {
         "the urgent ticket's two targets and the team ticket's two; the first ticket waits for its customer, so its resolution is stopped, not late"
     );
     assert_eq!(k.sweep_targets_at(Utc::now()).await.unwrap(), 0, "once");
-    ferrum_app_helpdesk::maintenance(&k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(&k, e.tenant).await.unwrap();
     let late = e.get("Ticket", uid(&urgent)).await;
     assert_eq!(
         (late["response_state"].clone(), late["sla_status"].clone(), late["response_breached"].clone()),

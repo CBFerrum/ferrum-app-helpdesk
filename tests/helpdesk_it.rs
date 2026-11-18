@@ -57,9 +57,9 @@ fn near(a: DateTime<Utc>, b: DateTime<Utc>) -> bool {
 }
 
 /// Marks the targets past their due moment, as the minute loop does, and brings the fields the inbox reads up to date.
-async fn sweep(k: &Kernel) {
+async fn sweep(k: &Kernel, tenant: Uuid) {
     k.sweep_targets_at(Utc::now()).await.unwrap();
-    ferrum_app_helpdesk::maintenance(k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(k, tenant).await.unwrap();
 }
 
 /// Time a ticket spent waiting (replied, on hold, resolved before a reopening), from its timeline.
@@ -441,7 +441,7 @@ async fn scenario() {
         "the breach is the platform's, marked by its minute loop"
     );
     k.pin_clock(None);
-    sweep(&k).await;
+    sweep(&k, t.ctx.tenant).await;
     let t1 = t.get("Ticket", t1id).await;
     assert_eq!((t1["sla_status"].clone(), t1["response_breached"].clone(), t1["resolution_breached"].clone()), (json!("Breached"), json!(true), json!(true)));
     assert_eq!((t1["response_state"].clone(), t1["resolution_state"].clone()), (json!("breached"), json!("breached")));
@@ -752,13 +752,13 @@ async fn scenario() {
     t.sql("update record_target set due_at = due_at - interval '7 days' where record_id = $1", t5).await;
     t.sql("update record_target set due_at = now() - interval '1 day' where record_id = $1 and target = 'respond'", t10).await;
     let flagged_before = t.events(t5).await.iter().filter(|e| e.1).count();
-    sweep(&k).await;
+    sweep(&k, t.ctx.tenant).await;
     let t5doc = t.get("Ticket", t5).await;
     assert_eq!((t5doc["sla_status"].clone(), t5doc["response_breached"].clone()), (json!("Breached"), json!(true)));
     let flagged: Vec<_> = t.events(t5).await.into_iter().filter(|e| e.1).collect();
     assert_eq!(flagged.len(), flagged_before + 2, "each target's breach is published for automations and webhooks, once");
     assert!(flagged.iter().all(|e| e.0 == "Ticket.updated") && flagged.iter().any(|e| e.2["response_state"] == json!("breached")));
-    sweep(&k).await;
+    sweep(&k, t.ctx.tenant).await;
     assert_eq!(t.events(t5).await.iter().filter(|e| e.1).count(), flagged.len(), "idempotent");
     assert_eq!(t.get("Ticket", t5).await["version"], t5doc["version"], "what the inbox reads is brought up to date without a new version");
     let told = t.notifications(agent.ctx.user).await;
@@ -769,17 +769,17 @@ async fn scenario() {
     t.update("Ticket", t2id, json!({"status": "Resolved", "resolution_details": "Sent the invoice copy", "satisfaction_rating": 2})).await;
     t.update("Ticket", t9, json!({"status": "Resolved", "resolution_details": "Address updated"})).await;
     t.sql("update e_ticket set resolved_at = resolved_at - interval '8 days' where id = $1", t2id).await;
-    ferrum_app_helpdesk::maintenance(&k).await.expect("maintenance");
+    ferrum_app_helpdesk::maintenance(&k, t.ctx.tenant).await.expect("maintenance");
     let t2doc = t.get("Ticket", t2id).await;
     assert_eq!((t2doc["status"].clone(), t2doc["closed_at"].is_string()), (json!("Closed"), true), "resolved for over 7 days");
     assert_eq!(t.get("Ticket", t9).await["status"], json!("Resolved"), "still in the grace period");
     t.settings(json!({"auto_close_days": 30})).await;
     t.update("Ticket", t8, json!({"status": "Resolved", "resolution_details": "Done"})).await;
     t.sql("update e_ticket set resolved_at = resolved_at - interval '8 days' where id = $1", t8).await;
-    ferrum_app_helpdesk::maintenance(&k).await.expect("maintenance");
+    ferrum_app_helpdesk::maintenance(&k, t.ctx.tenant).await.expect("maintenance");
     assert_eq!(t.get("Ticket", t8).await["status"], json!("Resolved"), "the tenant's grace period is 30 days");
     t.sql("update e_ticket set resolved_at = resolved_at - interval '31 days' where id = $1", t8).await;
-    ferrum_app_helpdesk::maintenance(&k).await.expect("maintenance");
+    ferrum_app_helpdesk::maintenance(&k, t.ctx.tenant).await.expect("maintenance");
     assert_eq!(t.get("Ticket", t8).await["status"], json!("Closed"));
 
     // ───────────── reports ─────────────
@@ -1039,12 +1039,12 @@ async fn portal(k: &Arc<Kernel>) {
     let late = uid(&first);
     k.sweep_targets_at(Utc::now()).await.unwrap();
     assert_eq!(t.get("Ticket", late).await["response_state"], json!("breached"), "the platform marked it");
-    ferrum_app_helpdesk::maintenance(k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(k, t.ctx.tenant).await.unwrap();
     let once = t.get("Ticket", late).await;
     assert_eq!((once["escalation_level"].as_i64(), once["assigned_to"].as_str()), (Some(1), None), "the first rule, and only it");
     assert!(t.notifications(lead.ctx.user).await.iter().any(|n| n.starts_with("Escalated")), "who it names is told");
     let version = once["version"].clone();
-    ferrum_app_helpdesk::maintenance(k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(k, t.ctx.tenant).await.unwrap();
     let twice = t.get("Ticket", late).await;
     assert_eq!(
         (twice["escalation_level"].as_i64(), twice["assigned_to"].as_str(), twice["priority"].as_str()),
@@ -1052,7 +1052,7 @@ async fn portal(k: &Arc<Kernel>) {
         "then the next"
     );
     assert_eq!(twice["version"], version, "an agent's open form stays valid");
-    ferrum_app_helpdesk::maintenance(k).await.unwrap();
+    ferrum_app_helpdesk::maintenance(k, t.ctx.tenant).await.unwrap();
     assert_eq!(t.get("Ticket", late).await["escalation_level"], json!(2), "nothing further: the rest is off");
     let done = t.update("Ticket", late, json!({"status": "Resolved", "resolution_details": "Fixed."})).await;
     assert_eq!(done["escalation_level"], json!(2), "it stays on the record");
