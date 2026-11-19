@@ -31,8 +31,8 @@ impl Site for HelpdeskSite {
             ("POST", ["portal", "tickets", t, "replies"]) => (200, reply(k, user, ticket_id(t)?, &body(&req)?).await?),
             ("POST", ["portal", "tickets", t, "rating"]) => (200, rate(k, user, ticket_id(t)?, &body(&req)?).await?),
             ("GET", ["portal", "tickets", t, "files", f]) => return file(k, user, ticket_id(t)?, f).await,
-            ("GET", ["portal", "articles"]) => (200, articles(k, user, query(&req, "q"), 20).await?),
-            ("GET", ["portal", "suggest"]) => (200, articles(k, user, query(&req, "subject"), 5).await?),
+            ("GET", ["portal", "articles"]) => (200, articles(k, user, query(&req, "q"), 20, lang(&req)).await?),
+            ("GET", ["portal", "suggest"]) => (200, articles(k, user, query(&req, "subject"), 5, lang(&req)).await?),
             ("GET", ["portal", "articles", a]) => (200, article(k, user, article_id(a)?).await?),
             ("POST", ["portal", "articles", a, "vote"]) => (200, vote(k, user, article_id(a)?, &body(&req)?).await?),
             _ => return Err(Error::NotFound(format!("helpdesk endpoint {} {}", req.method, req.path))),
@@ -45,6 +45,11 @@ impl Site for HelpdeskSite {
     fn max_body(&self) -> usize {
         MAX_BODY
     }
+}
+
+/// The reader's language (`lang`), when it looks like a language tag: at most 35 letters, digits and dashes.
+fn lang(req: &SiteRequest) -> Option<&str> {
+    query(req, "lang").filter(|l| !l.is_empty() && l.len() <= 35 && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
 }
 
 fn query<'a>(req: &'a SiteRequest, name: &str) -> Option<&'a str> {
@@ -318,7 +323,7 @@ async fn rate(k: &Kernel, user: &Ctx, ticket: Uuid, body: &Map<String, Value>) -
 
 /// `GET portal/articles?q=` and `GET portal/suggest?subject=`: the help centre's articles a signed-in customer may read (Public
 /// and Customers Only, Published), the best fits for the words first. Offered while they start a request.
-async fn articles(k: &Kernel, user: &Ctx, text: Option<&str>, limit: i64) -> Result<Value> {
+async fn articles(k: &Kernel, user: &Ctx, text: Option<&str>, limit: i64, language: Option<&str>) -> Result<Value> {
     k.rate_limit(
         &format!("helpdesk|articles|{}|{}", user.tenant, user.user),
         std::time::Duration::from_secs(60),
@@ -327,7 +332,7 @@ async fn articles(k: &Kernel, user: &Ctx, text: Option<&str>, limit: i64) -> Res
     )
     .await?;
     let mut tx = k.db.tenant_tx(user.tenant).await?;
-    let found = crate::help::find(&mut tx, user.tenant, text, limit).await?;
+    let found = crate::help::find(&mut tx, user.tenant, text, limit, language).await?;
     tx.commit().await?;
     Ok(json!({"articles": found}))
 }

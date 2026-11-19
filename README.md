@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.20.0-7c3aed?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.21.0-7c3aed?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -44,9 +44,9 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 
 | | |
 |---|---|
-| **Version** | 0.20.0 (platform `>=0.4.0, <0.5`) |
+| **Version** | 0.21.0 (platform `>=0.4.0, <0.5`) |
 | **Kind** | Own interface at `/helpdesk/` (agent inbox, ticket workspace, administration, help centre editor, reports) and a page in the customer portal |
-| **What it adds** | 30 entities (22 main, 8 child tables) in 2 packages, 3 roles, 9 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
+| **What it adds** | 31 entities (22 main, 9 child tables) in 2 packages, 3 roles, 9 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
 | **Depends on** | Ferrum core, shared customers and items |
 | **Works with** | Mail (inbound and outbound email, version 0.20 or later), ERP (invoices and orders through a connector), Field Service (visits from tickets), the platform's calendars and service targets |
 | **Languages** | English, Arabic (right to left), Hindi; a workspace can change any interface word |
@@ -284,6 +284,11 @@ skill and shift, and the same data set holds the customer's contracts, equipment
   searched. Open one to read, or insert a link to one the customer may read (an Internal article cannot be linked).
   The same search is the operation `helpdesk.ticket.suggest_articles`, a query an AI agent can call; it changes
   nothing and counts no view.
+- **Translations.** An article can be the translation of another (one level, one per language). Customers in the
+  portal and agents answering a ticket are offered one article per family, in their language when there is one; an
+  article's page names its other languages. The public help centre lists every public translation at its own address.
+- **Published versions.** Each time an article is published, or changed while published, what customers can read is
+  kept as a version (the latest 50); an editor can restore one, which is an ordinary edit.
 - **Counts.** Views and helpful votes from the portal and the public page are added together on the article.
 - **Editor.** A list of what each article is, who it reaches and how it was received, and an editor with category,
   body, a preview, visibility, state, publish and archive.
@@ -410,7 +415,7 @@ ticket by number to open a visit.
 | **Ticket Type, Ticket Tag, Tag Rule** | Classifying tickets | Name, colour, condition |
 | **Ticket Status** | A workspace's own status inside one of four stages (Open, Replied, On Hold, Resolved); the stage is what queues, clocks and reports read | Name, stage, on |
 | **Saved Reply, Support Macro** | Written once, used often | Scope, body or steps, uses |
-| **Knowledge Base Article, Category** | Answers | Status, visibility, slug, views, votes |
+| **Knowledge Base Article, Category** | Answers | Status, visibility, slug, language, translation of, published versions, views, votes |
 | **Warranty Claim** | A warranty complaint | Item, serial, delivery, warranty status |
 | **Maintenance Schedule, Maintenance Visit** | Annual maintenance contract and its visits | Items, periodicity, planned and actual dates |
 | **Support Settings** | Workspace settings | See Settings above |
@@ -463,7 +468,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 | Entitlement by support contract | ✅ | 🟡 | 🟡 | ❌ | ✅ | ❌ |
 | Knowledge base and public help centre | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Article suggestions for agents while replying | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Article translations and versions | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Article translations and versions | ✅⁸ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Customer satisfaction survey by mailed link | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | NPS and CES surveys | ❌ | 🟡 | 🟡 | ✅ | ✅ | ❌ |
 | AI: suggested replies, summaries, answer bot | ❌ | ✅ | ✅ | ✅ | ✅ | 🟡 |
@@ -486,6 +491,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 ⁵ Nine ready reports, downloadable as CSV; more in the platform's report builder.
 ⁶ A brand sets name, signature and wrapper per support address; there is no separate portal or help centre per brand.
 ⁷ Zammad is free to self-host; its hosted service is priced per agent.
+⁸ The portal and agents are offered each article in their language; the public help centre is one list for every language (each translation at its own address) until the public side knows a visitor's language.
 
 ### 🏆 Where Helpdesk stands out
 
@@ -512,6 +518,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 
 ### ✅ Recently shipped
 
+- [x] **0.21.0.** Article translations and published versions, with restore.
 - [x] **0.20.0.** Article suggestions while an agent replies, as an operation and in the composer.
 - [x] **0.19.0.** The screens for parent, child and linked tickets, and splitting a message.
 - [x] **0.18.0.** Parent, child and linked tickets, and splitting a customer's message into a ticket of its own, on the server.
@@ -538,7 +545,6 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 - [ ] **Public web form** that opens a ticket without sign-in, with a rate limit.
 - [ ] **Live chat** on the customer's site, because customers expect it.
 - [ ] **WhatsApp and SMS** conversations in the inbox.
-- [ ] **Article translations** and published versions.
 - [ ] **AI help**: a suggested reply, a ticket summary and triage.
 - [ ] A problem-and-incident link between tickets.
 

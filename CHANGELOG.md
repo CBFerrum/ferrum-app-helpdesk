@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.21.0
+
+Needs the same platform as 0.20.0. The package is 0.12.0: KbArticle gains `language`, `translation_of`, a read-only table of published versions (`KbArticleVersion`) and the action `restore_version`, with a unique key on `(translation_of, language)`. Existing articles have no language, no original and no versions until their next publication. Rebuilt interface.
+
+- **Translations.** An article can translate another, one level, one per language (the database's unique key). The portal's search and suggestions, and agents' suggestions, offer one article per family, in the reader's language (or its base or variant), else the original; an article's page lists its other published languages. The public help centre is one list for every language until the public side knows a visitor's language.
+- **Published versions.** Publishing, or changing a published article's title, summary or text, keeps a version (numbered upwards, the latest 50). Restore a Published Version writes one back as an ordinary edit; nothing is removed.
+- **Screens.** The editor takes a language and an original, starts a translation from `/help/new?of=…`, and shows Translations and Published versions with Restore; the portal's article page shows "Also in".
+
 ## 0.20.0
 
 Needs the same platform as 0.19.0. The package is 0.11.0: Ticket gains the hidden, read-only action `suggest_articles` (a query). No database change. Rebuilt interface.

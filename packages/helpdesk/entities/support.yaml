@@ -379,6 +379,17 @@
     - {name: is_group, type: check, in_list: true}
     - {name: description, type: text}
 
+- name: KbArticleVersion
+  label: Published Version
+  kind: child
+  fields:
+    - {name: version_no, type: int, label: Version, in_list: true}
+    - {name: published_at, type: datetime, in_list: true}
+    - {name: published_by, type: email, in_list: true}
+    - {name: title, type: data, max_length: 300, in_list: true}
+    - {name: summary, type: data, max_length: 300}
+    - {name: content, type: markdown}
+
 - name: KbArticle
   label: Knowledge Base Article
   kind: master
@@ -397,6 +408,9 @@
        description: "Internal: agents only. Customers Only: signed-in customers in the portal. Public: the help centre page, to anyone (when published)"}
     - {name: slug, type: data, max_length: 120, unique: true, read_only: true, no_copy: true, description: "The article's address in the help centre, made from its title"}
     - {name: summary, type: data, max_length: 300, description: "A line for the help centre's list and for search engines"}
+    - {name: language, type: data, max_length: 35, in_list: true, in_filter: true, required_if: "doc.translation_of != null", description: "The language it is written in, as a tag such as en or hi-IN; empty: the workspace's own"}
+    - {name: translation_of, type: link, to: KbArticle, label: Translation Of, no_copy: true, in_filter: true, index: true, description: "The article this one translates. A reader is offered one of them, in their language when there is one"}
+    - {name: versions, type: table, of: KbArticleVersion, label: Published Versions, read_only: true, no_copy: true, description: "What was published each time, oldest first; the latest 50 are kept"}
     - {name: views, type: int, default: 0, read_only: true, no_copy: true, label: Views}
   actions:
     - {name: mark_helpful, label: Helpful, permission: read, condition: "doc.status == 'Published'",
@@ -405,6 +419,15 @@
     - {name: mark_not_helpful, label: Not Helpful, permission: read, condition: "doc.status == 'Published'",
        contract: {effect: transactional_action, completion: "The article's not-helpful count is one higher",
                   returns: {type: object, properties: {not_helpful_count: {type: integer}}}}}
+    - name: restore_version
+      label: Restore a Published Version
+      permission: write
+      params: [{name: version, label: Version, type: int, required: true, description: "The version's number"}]
+      contract:
+        effect: transactional_action
+        completion: "The article's title, summary and text are that version's, saved as the caller under the article's own rules; if it is published, this is its newest version. Nothing is removed"
+        returns: {type: object, properties: {restored: {type: integer}, version_no: {type: [integer, "null"], description: "The newest version's number after the restore"}}}
+  unique: [[translation_of, language]]
   list: {columns: [number, title, category, status, helpful_count], sort: title asc}
 
 - name: WarrantyClaim

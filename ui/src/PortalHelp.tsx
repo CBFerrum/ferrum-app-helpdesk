@@ -22,7 +22,13 @@ export interface ArticleSummary {
 interface ArticleFull extends ArticleSummary {
   content: string;
   views?: number;
+  language?: string | null;
+  /** The same article in other languages, as far as the customer may read them. */
+  translations?: { id: string; language?: string | null; title: string }[];
 }
+
+/** The reader's language, as the page says it, for the server to offer each article in. */
+const lang = () => (typeof document === "undefined" ? undefined : document.documentElement.lang || undefined);
 
 function Hits({ articles }: { articles: ArticleSummary[] }) {
   return (
@@ -49,7 +55,7 @@ export function PortalArticles() {
   const found = useQuery({
     queryKey: ["helpdesk", "portal", "articles", q],
     retry: false,
-    queryFn: ({ signal }) => api.get<{ articles: ArticleSummary[] }>(`${BASE}/articles`, q ? { q } : {}, signal).then((r) => r.articles),
+    queryFn: ({ signal }) => api.get<{ articles: ArticleSummary[] }>(`${BASE}/articles`, { q: q || undefined, lang: lang() }, signal).then((r) => r.articles),
   });
   return (
     <div className="stack hd-portal">
@@ -136,6 +142,19 @@ export function PortalArticle() {
         )}
       </p>
       <h1 className="page-title">{isolate(a.data.title)}</h1>
+      {!!a.data.translations?.length && (
+        <p className="faint">
+          {t("Also in:")}{" "}
+          {a.data.translations.map((x, i) => (
+            <span key={x.id}>
+              {i > 0 && ", "}
+              <Link to={`/articles/${x.id}`} lang={x.language ?? undefined}>
+                {isolate(x.language ? `${x.title} (${x.language})` : x.title)}
+              </Link>
+            </span>
+          ))}
+        </p>
+      )}
       <div className="card">
         <div className="card-body">
           <Markdown source={a.data.content} />
@@ -171,7 +190,7 @@ export function Suggestions({ subject }: { subject: string }) {
     enabled: !!q,
     retry: false,
     staleTime: 60_000,
-    queryFn: ({ signal }) => api.get<{ articles: ArticleSummary[] }>(`${BASE}/suggest`, { subject: q }, signal).then((r) => r.articles),
+    queryFn: ({ signal }) => api.get<{ articles: ArticleSummary[] }>(`${BASE}/suggest`, { subject: q, lang: lang() }, signal).then((r) => r.articles),
   });
   // Suggestions are a help and never a wall: a failure, or nothing found, shows nothing and the request goes on.
   if (!q || found.error || (found.data && !found.data.length)) return null;
