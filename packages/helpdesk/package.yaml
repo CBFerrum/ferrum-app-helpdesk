@@ -1,5 +1,5 @@
 package: helpdesk
-version: 0.12.0
+version: 0.13.0
 label: Support
 description: Helpdesk tickets with business-hours SLAs, teams with automatic assignment, a knowledge base, warranty claims and maintenance contracts with planned visits.
 # Customers and items are shared with other apps; the links to ERP's invoices and orders come with
@@ -20,7 +20,7 @@ modules:
     items: [Ticket, SavedReply, SupportMacro, WarrantyClaim, MaintenanceSchedule, MaintenanceVisit, KbArticle, KbCategory, ServiceLevelAgreement, SupportContract, EscalationRule,
             SupportTeam, TicketAssignmentRule, AgentProfile, TicketTag, TagRule, TicketType, TicketStatus, SupportAddress, SupportBrand, InboundLog, SupportSettings, report:support_ticket_summary,
             report:support_sla_compliance, report:support_response_times, report:support_agent_workload, report:support_customer_satisfaction, report:support_backlog,
-            report:support_volume, report:support_reopens, report:support_articles]
+            report:support_volume, report:support_reopens, report:support_articles, report:support_time_spent]
 
 # What a personal-data request exports and erases for the person who raised tickets (their email):
 # their name and address on the ticket; the conversation stays with the ticket.

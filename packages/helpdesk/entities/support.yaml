@@ -178,6 +178,16 @@
     - {name: not_a_stage, field: status_name, check: "!(lower(doc.status_name) in ['open', 'replied', 'on hold', 'resolved', 'closed'])", message: "That is a stage's own name: choose another"}
   list: {columns: [status_name, category, enabled], sort: status_name asc}
 
+- name: TicketTime
+  label: Time Entry
+  kind: child
+  fields:
+    - {name: agent, type: email, required: true, in_list: true, description: "Who spent the time; the person logging it unless they may log for others"}
+    - {name: spent_on, type: date, required: true, default_expr: today, in_list: true}
+    - {name: minutes, type: int, required: true, min: 1, max: 1440, in_list: true}
+    - {name: billable, type: check, default: false, in_list: true}
+    - {name: note, type: data, max_length: 300, in_list: true}
+
 - name: TicketLink
   label: Linked Ticket
   kind: child
@@ -269,6 +279,8 @@
     - {name: routed_at, type: datetime, read_only: true, no_copy: true}
     - {name: reassigned_count, type: int, default: 0, read_only: true, no_copy: true}
     - {name: reopen_count, type: int, default: 0, read_only: true, no_copy: true, in_filter: true, description: "How many times the ticket was reopened after being resolved"}
+    - {name: time, type: table, of: TicketTime, label: Time Spent, no_copy: true}
+    - {name: minutes_spent, type: int, rollup: {table: time, op: sum, field: minutes}, read_only: true, no_copy: true, in_filter: true, label: Minutes Spent}
     - {name: survey_sent_at, type: datetime, read_only: true, no_copy: true}
     - {name: rated_at, type: datetime, read_only: true, no_copy: true}
   form:
@@ -280,6 +292,7 @@
     - {label: Resolution, fields: [resolution_details, satisfaction_rating, feedback]}
     - {label: Entitlement, collapsible: true, fields: [support_contract, entitlement, entitlement_approval, entitlement_decided_by, entitlement_reason]}
     - {label: Service Level, collapsible: true, fields: [escalation_level, escalated_at, service_level_agreement, sla_status, response_by, resolution_by, response_breached, resolution_breached, opened_at, first_responded_at, resolved_at, closed_at, first_response_hours, resolution_hours, response_state, resolution_state, next_reply_state, next_reply_by, update_state, update_by]}
+    - {label: Time, collapsible: true, fields: [minutes_spent, time]}
     - {label: Product, collapsible: true, fields: [item, serial_no, sales_invoice]}
   actions:
     - {name: merge_tickets, label: Merge Tickets Into This One, permission: write, condition: "doc.status != 'Closed'",

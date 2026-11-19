@@ -16,6 +16,7 @@ import { Queues } from "./Queues";
 import { Rail, type RailTicket } from "./Rail";
 import { relationKeys, Relations } from "./Relations";
 import { ArticlePicker, suggestKey } from "./ArticlePicker";
+import { Time, timerMinutes } from "./Time";
 import { ResolveDialog } from "./Resolve";
 import { Row } from "./Row";
 import { START, type Ticket } from "./inbox";
@@ -420,6 +421,42 @@ describe("related tickets", () => {
     expect(html.split("Split into a new ticket").length - 1).toBe(1);
     expect(html).toContain("Split into TKT-2026-000042");
     expect(page(<Conversation items={feed} filter="all" onFilter={() => {}} address={null} endRef={null} />)).not.toContain("Split into a new ticket");
+  });
+});
+
+describe("time on a ticket", () => {
+  const entries = [
+    { id: "e1", agent: "priya@acme.test", spent_on: "2026-11-02", minutes: 30 },
+    { id: "e2", agent: "raj@acme.test", spent_on: "2026-11-03", minutes: 45, billable: true, note: "Called the vendor" },
+  ];
+  const draw = (o: { manager?: boolean; editable?: boolean; entries?: typeof entries; total?: number | null } = {}) =>
+    page(<Time ticket="t1" entries={o.entries ?? entries} total={o.total === undefined ? 75 : o.total} me="priya@acme.test" manager={!!o.manager} editable={o.editable ?? true} name={name} save={async () => {}} />);
+
+  it("draws the total, the entries with names, and the form", () => {
+    const html = draw();
+    expect(html).toContain("1 h 15 min");
+    expect(html).toContain("Priya Nair");
+    expect(html).toContain("raj@acme.test");
+    expect(html).toContain("Billable");
+    expect(html).toContain("Called the vendor");
+    expect(html).toContain("Log time");
+    expect(html).toContain("Start timer");
+  });
+
+  it("offers Remove on one's own entries to an agent, on all to a manager, and nothing to change when not editable", () => {
+    expect(draw().split(">Remove<").length - 1).toBe(1);
+    expect(draw({ manager: true }).split(">Remove<").length - 1).toBe(2);
+    const read = draw({ editable: false });
+    expect(read).not.toContain(">Remove<");
+    expect(read).not.toContain("Log time");
+    expect(draw({ entries: [], total: null })).toContain("No time logged yet.");
+  });
+
+  it("rounds a timer up to whole minutes, at least one and at most a day", () => {
+    expect(timerMinutes(0, 1)).toBe(1);
+    expect(timerMinutes(0, 61_000)).toBe(2);
+    expect(timerMinutes(0, 120_000)).toBe(2);
+    expect(timerMinutes(0, 3 * 86_400_000)).toBe(1440);
   });
 });
 

@@ -7,13 +7,14 @@ import { Link } from "react-router";
 import { api, docPath, formatMoment, t as tr, isolate } from "@ferrum/client";
 import { Badge, Button, placed, Spinner } from "@ferrum/kit";
 import { STATUS_TONES } from "./tones";
-import { type EntityMeta, LinkInput, LinkTitle, type Person, Related } from "@ferrum/records";
+import { can, type EntityMeta, LinkInput, LinkTitle, type Person, Related } from "@ferrum/records";
 import { Copies } from "./Copies";
 import { fileSize } from "./feed";
 import { TicketTags } from "./Tags";
 import { PRIORITIES, requester, type Ticket } from "./inbox";
 import { useStatuses } from "./hooks";
 import { type LinkRow, Relations } from "./Relations";
+import { Time, type TimeEntry } from "./Time";
 import { type SlaTicket, slaCards } from "./sla";
 
 /** What a customer's support contract is called on a ticket and in the catalog. */
@@ -36,6 +37,8 @@ export interface RailTicket extends Ticket, SlaTicket {
   reopen_count?: number | null;
   parent_ticket?: string | null;
   links?: LinkRow[] | null;
+  time?: TimeEntry[] | null;
+  minutes_spent?: number | null;
   _titles?: Record<string, string>;
   [key: string]: unknown;
 }
@@ -224,6 +227,7 @@ export function Rail({
       <Relations t={t} editable={editable} save={save} />
 
       <TicketTags id={t.id} editable={editable} />
+      <Time ticket={t.id} entries={t.time ?? []} total={t.minutes_spent} me={me} manager={!!meta.permissions && can(meta.permissions, "delete")} editable={editable} name={name} save={save} />
       <Copies cc={t.cc} contact={t.contact_email} editable={editable} save={save} />
 
       {t.satisfaction_rating ? (

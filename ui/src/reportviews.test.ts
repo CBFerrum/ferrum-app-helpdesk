@@ -43,9 +43,9 @@ describe("the support report views", () => {
   });
 
   it("cover the six questions and the help centre's articles, each on one of the server's report sources, groupable as it says", () => {
-    expect(VIEWS.map((v) => v.report)).toEqual(["support_sla_compliance", "support_response_times", "support_backlog", "support_volume", "support_reopens", "support_customer_satisfaction", "support_articles"]);
-    // The values the server's Group By takes (Helpdesk reports.rs GROUPS, and Tag for the volume report).
-    const known = ["Status", "Priority", "Team", "Agent", "Ticket Type", "Channel", "Customer", "SLA", "Month", "Tag"];
+    expect(VIEWS.map((v) => v.report)).toEqual(["support_sla_compliance", "support_response_times", "support_backlog", "support_volume", "support_reopens", "support_customer_satisfaction", "support_time_spent", "support_articles"]);
+    // The values the server's Group By takes (Helpdesk reports.rs GROUPS, Tag for the volume report, Ticket for time spent).
+    const known = ["Status", "Priority", "Team", "Agent", "Ticket Type", "Channel", "Customer", "SLA", "Month", "Tag", "Ticket"];
     for (const v of VIEWS) for (const g of [v.group, ...v.also].filter(Boolean)) expect(known).toContain(g);
     expect(VIEWS.find((v) => v.id === "volume")!.also).toContain("Tag");
   });
