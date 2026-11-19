@@ -14,6 +14,8 @@ import { day, when } from "./Portal";
 import { MergeDialog } from "./Merge";
 import { Queues } from "./Queues";
 import { Rail, type RailTicket } from "./Rail";
+import { relationKeys, Relations } from "./Relations";
+import { ArticlePicker, suggestKey } from "./ArticlePicker";
 import { ResolveDialog } from "./Resolve";
 import { Row } from "./Row";
 import { START, type Ticket } from "./inbox";
@@ -221,6 +223,11 @@ describe("the composer", () => {
     expect(html).toContain("Internal note");
   });
 
+  it("offers articles when the workspace has a knowledge base, and not otherwise", () => {
+    expect(draw({ articles: true })).toContain(">Articles<");
+    expect(draw()).not.toContain(">Articles<");
+  });
+
   it("names the copies a reply carries", () => {
     const html = draw({ cc: ["bob@shop.test", "eve@shop.test"] });
     expect(html).toContain("and copied to");
@@ -313,10 +320,128 @@ describe("the details beside a ticket", () => {
     expect(draw()).toContain("raj@acme.test");
   });
 
+  it("offers the workspace's own statuses when there are any, and not when there are none", () => {
+    const seeded = (statuses: unknown[], extra: Partial<RailTicket> = {}) => {
+      const qc = new QueryClient();
+      qc.setQueryData(["helpdesk", "statuses"], statuses);
+      return renderToStaticMarkup(
+        <QueryClientProvider client={qc}>
+          <MemoryRouter>
+            <Rail meta={{ name: "Ticket", linked_from: [] } as unknown as EntityMeta} t={{ ...t, ...extra }} me="priya@acme.test" people={[]} name={name} editable save={async () => {}} />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    };
+    const html = seeded([
+      { id: "s1", status_name: "Waiting on supplier", category: "On Hold", enabled: true },
+      { id: "s2", status_name: "Fixed in next release", category: "Resolved", enabled: true },
+    ]);
+    expect(html).toContain('id="hd-custom-status"');
+    expect(html).toContain("Waiting on supplier");
+    expect(html).not.toContain("Fixed in next release");
+    expect(seeded([])).not.toContain('id="hd-custom-status"');
+    expect(seeded([], { custom_status: "s9", _titles: { custom_status: "Old bucket" } })).toContain("Old bucket");
+  });
+
   it("changes nothing for someone who may not", () => {
     const html = page(<Rail meta={{ name: "Ticket" } as unknown as EntityMeta} t={t} me="priya@acme.test" people={[]} name={name} editable={false} save={async () => {}} />);
     expect(html).not.toContain("Assign to me");
     expect(html).toContain("disabled");
+  });
+});
+
+describe("related tickets", () => {
+  const draw = (t: Parameters<typeof Relations>[0]["t"], seed: (qc: QueryClient) => void, editable = true) => {
+    // A failed list stays failed when drawn (no fetch again on mount, as there is none on the server either).
+    const qc = new QueryClient({ defaultOptions: { queries: { retryOnMount: false } } });
+    seed(qc);
+    return renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <Relations t={t} editable={editable} save={async () => {}} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  };
+  const seeded = (qc: QueryClient) => {
+    qc.setQueryData(relationKeys.children("t1"), [{ id: "c1", number: "TKT-2", subject: "Pune office", status: "Open" }]);
+    qc.setQueryData(relationKeys.linkedHere("t1"), [{ id: "h1", number: "TKT-3", subject: "Links here", status: "Replied", links: [{ id: "r9", ticket: "t1" }] }]);
+    qc.setQueryData(relationKeys.linked(["l1"]), [{ id: "l1", number: "TKT-4", subject: "Linked from here", status: "Resolved" }]);
+  };
+  const parentOf = (qc: QueryClient) => {
+    qc.setQueryData(relationKeys.children("t1"), []);
+    qc.setQueryData(relationKeys.linkedHere("t1"), []);
+    qc.setQueryData(relationKeys.parent("p1"), { id: "p1", number: "TKT-1", subject: "Outage", status: "Open" });
+  };
+
+  it("shows the parent, the children and the links both ways", () => {
+    const html = draw({ id: "t1", links: [{ id: "r1", ticket: "l1" }] }, seeded);
+    for (const words of ["Related tickets", "Child tickets", "TKT-2", "Pune office", "Linked", "TKT-3", "Links here", "TKT-4", "Linked from here", "Resolved"]) expect(html).toContain(words);
+    const child = draw({ id: "t1", parent_ticket: "p1" }, parentOf);
+    expect(child).toContain("Parent");
+    expect(child).toContain("Outage");
+  });
+
+  it("offers no child ticket to a child", () => {
+    const html = draw({ id: "t1", parent_ticket: "p1" }, parentOf);
+    expect(html).not.toContain("New child ticket");
+    expect(html).toContain("Remove from its parent");
+    expect(draw({ id: "t1" }, seeded)).toContain("New child ticket");
+  });
+
+  it("shows nothing to change to someone who may only read", () => {
+    const html = draw({ id: "t1", links: [{ id: "r1", ticket: "l1" }] }, seeded, false);
+    expect(html).toContain("Pune office");
+    for (const words of ["New child ticket", "Link a ticket", "Remove"]) expect(html).not.toContain(words);
+  });
+
+  it("says when the lists could not be loaded", () => {
+    const html = draw({ id: "t1" }, (qc) => {
+      qc.getQueryCache().build(qc, { queryKey: relationKeys.children("t1") }).setState({ status: "error", error: new Error("down"), fetchStatus: "idle" });
+    });
+    expect(html).toContain("They could not be loaded.");
+  });
+
+  it("offers to split a customer's message, once", () => {
+    const feed = buildFeed(
+      {
+        ...story,
+        conversation: [
+          { id: "m1", author_kind: "Customer", body: "Also my invoice.", sent_at: "2026-11-01T10:00:00Z" },
+          { id: "m2", author_kind: "Agent", author: "priya@acme.test", body: "On it.", sent_at: "2026-11-01T10:05:00Z" },
+          { id: "m3", author_kind: "Agent", author: "priya@acme.test", body: "Note.", is_internal: true, sent_at: "2026-11-01T10:06:00Z" },
+          { id: "m4", author_kind: "Customer", body: "Split already.", sent_at: "2026-11-01T10:07:00Z", split_into: "TKT-2026-000042" },
+        ],
+      },
+      [],
+      name,
+    );
+    const html = page(<Conversation items={feed} filter="all" onFilter={() => {}} address={null} endRef={null} onSplit={() => {}} />);
+    expect(html.split("Split into a new ticket").length - 1).toBe(1);
+    expect(html).toContain("Split into TKT-2026-000042");
+    expect(page(<Conversation items={feed} filter="all" onFilter={() => {}} address={null} endRef={null} />)).not.toContain("Split into a new ticket");
+  });
+});
+
+describe("articles while replying", () => {
+  it("lists what fits and will not link an article only agents may read", () => {
+    const qc = new QueryClient();
+    qc.setQueryData(suggestKey("t1", ""), [
+      { id: "a1", title: "Clearing a printer jam", summary: "Open the rear tray", slug: "jam", visibility: "Internal" },
+      { id: "a2", title: "Warranty terms", summary: null, slug: "warranty", visibility: "Customers Only" },
+    ]);
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <ArticlePicker ticket="t1" onPick={() => {}} onClose={() => {}} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(html).toContain("Clearing a printer jam");
+    expect(html).toContain("Warranty terms");
+    expect(html).toContain("Agents only: it cannot be sent to a customer");
+    expect(html).toContain("Customers signed in");
+    expect(html).toContain('disabled=""');
   });
 });
 
@@ -328,6 +453,9 @@ describe("resolving", () => {
     expect(draw()).toContain("How it was resolved");
     expect(draw()).not.toContain("Also send this");
     expect(draw({ tell: "Ada" })).toContain("Also send this to Ada as a reply");
+    expect(draw()).not.toContain("Resolved as");
+    expect(draw({ resolvedAs: [{ id: "s2", status_name: "Fixed in next release" }] })).toContain("Fixed in next release");
+    expect(draw({ status: "Closed", resolvedAs: [{ id: "s2", status_name: "Fixed in next release" }] })).not.toContain("Resolved as");
   });
 
   it("warns that closing is final", () => {

@@ -47,6 +47,7 @@ pub(crate) async fn merge(hc: &mut HookCtx<'_>, survivor: &Doc, params: &Value) 
     let ent = hc.ctx.schema.entity("Ticket").ok_or_else(|| Error::NotFound("Ticket".into()))?;
     let (tenant, system, who, now) = (hc.ctx.tenant, sys(hc.ctx), hc.ctx.email.to_lowercase(), Utc::now());
     let mine = s(survivor, "number").unwrap_or("the surviving ticket").to_string();
+    let links = crate::child_table(hc.ctx, "Ticket", "links")?;
     let mut moved = 0u64;
     for number in &numbers {
         let mut find = QueryBuilder::new("select a.id from e_ticket a where a.tenant_id = ");
@@ -73,6 +74,38 @@ pub(crate) async fn merge(hc: &mut HookCtx<'_>, survivor: &Doc, params: &Value) 
         };
         if !same {
             return Err(bad("is another customer's: only tickets of one customer are merged"));
+        }
+        // Children and links come along; one level of parent and child stays one level.
+        if id(survivor, "parent_ticket") == Some(dup) {
+            return Err(bad("is this ticket's parent: merge the child into its parent instead"));
+        }
+        let has_children: bool = sqlx::query_scalar("select exists (select 1 from e_ticket where tenant_id = $1 and parent_ticket = $2)")
+            .bind(tenant)
+            .bind(dup)
+            .fetch_one(&mut **hc.tx)
+            .await?;
+        if has_children && id(survivor, "parent_ticket").is_some() {
+            return Err(bad("has child tickets, and this ticket is a child itself"));
+        }
+        sqlx::query("update e_ticket set parent_ticket = $1 where tenant_id = $2 and parent_ticket = $3")
+            .bind(keep)
+            .bind(tenant)
+            .bind(dup)
+            .execute(&mut **hc.tx)
+            .await?;
+        for statement in [
+            // The duplicate's own links: not to the survivor, not to what the survivor links already; the rest move.
+            format!(
+                "delete from {links} d where d.tenant_id = $2 and d.parent_id = $3 and (d.ticket = $1 or exists (select 1 from {links} k where k.tenant_id = d.tenant_id and k.parent_id = $1 and k.ticket = d.ticket))"
+            ),
+            format!("update {links} set parent_id = $1 where tenant_id = $2 and parent_id = $3"),
+            // Links to the duplicate: dropped where they would name the survivor twice or from itself, else they name the survivor.
+            format!(
+                "delete from {links} d where d.tenant_id = $2 and d.ticket = $3 and (d.parent_id = $1 or exists (select 1 from {links} k where k.tenant_id = d.tenant_id and k.parent_id = d.parent_id and k.ticket = $1))"
+            ),
+            format!("update {links} set ticket = $1 where tenant_id = $2 and ticket = $3"),
+        ] {
+            sqlx::query(AssertSqlSafe(statement)).bind(keep).bind(tenant).bind(dup).execute(&mut **hc.tx).await?;
         }
         let was = s(&d, "number").unwrap_or(number).to_string();
         moved +=
@@ -128,6 +161,14 @@ pub(crate) async fn merge(hc: &mut HookCtx<'_>, survivor: &Doc, params: &Value) 
         let values = json!({"status": "Closed", "merged_into": keep, "merged_at": now.to_rfc3339(), "merged_by": who, "resolution_details": format!("Merged into {mine}")});
         hc.kernel.update_tx(&system, hc.tx, "Ticket", dup, obj(values), None).await?;
     }
+    sqlx::query(AssertSqlSafe(format!(
+        "update {links} c set idx = r.n from (select id, row_number() over (order by idx, id) - 1 as n from {links} where tenant_id = $1 and parent_id = $2) r \
+         where c.tenant_id = $1 and c.id = r.id"
+    )))
+    .bind(tenant)
+    .bind(keep)
+    .execute(&mut **hc.tx)
+    .await?;
     // The conversation in time order, and what the inbox shows of the ticket worked out again from it.
     sqlx::query(
         "update e_ticket__conversation c set idx = r.n from (select id, row_number() over (order by sent_at, idx, id) - 1 as n from e_ticket__conversation \

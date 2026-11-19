@@ -81,6 +81,8 @@
     - {name: priority, type: select, options: [Low, Medium, High, Urgent], required: true, in_list: true}
     - {name: response_hours, type: decimal, label: Response Time (Hours), required: true, min: "0.01", max: "87600", in_list: true}
     - {name: resolution_hours, type: decimal, label: Resolution Time (Hours), required: true, min: "0.01", max: "87600", in_list: true}
+    - {name: next_reply_hours, type: decimal, label: Next Reply Time (Hours), min: "0.01", max: "87600", in_list: true, description: "Working time to answer each later message from the customer, after the first response; empty: no such clock"}
+    - {name: update_hours, type: decimal, label: Update the Customer Every (Hours), min: "0.01", max: "87600", in_list: true, description: "The longest a customer goes without a public message while the ticket is Open or On Hold; empty: no such clock"}
   rules:
     - {name: resolution_after_response, check: "doc.resolution_hours >= doc.response_hours", message: "The resolution time cannot be shorter than the response time"}
 
@@ -109,12 +111,13 @@
   kind: master
   module: support
   title_field: rule_name
-  description: "What happens when a ticket's agreement is at risk or breached. Rules fire in order of level, each at most once on a ticket, one per run of the SLA check."
+  description: "What happens when a ticket's agreement is at risk or breached, or when a condition holds. Rules fire in order of level, each at most once on a ticket, one per run of the check."
   fields:
     - {name: rule_name, type: data, label: Name, required: true, unique: true, in_list: true}
     - {name: enabled, type: check, default: true, in_list: true, in_filter: true}
     - {name: level, type: int, required: true, default: 1, min: 1, max: 9, in_list: true}
-    - {name: trigger, type: select, options: [At Risk, Breached], required: true, default: Breached, in_list: true}
+    - {name: trigger, type: select, options: [At Risk, Breached, Condition], required: true, default: Breached, in_list: true, description: "At Risk or Breached: the ticket's SLA status. Condition: the condition below alone decides"}
+    - {name: condition, type: code, required_if: "doc.trigger == 'Condition'", description: "CEL on the ticket, e.g. doc.reopen_count >= 2, or doc.next_reply_state == 'breached'. With At Risk or Breached it must hold as well; empty: every ticket the trigger fits"}
     - {name: priority, type: select, options: [Low, Medium, High, Urgent], in_list: true, description: "Tickets of this priority; empty: any"}
     - {name: team, type: link, to: SupportTeam, in_list: true, description: "Tickets of this team; empty: any"}
     - {name: assign_to, type: email, description: "Who takes the ticket over"}
@@ -152,11 +155,34 @@
     - {name: sent_at, type: datetime, default_expr: now, in_list: true}
     - {name: attachments, type: json, description: "Files sent with the message: [{id}] of files uploaded through /api/files (up to 10, 20 MB together). The server fills in each file's name and size"}
     - {name: merged_from, type: data, read_only: true, no_copy: true, label: Merged From, description: "The ticket this message came from, when its ticket was merged into this one"}
+    - {name: split_into, type: data, read_only: true, no_copy: true, label: Split Into, description: "The number of the ticket made from this message, when it was split off"}
     - {name: sender_unverified, type: check, read_only: true, no_copy: true, label: Sender Not Verified, description: "The mail server did not verify the sender of this message (it failed a check, or gave no result); not proof of forgery"}
     - {name: emailed, type: check, read_only: true, no_copy: true, description: "A reply that was emailed to the ticket's contact when it was sent (the address stays on the ticket, where a personal-data erasure reaches it)"}
     - {name: message_id, type: data, read_only: true, no_copy: true, hidden: true, description: "The mail's Message-ID, to thread a reply to it"}
     - {name: communication, type: data, read_only: true, no_copy: true, hidden: true, description: "The Mail message this one is (its id), when it came or went through Mail"}
     - {name: cc, type: text, read_only: true, no_copy: true, description: "Who else the message was copied to"}
+
+- name: TicketStatus
+  label: Ticket Status
+  label_plural: Ticket Statuses
+  kind: master
+  module: support
+  title_field: status_name
+  description: "A workspace's own name for where a ticket stands, inside one of the four working stages. The stage is what queues, service targets and reports read; this is what the team reads."
+  fields:
+    - {name: status_name, type: data, required: true, unique: true, in_list: true, max_length: 60}
+    - {name: category, type: select, label: Stage, options: [Open, Replied, On Hold, Resolved], required: true, in_list: true, in_filter: true, description: "The stage a ticket is in while it has this status. Open: waits for the team. Replied: waits for the customer. On Hold: parked. Resolved: done"}
+    - {name: enabled, type: check, default: true, in_list: true, in_filter: true, description: "Switched off, it can no longer be chosen; tickets that have it keep it"}
+    - {name: description, type: text}
+  rules:
+    - {name: not_a_stage, field: status_name, check: "!(lower(doc.status_name) in ['open', 'replied', 'on hold', 'resolved', 'closed'])", message: "That is a stage's own name: choose another"}
+  list: {columns: [status_name, category, enabled], sort: status_name asc}
+
+- name: TicketLink
+  label: Linked Ticket
+  kind: child
+  fields:
+    - {name: ticket, type: link, to: Ticket, required: true, in_list: true}
 
 - name: Ticket
   label: Ticket
@@ -170,6 +196,7 @@
     - {name: subject, type: data, required: true, in_list: true, max_length: 300}
     - {name: description, type: markdown}
     - {name: status, type: select, options: [Open, Replied, On Hold, Resolved, Closed], required: true, default: Open, in_list: true, in_filter: true, index: true}
+    - {name: custom_status, type: link, to: TicketStatus, label: Workspace Status, no_copy: true, in_filter: true, index: true, description: "The workspace's own status. Choosing one moves the ticket to its stage; a change of stage that no longer fits takes it off"}
     - {name: priority, type: select, options: [Low, Medium, High, Urgent], required: true, default: Medium, in_list: true, in_filter: true}
     - {name: ticket_type, type: link, to: TicketType, label: Type, in_filter: true}
     - {name: channel, type: select, options: [Email, Portal, Phone, Chat, Web Form], required: true, default: Email, in_filter: true}
@@ -192,6 +219,7 @@
     - {name: last_customer_message_at, type: datetime, read_only: true, no_copy: true, description: "When the customer last wrote"}
     - {name: last_agent_message_at, type: datetime, read_only: true, no_copy: true, description: "When the team last answered the customer (an internal note does not answer)"}
     - {name: last_message_preview, type: data, max_length: 200, read_only: true, no_copy: true, description: "The start of the latest message the customer could read, for the inbox"}
+    - {name: last_customer_message, type: text, max_length: 20000, read_only: true, no_copy: true, hidden: true, description: "The latest public message from the customer, whole; before any, the ticket's description. For conditions: doc.last_customer_message.contains('refund')"}
     - {name: support_contract, type: link, to: SupportContract, read_only: true, no_copy: true, in_filter: true}
     - {name: contract_sla, type: link, to: ServiceLevelAgreement, read_only: true, hidden: true, no_copy: true}
     - {name: entitlement, type: select, options: [Covered, Expired, Exhausted, None], read_only: true, no_copy: true, in_filter: true, description: "Whether a support contract covers this ticket, as of when it was opened"}
@@ -211,6 +239,16 @@
     - {name: resolution_hours, type: decimal, precision: 2, read_only: true, no_copy: true, description: "Working hours resolution took, pauses excluded"}
     - {name: response_state, type: select, options: [running, paused, met, met_late, breached], read_only: true, no_copy: true, in_filter: true, label: Response Target, description: "The platform's service target: the breach is recorded once and raises the ticket's updated event"}
     - {name: resolution_state, type: select, options: [running, paused, met, met_late, breached], read_only: true, no_copy: true, in_filter: true, label: Resolution Target}
+    - {name: next_reply_by, type: datetime, read_only: true, no_copy: true}
+    - {name: next_reply_state, type: select, options: [running, paused, met, met_late, breached], read_only: true, no_copy: true, in_filter: true, label: Next Reply Target}
+    - {name: update_by, type: datetime, read_only: true, no_copy: true}
+    - {name: update_state, type: select, options: [running, paused, met, met_late, breached], read_only: true, no_copy: true, in_filter: true, label: Customer Update Target}
+    - {name: next_reply_breached, type: check, read_only: true, no_copy: true, in_filter: true, description: "A later reply was late at least once on this ticket"}
+    - {name: update_breached, type: check, read_only: true, no_copy: true, in_filter: true, description: "The customer went without an update too long at least once on this ticket"}
+    - {name: next_reply_secs, type: int, read_only: true, no_copy: true, hidden: true}
+    - {name: update_secs, type: int, read_only: true, no_copy: true, hidden: true}
+    - {name: reply_owed_since, type: datetime, read_only: true, no_copy: true, in_filter: true, label: Reply Owed Since, description: "When the customer wrote the oldest message nobody has answered yet; empty: nothing is owed"}
+    - {name: update_from, type: datetime, read_only: true, no_copy: true, hidden: true, description: "The latest public message of either side, which the customer-update clock counts from"}
     - {name: response_secs, type: int, read_only: true, no_copy: true, hidden: true, description: "Seconds of working time the agreement gives for a first response to this ticket's priority"}
     - {name: resolution_secs, type: int, read_only: true, no_copy: true, hidden: true}
     - {name: sla_calendar, type: data, read_only: true, no_copy: true, hidden: true, description: "The working calendar of the agreement that applies, which both targets count on; empty: helpdesk_hours"}
@@ -224,6 +262,8 @@
     - {name: channel_address, type: link, to: SupportAddress, read_only: true, no_copy: true, in_filter: true, label: Support Address, description: "The support address the customer wrote to"}
     - {name: cc, type: text, no_copy: true, label: Copied, description: "Addresses copied on the customer's mail; replies to the customer are copied to them too"}
     - {name: related_ticket, type: link, to: Ticket, read_only: true, no_copy: true, label: Follows Up, description: "The closed ticket this one continues: mail arrived on a ticket that was closed"}
+    - {name: parent_ticket, type: link, to: Ticket, label: Parent Ticket, no_copy: true, in_filter: true, index: true, description: "The ticket this one is a part of. A parent cannot be resolved while a child is open; a child has no children of its own"}
+    - {name: links, type: table, of: TicketLink, label: Linked Tickets, no_copy: true, description: "Tickets related to this one. A link is kept on the ticket where it was made and found from both"}
     - {name: language, type: data, max_length: 35, in_filter: true, description: "The customer's language (a tag such as en or hi): assignment rules can look for agents who speak it"}
     - {name: routed_by, type: link, to: TicketAssignmentRule, read_only: true, no_copy: true}
     - {name: routed_at, type: datetime, read_only: true, no_copy: true}
@@ -232,13 +272,14 @@
     - {name: survey_sent_at, type: datetime, read_only: true, no_copy: true}
     - {name: rated_at, type: datetime, read_only: true, no_copy: true}
   form:
-    - {label: Ticket, fields: [subject, status, priority, ticket_type, channel, description]}
+    - {label: Ticket, fields: [subject, status, custom_status, priority, ticket_type, channel, description]}
     - {label: Customer, fields: [customer, customer_name, contact_name, contact_email, cc]}
     - {label: Assignment, fields: [team, assigned_to, language]}
     - {label: Conversation, fields: [conversation]}
+    - {label: Related, collapsible: true, fields: [parent_ticket, links, related_ticket, merged_into]}
     - {label: Resolution, fields: [resolution_details, satisfaction_rating, feedback]}
     - {label: Entitlement, collapsible: true, fields: [support_contract, entitlement, entitlement_approval, entitlement_decided_by, entitlement_reason]}
-    - {label: Service Level, collapsible: true, fields: [escalation_level, escalated_at, service_level_agreement, sla_status, response_by, resolution_by, response_breached, resolution_breached, opened_at, first_responded_at, resolved_at, closed_at, first_response_hours, resolution_hours, response_state, resolution_state]}
+    - {label: Service Level, collapsible: true, fields: [escalation_level, escalated_at, service_level_agreement, sla_status, response_by, resolution_by, response_breached, resolution_breached, opened_at, first_responded_at, resolved_at, closed_at, first_response_hours, resolution_hours, response_state, resolution_state, next_reply_state, next_reply_by, update_state, update_by]}
     - {label: Product, collapsible: true, fields: [item, serial_no, sales_invoice]}
   actions:
     - {name: merge_tickets, label: Merge Tickets Into This One, permission: write, condition: "doc.status != 'Closed'",
@@ -253,6 +294,30 @@
        params: [{name: rating, label: "How did we do? (1 to 5)", type: int, required: true, description: "1 is poor, 5 is excellent"}, {name: feedback, label: Comment, type: text}],
        contract: {effect: transactional_action, completion: "The rating and comment are kept on the ticket, once; a low rating has reopened it or told the lead where Support Settings say so",
                   returns: {type: object, properties: {rated: {type: integer}}}}}
+    - name: suggest_articles
+      label: Suggest Articles
+      permission: read
+      read_only: true
+      hidden: true
+      params:
+        - {name: q, label: Words, type: data, description: "What to look for; the ticket's subject and the customer's latest message when empty"}
+      contract:
+        effect: query
+        completion: "Up to eight published articles that fit the words, the best fit first, among those the caller may read; nothing is changed, and no view is counted"
+        returns: {type: object, properties: {articles: {type: array, items: {type: object, properties: {
+          id: {type: string, format: uuid, "x-ferrum-link": KbArticle}, title: {type: string}, summary: {type: [string, "null"]},
+          slug: {type: [string, "null"]}, visibility: {type: string}, category: {type: [string, "null"]}}}}}}
+    - name: split_message
+      label: Split a Message Into a New Ticket
+      permission: write
+      condition: "doc.status != 'Closed'"
+      params:
+        - {name: message, label: Message, type: data, required: true, description: "The id of a public message from the customer in this ticket's conversation"}
+        - {name: subject, label: Subject, type: data, description: "The new ticket's subject; the start of the message when empty"}
+      contract:
+        effect: transactional_action
+        completion: "A new ticket holds the message as its description, for the same customer and contact, linked to this one, and the message is marked with its number, committed with this receipt"
+        returns: {type: object, properties: {entity: {type: string}, id: {type: string, format: uuid, "x-ferrum-link": Ticket}, number: {type: [string, "null"]}}}
     - {name: make_warranty_claim, label: Create Warranty Claim, permission: write, condition: "doc.item != null && doc.customer != null",
        contract: {effect: transactional_action, completion: "A warranty claim for the ticket's customer and item exists and names this ticket, committed with this receipt",
                   returns: {type: object, properties: {entity: {type: string}, id: {type: string, format: uuid, "x-ferrum-link": WarrantyClaim}, number: {type: [string, "null"]}}}}}
@@ -269,6 +334,13 @@
        met_when: "!isEmpty(doc.first_responded_at)", due_field: response_by, state_field: response_state}
     - {name: resolve, label: Resolution, calendar: helpdesk_hours, calendar_field: sla_calendar, start_field: sla_start, within: "doc.resolution_secs > 0 ? 'PT' + string(doc.resolution_secs) + 'S' : ''", pause_when: "(doc.status == 'On Hold' && doc.sla_pause_hold) || (doc.status == 'Replied' && doc.sla_pause_replied)",
        met_when: "doc.status == 'Resolved' || doc.status == 'Closed'", due_field: resolution_by, state_field: resolution_state}
+    - {name: next_reply, label: Next Reply, calendar: helpdesk_hours, calendar_field: sla_calendar, start_field: reply_owed_since, start_when: "!isEmpty(doc.reply_owed_since)",
+       within: "doc.next_reply_secs > 0 ? 'PT' + string(doc.next_reply_secs) + 'S' : ''", pause_when: "(doc.status == 'On Hold' && doc.sla_pause_hold) || (doc.status == 'Replied' && doc.sla_pause_replied)",
+       met_when: "isEmpty(doc.reply_owed_since)", due_field: next_reply_by, state_field: next_reply_state}
+    # No pause_when on purpose: every public message moves update_from, and re-anchoring a round is only right when it never paused.
+    - {name: update, label: Customer Update, calendar: helpdesk_hours, calendar_field: sla_calendar, start_field: update_from, start_when: "!isEmpty(doc.update_from) && (doc.status == 'Open' || doc.status == 'On Hold')",
+       within: "doc.update_secs > 0 ? 'PT' + string(doc.update_secs) + 'S' : ''",
+       met_when: "doc.status == 'Replied' || doc.status == 'Resolved' || doc.status == 'Closed'", due_field: update_by, state_field: update_state}
   list: {columns: [number, subject, customer_name, priority, status, assigned_to, sla_status], sort: opened_at desc}
 
 - name: SavedReply
@@ -307,6 +379,17 @@
     - {name: is_group, type: check, in_list: true}
     - {name: description, type: text}
 
+- name: KbArticleVersion
+  label: Published Version
+  kind: child
+  fields:
+    - {name: version_no, type: int, label: Version, in_list: true}
+    - {name: published_at, type: datetime, in_list: true}
+    - {name: published_by, type: email, in_list: true}
+    - {name: title, type: data, max_length: 300, in_list: true}
+    - {name: summary, type: data, max_length: 300}
+    - {name: content, type: markdown}
+
 - name: KbArticle
   label: Knowledge Base Article
   kind: master
@@ -325,6 +408,9 @@
        description: "Internal: agents only. Customers Only: signed-in customers in the portal. Public: the help centre page, to anyone (when published)"}
     - {name: slug, type: data, max_length: 120, unique: true, read_only: true, no_copy: true, description: "The article's address in the help centre, made from its title"}
     - {name: summary, type: data, max_length: 300, description: "A line for the help centre's list and for search engines"}
+    - {name: language, type: data, max_length: 35, in_list: true, in_filter: true, required_if: "doc.translation_of != null", description: "The language it is written in, as a tag such as en or hi-IN; empty: the workspace's own"}
+    - {name: translation_of, type: link, to: KbArticle, label: Translation Of, no_copy: true, in_filter: true, index: true, description: "The article this one translates. A reader is offered one of them, in their language when there is one"}
+    - {name: versions, type: table, of: KbArticleVersion, label: Published Versions, read_only: true, no_copy: true, description: "What was published each time, oldest first; the latest 50 are kept"}
     - {name: views, type: int, default: 0, read_only: true, no_copy: true, label: Views}
   actions:
     - {name: mark_helpful, label: Helpful, permission: read, condition: "doc.status == 'Published'",
@@ -333,6 +419,15 @@
     - {name: mark_not_helpful, label: Not Helpful, permission: read, condition: "doc.status == 'Published'",
        contract: {effect: transactional_action, completion: "The article's not-helpful count is one higher",
                   returns: {type: object, properties: {not_helpful_count: {type: integer}}}}}
+    - name: restore_version
+      label: Restore a Published Version
+      permission: write
+      params: [{name: version, label: Version, type: int, required: true, description: "The version's number"}]
+      contract:
+        effect: transactional_action
+        completion: "The article's title, summary and text are that version's, saved as the caller under the article's own rules; if it is published, this is its newest version. Nothing is removed"
+        returns: {type: object, properties: {restored: {type: integer}, version_no: {type: [integer, "null"], description: "The newest version's number after the restore"}}}
+  unique: [[translation_of, language]]
   list: {columns: [number, title, category, status, helpful_count], sort: title asc}
 
 - name: WarrantyClaim

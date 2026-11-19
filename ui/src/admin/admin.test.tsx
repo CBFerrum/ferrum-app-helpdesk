@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AdminRoute } from "./Admin";
 import { BrandPreview } from "./Brands";
 
-const ENTITIES = ["SupportBrand", "ServiceLevelAgreement", "SupportAddress", "InboundLog", "AgentProfile", "TicketTag", "TagRule", "TicketAssignmentRule", "SupportMacro", "SupportSettings", "SupportTeam", "TicketType"];
+const ENTITIES = ["SupportBrand", "ServiceLevelAgreement", "SupportAddress", "InboundLog", "AgentProfile", "TicketTag", "TagRule", "TicketAssignmentRule", "SupportMacro", "SupportSettings", "SupportTeam", "TicketType", "TicketStatus"];
 const ALL = { read: "all", write: "all", create: "all", delete: "all" };
 
 function draw(path: string, seed: (qc: QueryClient) => void = () => {}, perms: Record<string, string> = ALL) {
@@ -189,6 +189,19 @@ describe("agent profiles", () => {
     expect(html).toContain("billing");
     expect(html).toContain(">hi<");
     expect(html).toContain("day-shift");
+  });
+});
+
+describe("statuses", () => {
+  it("draws the section with its empty text", () => {
+    const html = draw("/admin/statuses", rows("TicketStatus", "status_name asc", []));
+    expect(html).toContain("Statuses");
+    expect(html).toContain("No statuses of your own yet. Tickets use the five built-in stages.");
+  });
+  it("lists each status with its stage", () => {
+    const html = draw("/admin/statuses", rows("TicketStatus", "status_name asc", [{ status_name: "Waiting on supplier", category: "On Hold", enabled: true }]));
+    expect(html).toContain("Waiting on supplier");
+    expect(html).toContain("On Hold");
   });
 });
 

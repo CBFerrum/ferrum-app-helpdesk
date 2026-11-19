@@ -12,6 +12,7 @@ import { Alert, Badge, Button, confirmDialog, Icon, Menu, MenuItem, placed, Read
 import { can, type Doc, type EntityMeta, useEntityMeta, useMe, useMetaIndex, useRecord } from "@ferrum/records";
 import { MacroPicker } from "./MacroPicker";
 import { MergeDialog, type Merged } from "./Merge";
+import { SplitDialog } from "./Relations";
 import { SignatureDialog } from "./Signature";
 import type { MergeTicket } from "./duplicates";
 import { Composer, type Mode, type Outgoing } from "./Composer";
@@ -19,8 +20,8 @@ import type { Current } from "./macros";
 import { copyList } from "./copywords";
 import { Conversation } from "./Conversation";
 import { type AuditEvent, buildFeed, type FeedFilter, type Message, type Story, whatChanged } from "./feed";
-import { prefersReducedMotion, useMedia, useNames, useQuiet } from "./hooks";
-import { type Carried, inboxLink, initials, requester } from "./inbox";
+import { prefersReducedMotion, useMedia, useNames, useQuiet, useStatuses } from "./hooks";
+import { type Carried, inboxLink, initials, requester, statusName } from "./inbox";
 import { command, isTyping } from "./keys";
 import { Rail, type RailTicket } from "./Rail";
 import { ResolveDialog, type Resolution } from "./Resolve";
@@ -89,6 +90,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
   const [asked] = useSearchParams();
   const me = useMe().data?.user;
   const { name, people } = useNames();
+  const statuses = useStatuses();
   const index = useMetaIndex().data;
   const { record, save } = useRecord(meta, id);
   const t = record.data as TicketDoc | undefined;
@@ -97,6 +99,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
   const [resolving, setResolving] = useState<"Resolved" | "Closed" | null>(null);
   const [deciding, setDeciding] = useState<Decision | null>(null);
   const [merging, setMerging] = useState(false);
+  const [splitting, setSplitting] = useState<string | null>(null);
   const [help, setHelp] = useState(false);
   const [macros, setMacros] = useState(false);
   const [signing, setSigning] = useState(false);
@@ -247,7 +250,12 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
   const finish = async (r: Resolution): Promise<boolean> => {
     if (!t || !resolving) return false;
     const reply = r.reply ? [{ author_kind: "Agent", body: r.resolution, is_internal: false }] : [];
-    const saved = await write({ status: resolving, resolution_details: r.resolution, ...(reply.length ? { conversation: [...existing(), ...reply] } : {}) });
+    const saved = await write({
+      status: resolving,
+      resolution_details: r.resolution,
+      ...(r.custom_status ? { custom_status: r.custom_status } : {}),
+      ...(reply.length ? { conversation: [...existing(), ...reply] } : {}),
+    });
     if (!saved) return false;
     toast(r.reply ? `${resolving}. ${sentNote(saved, false)}` : resolving);
     // The next ticket of the list is the next job.
@@ -309,6 +317,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
 
   const showRail = railChoice ?? wide;
   const hasReplies = !!index?.entities.some((e) => e.name === "SavedReply");
+  const hasArticles = !!index?.entities.some((e) => e.name === "KbArticle");
   const hasMacros = !!index?.entities.some((e) => e.name === "SupportMacro") && meta.actions.some((a) => a.name === "apply_macro");
   const owner = t.assigned_to && t.assigned_to.toLowerCase() !== me.email.toLowerCase() ? name(t.assigned_to) : null;
   const who = requester(t);
@@ -356,7 +365,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
           </p>
           <h1 className="page-title">{t.subject || tr("No subject")}</h1>
           <p className="row">
-            <Badge tone={STATUS_TONES[status] ?? "neutral"}>{isolate(status)}</Badge>
+            <Badge tone={STATUS_TONES[status] ?? "neutral"}>{isolate(statusName(t))}</Badge>
             {t.priority && t.priority !== "Medium" && <Badge tone={PRIORITY_TONES[t.priority] ?? "neutral"}>{isolate(t.priority)}</Badge>}
             {t.assigned_to ? (
               <span className="hd-owner" title={t.assigned_to}>
@@ -512,7 +521,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
       <div className="hd-ws-body" data-rail={showRail || undefined}>
         <div className="hd-ws-main">
           {audit.error && <p className="faint">{tr("What happened to the ticket could not be loaded; the conversation is complete.")}</p>}
-          <Conversation items={feed} filter={filter} onFilter={setFilter} address={t.contact_email ?? null} endRef={feedEnd} />
+          <Conversation items={feed} filter={filter} onFilter={setFilter} address={t.contact_email ?? null} endRef={feedEnd} onSplit={writable ? (m) => setSplitting(m.id) : undefined} />
           {writable ? (
             <Composer
               ticket={id}
@@ -527,6 +536,7 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
               onMacros={hasMacros ? () => setMacros(true) : undefined}
               onSignature={() => setSigning(true)}
               replies={hasReplies}
+              articles={hasArticles}
               conflict={conflict}
               onSend={send}
             />
@@ -542,8 +552,19 @@ function Workspace({ meta, id }: { meta: EntityMeta; id: string }) {
         status={resolving ?? "Resolved"}
         what={t.number ?? tr("the ticket")}
         tell={t.contact_email ? (t.contact_name ?? t.contact_email) : null}
+        resolvedAs={(statuses.data ?? []).filter((s) => s.enabled !== false && s.category === "Resolved")}
         onClose={() => setResolving(null)}
         onSubmit={finish}
+      />
+      <SplitDialog
+        ticket={id}
+        message={splitting}
+        onClose={() => setSplitting(null)}
+        onDone={(made) => {
+          toast(tr("Ticket {number} made from the message", { number: made.number ?? "" }));
+          refresh();
+          void qc.invalidateQueries({ queryKey: ["helpdesk", "linked-here", id] });
+        }}
       />
       <MergeDialog
         open={merging}

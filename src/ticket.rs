@@ -14,7 +14,7 @@ use ferrum_domain::flow::created;
 use ferrum_domain::util::{b, d, get, id, rows, s, set, sys};
 use ferrum_kernel::value::parse_datetime;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, Filter, HookCtx, Kernel, Result, Tx, notify, outbox, store};
-use ferrum_meta::Expr;
+use ferrum_meta::{Expr, Scope};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use serde_json::{Value, json};
@@ -64,8 +64,17 @@ pub struct Sla {
     pause_on_replied: bool,
     /// The working calendar its targets count on, when it names one the workspace has.
     calendar: Option<String>,
-    /// priority → (response, resolution) in seconds of working time.
-    targets: HashMap<String, (i64, i64)>,
+    /// priority → what it promises, in seconds of working time.
+    targets: HashMap<String, Promise>,
+}
+
+/// One priority's targets, in seconds of working time; the next reply and the customer update are optional.
+#[derive(Clone, Copy)]
+struct Promise {
+    response: i64,
+    resolution: i64,
+    next_reply: Option<i64>,
+    update: Option<i64>,
 }
 
 fn hours_to_secs(h: Decimal) -> i64 {
@@ -76,7 +85,16 @@ impl Sla {
     fn from_doc(doc: &Doc, calendars: &std::collections::BTreeSet<String>) -> Option<Sla> {
         let targets = rows(doc, "priorities")
             .iter()
-            .filter_map(|r| Some((s(r, "priority")?.to_string(), (hours_to_secs(d(r, "response_hours")), hours_to_secs(d(r, "resolution_hours"))))))
+            .filter_map(|r| {
+                let optional = |f: &str| r.get(f).filter(|v| !v.is_null()).map(|_| hours_to_secs(d(r, f)));
+                let promise = Promise {
+                    response: hours_to_secs(d(r, "response_hours")),
+                    resolution: hours_to_secs(d(r, "resolution_hours")),
+                    next_reply: optional("next_reply_hours"),
+                    update: optional("update_hours"),
+                };
+                Some((s(r, "priority")?.to_string(), promise))
+            })
             .collect();
         Some(Sla {
             id: id(doc, "id")?,
@@ -139,10 +157,12 @@ pub fn policy_fields(slas: &[Sla], groups: &[Uuid], doc: &Doc) -> Doc {
     let mut out = Doc::new();
     let priority = s(doc, "priority").unwrap_or("Medium");
     match pick(slas, doc, groups).and_then(|x| x.targets.get(priority).map(|t| (x, *t))) {
-        Some((x, (response, resolution))) => {
+        Some((x, p)) => {
             out.insert("service_level_agreement".into(), json!(x.id.to_string()));
-            out.insert("response_secs".into(), json!(response));
-            out.insert("resolution_secs".into(), json!(resolution));
+            out.insert("response_secs".into(), json!(p.response));
+            out.insert("resolution_secs".into(), json!(p.resolution));
+            out.insert("next_reply_secs".into(), json!(p.next_reply));
+            out.insert("update_secs".into(), json!(p.update));
             out.insert("sla_pause_hold".into(), json!(x.pause_on_hold));
             out.insert("sla_pause_replied".into(), json!(x.pause_on_replied));
             out.insert("sla_calendar".into(), x.calendar.as_ref().map_or(Value::Null, |c| json!(c)));
@@ -151,6 +171,8 @@ pub fn policy_fields(slas: &[Sla], groups: &[Uuid], doc: &Doc) -> Doc {
             out.insert("service_level_agreement".into(), Value::Null);
             out.insert("response_secs".into(), Value::Null);
             out.insert("resolution_secs".into(), Value::Null);
+            out.insert("next_reply_secs".into(), Value::Null);
+            out.insert("update_secs".into(), Value::Null);
             out.insert("sla_pause_hold".into(), json!(false));
             out.insert("sla_pause_replied".into(), json!(false));
             out.insert("sla_calendar".into(), Value::Null);
@@ -259,6 +281,32 @@ impl DocHook for TeamHook {
             .map(|(i, _)| FieldError::new("agent", "is already a member").in_row("members", i))
             .collect();
         if errors.is_empty() { Ok(()) } else { Err(Error::Validation(errors)) }
+    }
+}
+
+// ───────────────────────────── a workspace's own statuses ─────────────────────────────
+
+/// A workspace status, read as the system (`None` when there is none).
+async fn custom_status(hc: &mut HookCtx<'_>, status: Uuid) -> Result<Option<Doc>> {
+    linked(hc.kernel, &sys(hc.ctx), hc.tx, "TicketStatus", status).await
+}
+
+/// A status keeps its stage while a ticket has it: the ticket's status would no longer be the status's stage.
+pub struct StatusHook;
+
+#[async_trait]
+impl DocHook for StatusHook {
+    async fn validate(&self, hc: &mut HookCtx<'_>, doc: &Doc) -> Result<()> {
+        let (Some(old), Some(status)) = (stored(hc, doc).await?, id(doc, "id")) else { return Ok(()) };
+        if s(&old, "category") == s(doc, "category") {
+            return Ok(());
+        }
+        let used: bool = sqlx::query_scalar("select exists (select 1 from e_ticket where tenant_id = $1 and custom_status = $2)")
+            .bind(hc.ctx.tenant)
+            .bind(status)
+            .fetch_one(&mut **hc.tx)
+            .await?;
+        if used { Err(Error::field("category", "tickets have this status: add a new status for the other stage")) } else { Ok(()) }
     }
 }
 
@@ -398,10 +446,103 @@ async fn decide_outside_entitlement(hc: &mut HookCtx<'_>, doc: &Doc, approve: bo
 }
 
 /// The start of a message on one line, for the inbox's list.
-fn preview(text: &str) -> String {
+pub(crate) fn preview(text: &str) -> String {
     let flat: String = text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
     let line = flat.split_whitespace().collect::<Vec<_>>().join(" ");
     if line.chars().count() <= 140 { line } else { format!("{}…", line.chars().take(139).collect::<String>().trim_end()) }
+}
+
+/// Where the next-reply and customer-update targets start, from the conversation: `reply_owed_since`, the oldest public
+/// customer message no public reply has followed (once the ticket has had its first response; a second message does not
+/// move it), and `update_from`, the latest public message of either side, not before the first response or a reopening.
+fn conversation_clocks(doc: &mut Doc, status: &str) {
+    let public: Vec<(bool, Ts)> = rows(doc, "conversation")
+        .iter()
+        .filter(|m| !b(m, "is_internal"))
+        .filter_map(|m| Some((s(m, "author_kind") == Some("Customer"), ts(m, "sent_at")?)))
+        .collect();
+    let first = ts(doc, "first_responded_at");
+    let agent_last = public.iter().filter(|(c, _)| !c).map(|(_, t)| *t).max();
+    let owed = match first {
+        Some(f) if !matches!(status, "Resolved" | "Closed") => {
+            let after = agent_last.map_or(f, |a| a.max(f));
+            public.iter().filter(|(c, t)| *c && *t > after).map(|(_, t)| *t).min()
+        }
+        _ => None,
+    };
+    let from = first.map(|f| public.iter().map(|(_, t)| *t).chain([f]).chain(ts(doc, "sla_start")).max().unwrap_or(f));
+    set(doc, "reply_owed_since", owed.map_or(Value::Null, ts_value));
+    set(doc, "update_from", from.map_or(Value::Null, ts_value));
+}
+
+/// A ticket's parent, children and links. The parent is read under its row lock, and a parent's own save holds that lock
+/// while it reads its children: a child is never put under a resolved parent, and a parent never resolved over an open child.
+/// One level only (a child has no children), so there is no cycle to look for.
+async fn related(hc: &mut HookCtx<'_>, doc: &Doc, old: Option<&Doc>, errors: &mut Vec<FieldError>) -> Result<()> {
+    let me = id(doc, "id");
+    let status = s(doc, "status").unwrap_or("Open");
+    if let Some(p) = id(doc, "parent_ticket")
+        && old.is_none_or(|o| id(o, "parent_ticket") != Some(p))
+    {
+        let bad = |m: &str| FieldError::new("parent_ticket", m);
+        // A ticket as its own parent is the platform's refusal ("a record cannot be its own parent").
+        if me != Some(p) {
+            match hc.kernel.get_tx(&sys(hc.ctx), hc.tx, "Ticket", p, true).await {
+                Err(Error::NotFound(_)) => errors.push(bad("there is no such ticket")),
+                Err(e) => return Err(e),
+                Ok(parent) => {
+                    let has_children = match me {
+                        Some(me) => {
+                            sqlx::query_scalar("select exists (select 1 from e_ticket where tenant_id = $1 and parent_ticket = $2)")
+                                .bind(hc.ctx.tenant)
+                                .bind(me)
+                                .fetch_one(&mut **hc.tx)
+                                .await?
+                        }
+                        None => false,
+                    };
+                    if id(&parent, "parent_ticket").is_some() {
+                        errors.push(bad("is a child ticket itself: a child has no children"));
+                    } else if has_children {
+                        errors.push(bad("has child tickets: it cannot become a child"));
+                    } else if OPEN.contains(&status) && matches!(s(&parent, "status"), Some("Resolved" | "Closed")) {
+                        errors.push(bad("is resolved: reopen it first"));
+                    }
+                }
+            }
+        }
+    }
+    let finishing = |st: Option<&str>| matches!(st, Some("Resolved" | "Closed"));
+    if let Some(me) = me
+        && finishing(Some(status))
+        && !old.is_some_and(|o| finishing(s(o, "status")))
+    {
+        let open: Vec<String> = sqlx::query_scalar(
+            "select coalesce(number, id::text) from e_ticket where tenant_id = $1 and parent_ticket = $2 and status = any($3) order by number limit 5",
+        )
+        .bind(hc.ctx.tenant)
+        .bind(me)
+        .bind(&OPEN[..])
+        .fetch_all(&mut **hc.tx)
+        .await?;
+        if !open.is_empty() {
+            errors.push(FieldError::new("status", format!("waits for its child tickets: {}", open.join(", "))));
+        }
+    }
+    let links = rows(doc, "links");
+    if links.len() > 50 {
+        errors.push(FieldError::new("links", "at most 50 linked tickets"));
+    }
+    let mut seen = HashSet::new();
+    for (i, l) in links.iter().enumerate() {
+        let Some(other) = id(l, "ticket") else { continue };
+        if Some(other) == me {
+            errors.push(FieldError::new("ticket", "a ticket is not linked to itself").in_row("links", i));
+        } else if !seen.insert(other) {
+            errors.push(FieldError::new("ticket", "is linked already").in_row("links", i));
+        }
+    }
+    Ok(())
 }
 
 /// The stored version of the document being saved (`None` while it is being created).
@@ -432,6 +573,20 @@ impl DocHook for TicketHook {
             } else {
                 Ok(())
             };
+        }
+
+        // A workspace's own status chosen in this save moves the ticket to its stage (it wins over a status sent with it).
+        let mut chosen: Option<String> = None;
+        if let Some(cs) = id(doc, "custom_status")
+            && old.as_ref().is_none_or(|o| id(o, "custom_status") != Some(cs))
+        {
+            let st = custom_status(hc, cs).await?.ok_or_else(|| Error::field("custom_status", "there is no such status"))?;
+            if !b(&st, "enabled") {
+                return Err(Error::field("custom_status", "is switched off"));
+            }
+            let category = s(&st, "category").unwrap_or("Open").to_string();
+            set(doc, "status", category.as_str());
+            chosen = Some(category);
         }
 
         // (The secret in the mail sent about the ticket is kept nowhere: its hash is recorded when the ticket is made and
@@ -491,6 +646,15 @@ impl DocHook for TicketHook {
         let last = sent.iter().filter(|m| !b(m, "is_internal")).max_by_key(|m| ts(m, "sent_at")).and_then(|m| s(m, "body")).or(s(doc, "description"));
         let line = last.map(preview).filter(|p| !p.is_empty());
         set(doc, "last_message_preview", line.map_or(Value::Null, Value::String));
+        // The customer's latest words, whole, for conditions (tag and escalation rules, the workspace's automations).
+        let words = sent
+            .iter()
+            .filter(|m| !b(m, "is_internal") && s(m, "author_kind") == Some("Customer"))
+            .max_by_key(|m| ts(m, "sent_at"))
+            .and_then(|m| s(m, "body"))
+            .or(s(doc, "description"))
+            .map(str::to_string);
+        set(doc, "last_customer_message", words.map_or(Value::Null, Value::String));
 
         // The status follows the conversation unless this save sets it: a customer reply reopens,
         // the first public agent reply on an open ticket marks it replied.
@@ -512,6 +676,17 @@ impl DocHook for TicketHook {
             if id(doc, "customer").is_some() && s(doc, "entitlement") != Some("Covered") && holds_outside_entitlement(hc).await? {
                 set(doc, "status", "On Hold");
                 set(doc, "entitlement_approval", "Waiting");
+            }
+        }
+        // A workspace status belongs to the ticket's stage (or to Resolved once it is Closed): a stage it no longer fits takes it off.
+        if let Some(cs) = id(doc, "custom_status") {
+            let category = match chosen {
+                Some(c) => Some(c),
+                None => custom_status(hc, cs).await?.and_then(|st| s(&st, "category").map(str::to_string)),
+            };
+            let status = s(doc, "status").unwrap_or("Open");
+            if !category.is_some_and(|c| c == status || (status == "Closed" && c == "Resolved")) {
+                set(doc, "custom_status", Value::Null);
             }
         }
         let status = s(doc, "status").unwrap_or("Open").to_string();
@@ -577,6 +752,7 @@ impl DocHook for TicketHook {
         if reopened || ts(doc, "sla_start").is_none() {
             set(doc, "sla_start", ts_value(if reopened { Utc::now().max(opened) } else { opened }));
         }
+        conversation_clocks(doc, &status);
         Ok(())
     }
 
@@ -658,6 +834,7 @@ impl DocHook for TicketHook {
         if rated && !matches!(s(doc, "status"), Some("Resolved" | "Closed")) {
             errors.push(FieldError::new("satisfaction_rating", "can be given once the ticket is resolved"));
         }
+        related(hc, doc, old.as_ref(), &mut errors).await?;
         if errors.is_empty() { Ok(()) } else { Err(Error::Validation(errors)) }
     }
 
@@ -672,11 +849,17 @@ impl DocHook for TicketHook {
         if name == "rate" {
             return crate::survey::rate(hc, doc, params).await.map(Some);
         }
+        if name == "suggest_articles" {
+            return crate::help::suggest(hc, doc, params).await.map(Some);
+        }
         if name == "apply_macro" {
             return crate::macros::apply(hc, doc, params).await.map(Some);
         }
         if name == "merge_tickets" {
             return crate::merge::merge(hc, doc, params).await.map(Some);
+        }
+        if name == "split_message" {
+            return crate::split::split(hc, doc, params).await.map(Some);
         }
         if name != "make_warranty_claim" {
             return Ok(None);
@@ -781,7 +964,9 @@ pub async fn verdicts(tx: &mut Tx, tenant: Uuid, only: Option<Uuid>) -> Result<V
            select t.id, \
              case \
                when t.response_state is null and t.resolution_state is null then null \
-               when t.response_state in ('breached', 'met_late') or t.resolution_state in ('breached', 'met_late') then 'Breached' \
+               when t.response_state in ('breached', 'met_late') or t.resolution_state in ('breached', 'met_late') \
+                 or t.next_reply_state in ('breached', 'met_late') or t.update_state in ('breached', 'met_late') \
+                 or coalesce(t.next_reply_breached, false) or coalesce(t.update_breached, false) then 'Breached' \
                when t.resolution_state = 'met' then 'Fulfilled' \
                when exists (select 1 from record_target r where r.tenant_id = t.tenant_id and r.entity = 'Ticket' and r.record_id = t.id and r.started_at is not null \
                               and r.met_at is null and r.paused_at is null and r.breached_at is null and r.due_at is not null \
@@ -789,13 +974,16 @@ pub async fn verdicts(tx: &mut Tx, tenant: Uuid, only: Option<Uuid>) -> Result<V
                else 'On Track' end as status, \
              coalesce(t.response_state in ('breached', 'met_late'), false) as rb, \
              coalesce(t.resolution_state in ('breached', 'met_late'), false) as zb, \
+             coalesce(t.next_reply_breached, false) or coalesce(t.next_reply_state in ('breached', 'met_late'), false) as nb, \
+             coalesce(t.update_breached, false) or coalesce(t.update_state in ('breached', 'met_late'), false) as ub, \
              (select round(r.worked_secs / 3600.0, 2) from record_target r where r.tenant_id = t.tenant_id and r.entity = 'Ticket' and r.record_id = t.id and r.target = 'respond' and r.met_at is not null) as frh, \
              (select round(r.worked_secs / 3600.0, 2) from record_target r where r.tenant_id = t.tenant_id and r.entity = 'Ticket' and r.record_id = t.id and r.target = 'resolve' and r.met_at is not null) as zh \
            from e_ticket t where t.tenant_id = $1 and (($3::uuid is not null and t.id = $3) or ($3::uuid is null and t.status = any($4)))) \
-         update e_ticket t set sla_status = v.status, response_breached = v.rb, resolution_breached = v.zb, \
+         update e_ticket t set sla_status = v.status, response_breached = v.rb, resolution_breached = v.zb, next_reply_breached = v.nb, update_breached = v.ub, \
                 first_response_hours = coalesce(v.frh, t.first_response_hours), resolution_hours = coalesce(v.zh, t.resolution_hours) \
          from v where t.tenant_id = $1 and t.id = v.id \
            and (t.sla_status is distinct from v.status or t.response_breached is distinct from v.rb or t.resolution_breached is distinct from v.zb \
+                or t.next_reply_breached is distinct from v.nb or t.update_breached is distinct from v.ub \
                 or t.first_response_hours is distinct from coalesce(v.frh, t.first_response_hours) or t.resolution_hours is distinct from coalesce(v.zh, t.resolution_hours)) \
          returning t.id, t.assigned_to, coalesce(t.number, 'Ticket'), coalesce(t.subject, ''), v.status",
     )
@@ -824,11 +1012,13 @@ pub async fn refresh_verdicts(k: &Kernel, ctx: &Ctx) -> Result<usize> {
     Ok(breached.len())
 }
 
-/// A rule of what happens to a ticket whose agreement is in trouble.
-#[derive(Debug, Clone)]
+/// A rule of what happens to a ticket whose agreement is in trouble, or that a condition picks out.
+#[derive(Clone)]
 pub struct Escalation {
     pub level: i64,
     trigger: String,
+    /// The rule's condition on the ticket; `Err` when it does not compile (a rule saved before conditions were checked).
+    condition: Option<std::result::Result<Expr, String>>,
     priority: Option<String>,
     team: Option<Uuid>,
     assign_to: Option<String>,
@@ -843,6 +1033,10 @@ impl Escalation {
         Escalation {
             level: int(doc, "level"),
             trigger: text("trigger").unwrap_or_default(),
+            condition: text("condition").map(|c| {
+                Expr::compile(&c)
+                    .inspect_err(|e| tracing::warn!(level = int(doc, "level"), "an escalation rule's condition does not compile, so it never applies: {e}"))
+            }),
             priority: text("priority"),
             team: id(doc, "team"),
             assign_to: text("assign_to"),
@@ -852,30 +1046,39 @@ impl Escalation {
         }
     }
 
-    fn applies(&self, doc: &Doc) -> bool {
+    /// Whether the rule fits the ticket: its trigger (Condition is always due), priority and team, then its condition on
+    /// the ticket's view (`view`, as conditions read it). A condition that fails on this ticket skips the rule for it.
+    fn applies(&self, doc: &Doc, view: &Value, user: &Value) -> bool {
         let verdict = s(doc, "sla_status").unwrap_or_default();
-        let due = verdict == "Breached" || (self.trigger == "At Risk" && verdict == "At Risk");
-        due && self.priority.as_deref().is_none_or(|p| s(doc, "priority") == Some(p)) && self.team.is_none_or(|t| id(doc, "team") == Some(t))
+        let due = match self.trigger.as_str() {
+            "Condition" => true,
+            "At Risk" => matches!(verdict, "At Risk" | "Breached"),
+            _ => verdict == "Breached",
+        };
+        if !(due && self.priority.as_deref().is_none_or(|p| s(doc, "priority") == Some(p)) && self.team.is_none_or(|t| id(doc, "team") == Some(t))) {
+            return false;
+        }
+        match &self.condition {
+            None => true,
+            Some(Err(_)) => false,
+            Some(Ok(e)) => e.eval_bool(&Scope { doc: view, old: None, parent: None, user }).unwrap_or_else(|err| {
+                tracing::warn!(level = self.level, ticket = s(doc, "number").unwrap_or_default(), "an escalation rule's condition failed: {err}");
+                false
+            }),
+        }
     }
 }
 
 /// The next rule for a ticket: the lowest level above the one it reached that applies to it.
-pub fn next_escalation<'a>(rules: &'a [Escalation], doc: &Doc) -> Option<&'a Escalation> {
+pub fn next_escalation<'a>(rules: &'a [Escalation], doc: &Doc, view: &Value, user: &Value) -> Option<&'a Escalation> {
     let reached = int(doc, "escalation_level");
-    rules.iter().filter(|r| r.level > reached && r.applies(doc)).min_by_key(|r| r.level)
+    rules.iter().filter(|r| r.level > reached && r.applies(doc, view, user)).min_by_key(|r| r.level)
 }
 
 /// Fires what is due on tickets in trouble. A level is recorded on the ticket, so a rule fires once
 /// however often this runs, on however many replicas: rows are re-read under a lock.
 pub async fn escalate(k: &Kernel, ctx: &Ctx) -> Result<usize> {
     let ent = k.entity(ctx, "Ticket")?;
-    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
-    let rows_: Vec<(Uuid,)> =
-        sqlx::query_as("select id from e_ticket where tenant_id = $1 and status = any($2) and sla_status in ('At Risk', 'Breached') order by id")
-            .bind(ctx.tenant)
-            .bind(&OPEN[..])
-            .fetch_all(&mut *tx)
-            .await?;
     let rules: Vec<Escalation> = k
         .list(ctx, "EscalationRule", &ferrum_kernel::ListQuery { limit: Some(100), filters: vec![Filter::eq("enabled", json!(true))], ..Default::default() })
         .await?
@@ -883,18 +1086,36 @@ pub async fn escalate(k: &Kernel, ctx: &Ctx) -> Result<usize> {
         .iter()
         .map(Escalation::from_doc)
         .collect();
+    let Some(top) = rules.iter().map(|r| r.level).max() else { return Ok(0) };
+    // A Condition rule may pick out any open ticket; the others only those whose agreement is in trouble.
+    let any_condition = rules.iter().any(|r| r.trigger == "Condition");
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let rows_: Vec<(Uuid,)> = sqlx::query_as(
+        "select id from e_ticket where tenant_id = $1 and status = any($2) and coalesce(escalation_level, 0) < $3 \
+         and ($4 or sla_status in ('At Risk', 'Breached')) order by id",
+    )
+    .bind(ctx.tenant)
+    .bind(&OPEN[..])
+    .bind(top)
+    .bind(any_condition)
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
-    if rules.is_empty() {
-        return Ok(0);
-    }
+    let user = ctx.user_value();
+    let due = |doc: &Doc| next_escalation(&rules, doc, &ent.cel_view(&Value::Object(doc.clone()), &ctx.schema), &user).cloned();
     let mut fired = 0;
     for (ticket,) in rows_ {
         let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+        // Looked at without a lock first, then chosen again from the locked row (another replica may have fired it).
+        let Some(doc) = store::load(&mut tx, &ctx.schema, &ent, ctx.tenant, ticket, false).await? else { continue };
+        if due(&doc).is_none() {
+            continue;
+        }
         let Some(doc) = store::load(&mut tx, &ctx.schema, &ent, ctx.tenant, ticket, true).await? else { continue };
         if !s(&doc, "status").is_some_and(|st| OPEN.contains(&st)) {
             continue;
         }
-        let Some(rule) = next_escalation(&rules, &doc) else { continue };
+        let Some(rule) = due(&doc) else { continue };
         let mut values = Doc::new();
         values.insert("escalation_level".into(), json!(rule.level));
         values.insert("escalated_at".into(), ts_value(Utc::now()));
@@ -907,13 +1128,16 @@ pub async fn escalate(k: &Kernel, ctx: &Ctx) -> Result<usize> {
         if let Some(priority) = &rule.raise_priority_to {
             values.insert("priority".into(), json!(priority));
         }
+        // What the escalation replaced, so an automation on the ticket's updated event can tell it from any other change.
+        let was: serde_json::Map<String, Value> =
+            values.iter().filter(|(f, v)| doc.get(*f) != Some(*v)).map(|(f, _)| (f.clone(), doc.get(f).cloned().unwrap_or(Value::Null))).collect();
         k.set_values_tx(ctx, &mut tx, "Ticket", ticket, values).await?;
         let label = format!("{} {}", s(&doc, "number").unwrap_or("Ticket"), s(&doc, "subject").unwrap_or_default());
         let title = format!("Escalated: {label}");
         for who in rule.assign_to.iter().chain(rule.notify.iter()).map(String::as_str).chain(s(&doc, "assigned_to")) {
             notify_agent(&mut tx, ctx.tenant, who, SLA, &title, ticket).await?;
         }
-        let payload = json!({"entity": "Ticket", "id": ticket, "event": "updated", "actor": Value::Null, "depth": ctx.depth, "doc": store::load(&mut tx, &ctx.schema, &ent, ctx.tenant, ticket, false).await?});
+        let payload = json!({"entity": "Ticket", "id": ticket, "event": "updated", "actor": Value::Null, "depth": ctx.depth, "doc": store::load(&mut tx, &ctx.schema, &ent, ctx.tenant, ticket, false).await?, "was": was});
         outbox::enqueue(&mut tx, ctx.tenant, "Ticket.updated", Some("Ticket"), Some(ticket), payload).await?;
         ferrum_kernel::audit::record(&mut tx, ctx, "Ticket", ticket, "escalate", None, json!({"level": rule.level})).await?;
         tx.commit().await?;
@@ -998,6 +1222,7 @@ mod tests {
         Escalation {
             level,
             trigger: trigger.into(),
+            condition: None,
             priority: priority.map(str::to_string),
             team: None,
             assign_to: None,
@@ -1010,7 +1235,7 @@ mod tests {
     #[test]
     fn escalations_fire_in_order_and_once() {
         let rules = [rule(2, "Breached", None), rule(1, "At Risk", None), rule(3, "Breached", Some("Urgent"))];
-        let level = |fields: Value| next_escalation(&rules, &ticket(fields)).map(|r| r.level);
+        let level = |fields: Value| next_escalation(&rules, &ticket(fields.clone()), &fields, &json!({})).map(|r| r.level);
         assert_eq!(level(json!({"sla_status": "On Track"})), None, "nothing is wrong");
         assert_eq!(level(json!({"sla_status": "At Risk"})), Some(1));
         assert_eq!(level(json!({"sla_status": "At Risk", "escalation_level": 1})), None, "a rule does not fire twice");
@@ -1018,6 +1243,22 @@ mod tests {
         assert_eq!(level(json!({"sla_status": "Breached"})), Some(1), "from the bottom, one at a time");
         assert_eq!(level(json!({"sla_status": "Breached", "escalation_level": 2, "priority": "Low"})), None, "not this priority");
         assert_eq!(level(json!({"sla_status": "Breached", "escalation_level": 2, "priority": "Urgent"})), Some(3));
+
+        // A Condition rule is due whatever the SLA says, once its condition holds; a condition that fails skips the rule.
+        let mut reopened = rule(1, "Condition", None);
+        reopened.condition = Some(Expr::compile("doc.reopen_count >= 2"));
+        let mut hindi = rule(2, "Breached", None);
+        hindi.condition = Some(Expr::compile("doc.language == 'hi'"));
+        let mut broken = rule(3, "Condition", None);
+        broken.condition = Some(Expr::compile("doc.nothing.deeper > 1"));
+        let mut never = rule(4, "Condition", None);
+        never.condition = Some(Err("does not compile".into()));
+        let rules = [reopened, hindi, broken, never];
+        let level = |fields: Value| next_escalation(&rules, &ticket(fields.clone()), &fields, &json!({})).map(|r| r.level);
+        assert_eq!(level(json!({"sla_status": "On Track", "reopen_count": 2})), Some(1));
+        assert_eq!(level(json!({"sla_status": "On Track", "reopen_count": 2, "escalation_level": 1})), None, "fired once; the others do not hold");
+        assert_eq!(level(json!({"sla_status": "Breached", "language": "hi", "escalation_level": 1})), Some(2));
+        assert_eq!(level(json!({"sla_status": "Breached", "language": "en", "escalation_level": 1})), None, "the condition narrows the SLA rule");
     }
 
     fn sla(name: &str, customer: Option<Uuid>, group: Option<Uuid>, team: Option<Uuid>, ticket_type: Option<Uuid>, priorities: &[(&str, &str, &str)]) -> Sla {
@@ -1090,5 +1331,19 @@ mod tests {
         let half = sla("Half", None, None, None, None, &[("Medium", "0.5", "1.25")]);
         let f = policy_fields(&[half], &[], &ticket(json!({"priority": "Medium"})));
         assert_eq!((f["response_secs"].clone(), f["resolution_secs"].clone()), (json!(1800), json!(4500)));
+        assert_eq!((f["next_reply_secs"].clone(), f["update_secs"].clone()), (Value::Null, Value::Null), "no such clock when the row sets none");
+        let mut both = sla("Both", None, None, None, None, &[]);
+        both.targets.insert("Medium".into(), Promise { response: 3600, resolution: 7200, next_reply: Some(1800), update: Some(28800) });
+        let f = policy_fields(&[both], &[], &ticket(json!({"priority": "Medium"})));
+        assert_eq!((f["next_reply_secs"].clone(), f["update_secs"].clone()), (json!(1800), json!(28800)));
+        let mut doc = Doc::new();
+        doc.insert("id".into(), json!(Uuid::now_v7().to_string()));
+        doc.insert(
+            "priorities".into(),
+            json!([{"priority": "Low", "response_hours": "1", "resolution_hours": "2", "next_reply_hours": "0.5", "update_hours": null}]),
+        );
+        let read = Sla::from_doc(&doc, &Default::default()).unwrap();
+        let p = read.targets["Low"];
+        assert_eq!((p.next_reply, p.update), (Some(1800), None), "read from the agreement's row");
     }
 }

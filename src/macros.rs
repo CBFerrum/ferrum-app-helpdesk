@@ -82,7 +82,12 @@ pub async fn apply(hc: &mut HookCtx<'_>, ticket: &Doc, params: &Value) -> Result
         let value = s(step, "value").map(str::trim).unwrap_or_default();
         match s(step, "step").unwrap_or_default() {
             "Set Status" if STATUSES.contains(&value) => drop(patch.insert("status".into(), json!(value))),
-            "Set Status" => return Err(bad(n, format!("{value:?} is not a status"))),
+            "Set Status" => {
+                // Else a workspace status, by its name, while it can be chosen: the ticket's save moves it to its stage.
+                let found = hc.kernel.find_tx(&sctx, hc.tx, "TicketStatus", &[Filter::eq("status_name", value), Filter::eq("enabled", true)], None, 1).await?;
+                let found = found.first().and_then(|t| id(t, "id")).ok_or_else(|| bad(n, format!("{value:?} is not a status")))?;
+                patch.insert("custom_status".into(), json!(found.to_string()));
+            }
             "Set Priority" if PRIORITIES.contains(&value) => drop(patch.insert("priority".into(), json!(value))),
             "Set Priority" => return Err(bad(n, format!("{value:?} is not a priority"))),
             "Set Team" => {

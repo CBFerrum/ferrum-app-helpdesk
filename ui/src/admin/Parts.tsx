@@ -170,6 +170,7 @@ export const useRefresh = () => {
     void qc.invalidateQueries({ queryKey: ["helpdesk", "macros"] });
     void qc.invalidateQueries({ queryKey: ["helpdesk", "macro"] });
     void qc.invalidateQueries({ queryKey: ["helpdesk", "teams"] });
+    void qc.invalidateQueries({ queryKey: ["helpdesk", "statuses"] });
   };
 };
 

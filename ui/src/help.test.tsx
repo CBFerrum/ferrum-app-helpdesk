@@ -83,6 +83,37 @@ describe("the article editor", () => {
     expect(html).not.toContain(">Publish<");
   });
 
+  it("lists the published versions newest first, with Restore for someone who may write", () => {
+    const versions = [
+      { id: "v1", version_no: 1, published_at: "2026-11-01T09:00:00Z", published_by: "kb@acme.test", title: "First words" },
+      { id: "v2", version_no: 2, published_at: "2026-11-05T09:00:00Z", published_by: "kb@acme.test", title: "Second words" },
+    ];
+    const html = draw("/help/a1", routes, (qc) => qc.setQueryData(["helpdesk", "article", "a1"], { ...article, versions }));
+    expect(html).toContain("Published versions");
+    expect(html.indexOf("Version 2")).toBeLessThan(html.indexOf("Version 1"));
+    expect(html).toContain(">Restore<");
+    const reader = draw("/help/a1", routes, (qc) => qc.setQueryData(["helpdesk", "article", "a1"], { ...article, versions }), { read: "all", write: "none", create: "none", delete: "none" });
+    expect(reader).toContain("Version 2");
+    expect(reader).not.toContain(">Restore<");
+    expect(draw("/help/a1", routes, seed)).toContain("Nothing has been published yet.");
+  });
+
+  it("shows an original's translations and offers another", () => {
+    const html = draw("/help/a1", routes, (qc) => {
+      seed(qc);
+      qc.setQueryData(["helpdesk", "translations", "a1"], [{ id: "a7", title: "पासवर्ड रीसेट करें", language: "hi", status: "Published" }]);
+    });
+    expect(html).toContain("Translations");
+    expect(html).toContain("पासवर्ड रीसेट करें");
+    expect(html).toContain('href="/help/new?of=a1"');
+  });
+
+  it("starts a translation from its original", () => {
+    const html = draw("/help/new?of=a1", routes, seed);
+    expect(html).toContain("New article");
+    expect(html).toContain("Reset your password");
+  });
+
   it("starts a new one as a draft for customers", () => {
     const html = draw("/help/new", routes, () => {});
     expect(html).toContain("New article");
@@ -101,6 +132,14 @@ describe("the portal's articles", () => {
 
   it("says when nothing is published yet", () => {
     expect(draw("/articles", <Route path="/articles" element={<PortalArticles />} />, (qc) => qc.setQueryData(["helpdesk", "portal", "articles", ""], []))).toContain("No articles yet");
+  });
+
+  it("names the same article in other languages", () => {
+    const html = draw("/articles/a1", <Route path="/articles/:id" element={<PortalArticle />} />, (qc) =>
+      qc.setQueryData(["helpdesk", "portal", "article", "a1"], { id: "a1", title: "Reset your password", content: "Press it.", translations: [{ id: "a7", language: "hi", title: "पासवर्ड रीसेट करें" }] }),
+    );
+    expect(html).toContain("Also in:");
+    expect(html).toContain('href="/articles/a7"');
   });
 
   it("reads an article and asks whether it helped", () => {

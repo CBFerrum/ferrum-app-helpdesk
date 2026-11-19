@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.21.0
+
+Needs the same platform as 0.20.0. The package is 0.12.0: KbArticle gains `language`, `translation_of`, a read-only table of published versions (`KbArticleVersion`) and the action `restore_version`, with a unique key on `(translation_of, language)`. Existing articles have no language, no original and no versions until their next publication. Rebuilt interface.
+
+- **Translations.** An article can translate another, one level, one per language (the database's unique key). The portal's search and suggestions, and agents' suggestions, offer one article per family, in the reader's language (or its base or variant), else the original; an article's page lists its other published languages. The public help centre is one list for every language until the public side knows a visitor's language.
+- **Published versions.** Publishing, or changing a published article's title, summary or text, keeps a version (numbered upwards, the latest 50). Restore a Published Version writes one back as an ordinary edit; nothing is removed.
+- **Screens.** The editor takes a language and an original, starts a translation from `/help/new?of=…`, and shows Translations and Published versions with Restore; the portal's article page shows "Also in".
+
+## 0.20.0
+
+Needs the same platform as 0.19.0. The package is 0.11.0: Ticket gains the hidden, read-only action `suggest_articles` (a query). No database change. Rebuilt interface.
+
+- **Article suggestions while replying.** Articles in the composer offers up to eight published articles that fit the ticket's subject and the customer's latest words (or the words typed), Internal ones included, as far as the agent may read articles. Open one in a new tab, or insert a link to one a customer may read: the public help centre's page for a Public article, the portal's for a Customers Only one. An Internal article cannot be linked.
+- **One search.** The portal's article search and the agents' suggestions are one query (`help::search`); the portal still sees only Public and Customers Only articles.
+
+## 0.19.0
+
+Needs the same platform as 0.18.0. No database change (the package stays 0.10.0). Rebuilt interface.
+
+- **Related tickets** beside a ticket: its parent, its children and the tickets linked to it either way, each with its status. Make a child ticket (for the same customer and contact), link or unlink a ticket by its number, move the ticket under a parent or out of it. The server's refusals (a parent with open children, a child under a resolved parent) are shown in its words.
+- **Split into a new ticket** on a customer's public message; a message split off shows "Split into" with the new number.
+
+## 0.18.0
+
+Needs the same platform as 0.17.0. The package is 0.10.0: Ticket gains `parent_ticket` and a `links` table (`TicketLink`), a message gains a read-only `split_into`, and Ticket a `split_message` action. Columns are added empty. No interface change yet (the screens come next).
+
+- **Parent and child.** A ticket can name a parent through the ordinary create and update; one level only (a child has no children). A parent cannot be resolved or closed while a child is open, and an open ticket cannot be put under a resolved parent: the parent's row lock orders the two. A customer's reply reopening a child is never refused.
+- **Linked tickets.** A link is one row on the ticket where it was made, found from the other with the list filter `["links.ticket", "=", id]`. Not to itself, not twice, at most 50.
+- **Split a message.** Split a Message Into a New Ticket makes a ticket of a customer's public message, as the person, for the same customer and contact, linked to the original; the message stays and is marked with the new number, once.
+- **Merge** carries children and links to the surviving ticket, dropping a link that would name it twice or from itself; merging a parent into its own child is refused.
+
+## 0.17.0
+
+Needs the same platform as 0.16.0. The package is 0.9.0: an escalation rule may have a condition, and Ticket has a read-only `last_customer_message` (filled at each ticket's next save). No interface change.
+
+- **Escalation by condition.** A rule's trigger can be Condition: a CEL condition on the ticket alone decides (reopened twice, a late next reply, a language, a customer). With At Risk or Breached, a condition narrows the rule. A condition that does not compile is refused when the rule is saved. A rule still fires once per ticket, chosen again under the ticket's row lock.
+- **What the escalation changed.** The ticket's `updated` event from an escalation carries `was`, so a workspace's automation can tell an escalation from any other change and tell a role, message the customer or apply a macro.
+- **The customer's latest words** are a field, `last_customer_message`, for tag rules, assignment rules, escalation conditions and automations. A trigger on what the customer wrote is the platform's automation calling Apply a Macro through the gate (the README gives the recipe).
+
+## 0.16.0
+
+Needs the same platform as 0.15.0. The package is 0.8.0: two optional hours on an agreement's targets and ten read-only fields on Ticket (added empty), with two more of the platform's service targets. Rebuilt interface.
+
+- **Next reply and customer update.** An agreement may set, per priority, Next Reply Time (each later message from the customer answered within so much working time) and Update the Customer Every (the longest a customer goes without a public message while the ticket is Open or On Hold). Both run on the platform's service targets on the agreement's calendar, are shown beside the ticket, breach once and raise the ticket's `updated` event, count in the SLA status, and are counted in SLA Compliance (Next Reply Late, Update Missed). An agreement without them is as before; open tickets take up new hours at the next upkeep.
+- **Known limit.** On a ticket kept On Hold, a second missed update in the same round moves the due moment but is not counted again: the platform records one breach per round.
+- The inbox's due moment is the earlier of the next reply and the resolution once the ticket has been answered.
+
+## 0.15.0
+
+Needs the same platform as 0.14.1. The package is 0.7.0: one new master, `TicketStatus`, and one new field on Ticket, `custom_status` (added empty: an existing ticket has none). Rebuilt interface.
+
+- **A workspace's own statuses.** A Support Manager adds statuses such as "Waiting on supplier" (On Hold) or "Fixed in next release" (Resolved), each inside one of four stages: Open, Replied, On Hold, Resolved. Choosing one on a ticket (by a person, a macro's Set Status step or an agent through `helpdesk.ticket.update`) moves the ticket to its stage; a change of stage it no longer fits (a customer's reply reopening the ticket) takes it off; a ticket closed from Resolved keeps the Resolved-stage status it had. Queues, service targets, the portal and reports keep reading the stage, so nothing that worked changes. A status's stage cannot change while tickets have it, and the five stage names cannot be used as a status's name.
+- **Screens.** Administration, Statuses; the ticket's header and the inbox show the workspace status; the details beside a ticket offer it; resolving offers "Resolved as"; a macro's Set Status lists the workspace's statuses. The ticket summary report groups by Workspace Status.
+
 ## 0.14.1
 
 Needs the same platform as 0.14.0. No database change. No interface change.

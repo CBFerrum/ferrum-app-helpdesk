@@ -1,5 +1,5 @@
-// The two target cards of a ticket, "First response" and "Resolution", read from the platform's own
-// target states (`response_state`, `resolution_state`: running, paused, met, met_late, breached). They
+// The target cards of a ticket, "First response" and "Resolution", and where the agreement sets them "Next reply" and
+// "Customer update", read from the platform's own target states (running, paused, met, met_late, breached). They
 // rest in plain grey ("Due in 3 h") and take a colour only when something has happened: met (green),
 // missed (red), paused (blue). Pure, so the wording is tested without a browser.
 
@@ -21,6 +21,15 @@ export interface SlaTicket {
   /** The target, in working seconds, at the ticket's priority. */
   response_secs?: number | null;
   resolution_secs?: number | null;
+  /** The next-reply clock: each later message from the customer answered in time (`reply_owed_since`: the oldest unanswered). */
+  next_reply_state?: TargetState | null;
+  next_reply_by?: string | null;
+  next_reply_secs?: number | null;
+  reply_owed_since?: string | null;
+  /** The customer-update clock: an open or held ticket not left silent too long. */
+  update_state?: TargetState | null;
+  update_by?: string | null;
+  update_secs?: number | null;
   /** The working calendar both targets count on: the agreement's own; empty: the workspace's (`helpdesk_hours`). */
   sla_calendar?: string | null;
   /** Working hours the first response and the resolution took, as the platform counted them. */
@@ -32,7 +41,7 @@ export interface SlaTicket {
 export type SlaState = "none" | "due" | "paused" | "fulfilled" | "late" | "overdue";
 
 export interface SlaCard {
-  id: "response" | "resolution";
+  id: "response" | "resolution" | "next_reply" | "update";
   title: string;
   state: SlaState;
   text: string;
@@ -77,11 +86,11 @@ function card(id: SlaCard["id"], title: string, o: Target, sla: boolean, now: nu
   switch (o.state) {
     case "met": {
       const took = hoursText(o.took);
-      return { id, title, state: "fulfilled", text: took ? tr("Met in {took}", { took }) : tr("Met"), detail: lines(done !== null ? `${o.doneWord} ${when(done)}` : null, goal) };
+      return { id, title, state: "fulfilled", text: took ? tr("Met in {took}", { took }) : tr("Met"), detail: lines(done !== null && o.doneWord ? `${o.doneWord} ${when(done)}` : null, goal) };
     }
     case "met_late": {
       const late = done !== null && due !== null && done > due ? tr("Met late, by {value}", { value: span(done - due) }) : tr("Met late");
-      return { id, title, state: "late", text: late, detail: lines(done !== null ? `${o.doneWord} ${when(done)}` : null, due !== null ? tr("Was due {due}", { due: when(due) }) : null) };
+      return { id, title, state: "late", text: late, detail: lines(done !== null && o.doneWord ? `${o.doneWord} ${when(done)}` : null, due !== null ? tr("Was due {due}", { due: when(due) }) : null) };
     }
     case "breached":
       return {
@@ -110,12 +119,17 @@ function card(id: SlaCard["id"], title: string, o: Target, sla: boolean, now: nu
   }
 }
 
-/** The ticket's two cards as of `now`. */
+/** The ticket's cards as of `now`: two always, and the next reply and customer update where the agreement sets them. */
 export function slaCards(t: SlaTicket, now = Date.now()): SlaCard[] {
   const sla = !!t.service_level_agreement;
   const calendar = t.sla_calendar || WORKSPACE_CALENDAR;
-  return [
-    card("response", "First response", { state: t.response_state, done: t.first_responded_at, due: t.response_by, took: t.first_response_hours, secs: t.response_secs, calendar, doneWord: "Answered", status: t.status }, sla, now),
-    card("resolution", "Resolution", { state: t.resolution_state, done: t.resolved_at, due: t.resolution_by, took: t.resolution_hours, secs: t.resolution_secs, calendar, doneWord: "Resolved", status: t.status }, sla, now),
+  const cards = [
+    card("response", tr("First response"), { state: t.response_state, done: t.first_responded_at, due: t.response_by, took: t.first_response_hours, secs: t.response_secs, calendar, doneWord: tr("Answered"), status: t.status }, sla, now),
+    card("resolution", tr("Resolution"), { state: t.resolution_state, done: t.resolved_at, due: t.resolution_by, took: t.resolution_hours, secs: t.resolution_secs, calendar, doneWord: tr("Resolved"), status: t.status }, sla, now),
   ];
+  if (t.next_reply_secs || t.next_reply_state)
+    cards.push(card("next_reply", tr("Next reply"), { state: t.next_reply_state, done: null, due: t.next_reply_by, took: null, secs: t.next_reply_secs, calendar, doneWord: tr("Answered"), status: t.status }, sla, now));
+  if (t.update_secs || t.update_state)
+    cards.push(card("update", tr("Customer update"), { state: t.update_state, done: null, due: t.update_by, took: null, secs: t.update_secs, calendar, doneWord: "", status: t.status }, sla, now));
+  return cards;
 }

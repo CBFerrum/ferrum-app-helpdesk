@@ -12,6 +12,8 @@ export interface Ticket {
   number?: string | null;
   subject?: string | null;
   status?: string | null;
+  /** The workspace's own status (its name is in `_titles`); the stage is `status`. */
+  custom_status?: string | null;
   priority?: string | null;
   channel?: string | null;
   team?: string | null;
@@ -22,6 +24,7 @@ export interface Ticket {
   sla_status?: string | null;
   response_by?: string | null;
   resolution_by?: string | null;
+  next_reply_by?: string | null;
   first_responded_at?: string | null;
   opened_at?: string | null;
   last_customer_message_at?: string | null;
@@ -53,6 +56,10 @@ export const ACTIVE = ["Open", "Replied", "On Hold"];
 export const SLA_ALERTS = ["Breached", "At Risk"];
 const PRIORITY = ["Urgent", "High", "Medium", "Low"];
 export const PRIORITIES = ["Low", "Medium", "High", "Urgent"];
+
+/** What a ticket's status badge says: the workspace's own status where it has one, else its stage. */
+export const statusName = (t: { status?: string | null; custom_status?: unknown; _titles?: Record<string, string> }): string =>
+  (t.custom_status ? t._titles?.custom_status : undefined) || t.status || "Open";
 export const CHANNELS = ["Email", "Portal", "Phone", "Chat", "Web Form"];
 
 const rank = (list: string[], v?: string | null) => {
@@ -64,9 +71,12 @@ const time = (s?: string | null) => {
   return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t;
 };
 
-/** When it is due next: its first response until someone has answered, then its resolution. */
+/** When it is due next: its first response until someone has answered, then the earlier of its next reply and its resolution. */
 export function dueAt(t: Ticket): string | null {
-  return (t.first_responded_at ? t.resolution_by : t.response_by) ?? null;
+  if (!t.first_responded_at) return t.response_by ?? null;
+  const [a, b] = [t.next_reply_by, t.resolution_by];
+  if (!a || !b) return a || b || null;
+  return Date.parse(a) <= Date.parse(b) ? a : b;
 }
 
 /** Most pressing first: a breached SLA, then one at risk; tickets waiting for an agent before

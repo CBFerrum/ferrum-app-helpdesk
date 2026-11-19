@@ -6,7 +6,7 @@ import { useState } from "react";
 import { api, ApiError, docPath, errorMessage, isolate, newKey, t } from "@ferrum/client";
 import { Alert, Badge, Button, Dialog, Field, Icon, toast } from "@ferrum/kit";
 import { LinkInput } from "@ferrum/records";
-import { useNames } from "../hooks";
+import { useNames, useStatuses } from "../hooks";
 import { PRIORITIES } from "../inbox";
 import { type Macro, type MacroStep, sendsReply, STEP_KINDS, stepLine, stepsProblem } from "../macros";
 import { moved } from "./order";
@@ -34,6 +34,7 @@ function Value({ s, id, onChange }: { s: MacroStep; id: string; onChange: (v: st
   const teams = useAdminRows("SupportTeam", "team_name", "team_name asc");
   const types = useAdminRows("TicketType", "type_name", "type_name asc");
   const tags = useAdminRows("TicketTag", "tag_name", "tag_name asc");
+  const statuses = useStatuses();
   const v = s.value ?? "";
   const pick = (label: string, options: string[], none?: string) => (
     <select id={id} className="select" aria-label={label} value={v} onChange={(e) => onChange(e.target.value)}>
@@ -46,7 +47,7 @@ function Value({ s, id, onChange }: { s: MacroStep; id: string; onChange: (v: st
   );
   switch (s.step) {
     case "Set Status":
-      return pick(t("Status"), STATUSES);
+      return pick(t("Status"), [...STATUSES, ...(statuses.data ?? []).filter((x) => x.enabled !== false).map((x) => x.status_name)]);
     case "Set Priority":
       return pick(t("Priority"), PRIORITIES);
     case "Set Team":

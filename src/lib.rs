@@ -15,6 +15,7 @@ mod replies;
 mod reports;
 mod routing;
 mod site;
+mod split;
 mod survey;
 mod tags;
 mod ticket;
@@ -35,7 +36,9 @@ pub fn register(hooks: &mut HookRegistry) {
         .register("Ticket", Arc::new(ticket::TicketHook))
         .register("ServiceLevelAgreement", Arc::new(ticket::SlaHook))
         .register("SupportTeam", Arc::new(ticket::TeamHook))
+        .register("TicketStatus", Arc::new(ticket::StatusHook))
         .register("TicketAssignmentRule", Arc::new(ticket::RuleHook))
+        .register("EscalationRule", Arc::new(ticket::RuleHook))
         .register("KbArticle", Arc::new(kb::ArticleHook))
         .register("SavedReply", Arc::new(replies::ReplyHook))
         .register("WarrantyClaim", Arc::new(warranty::ClaimHook))

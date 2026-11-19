@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.14.1-7c3aed?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.21.0-7c3aed?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -44,9 +44,9 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 
 | | |
 |---|---|
-| **Version** | 0.14.1 (platform `>=0.4.0, <0.5`) |
+| **Version** | 0.21.0 (platform `>=0.4.0, <0.5`) |
 | **Kind** | Own interface at `/helpdesk/` (agent inbox, ticket workspace, administration, help centre editor, reports) and a page in the customer portal |
-| **What it adds** | 28 entities (21 main, 7 child tables) in 2 packages, 3 roles, 9 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
+| **What it adds** | 31 entities (22 main, 9 child tables) in 2 packages, 3 roles, 9 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
 | **Depends on** | Ferrum core, shared customers and items |
 | **Works with** | Mail (inbound and outbound email, version 0.20 or later), ERP (invoices and orders through a connector), Field Service (visits from tickets), the platform's calendars and service targets |
 | **Languages** | English, Arabic (right to left), Hindi; a workspace can change any interface word |
@@ -167,6 +167,15 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 - **Ticket** (`TKT-2026-000001`). Subject, description, status (Open, Replied, On Hold, Resolved, Closed), priority
   (Low, Medium, High, Urgent), type, channel, customer, contact, team,
   assignee, language, product and serial number.
+- **Parent, child and linked tickets.** Beside a ticket, the card Related tickets shows its parent, its children and
+  the tickets linked to it either way, and makes a child ticket, links or unlinks a ticket by its number, or moves the
+  ticket under a parent or out. One level: a child has no children. A parent cannot be resolved while a child is open.
+- **Split a message.** A customer's public message can be split off into a ticket of its own for the same customer,
+  linked to the original; the message stays and is marked with the new number, once.
+- **Workspace statuses.** A Support Manager adds the desk's own statuses (Administration, Statuses), each inside one of
+  four stages: Open, Replied, On Hold, Resolved. Choosing one moves the ticket to its stage; a change of stage it no
+  longer fits takes it off; closing keeps a Resolved-stage status. Queues, targets, reports and the portal read the
+  stage, and customers see only the stage.
 - **Channel.** Email is set on a ticket made from mail and Portal on one a customer raises. Phone, Chat and Web Form are
   labels an agent picks when logging a ticket by hand; no phone, chat or web-form channel brings a ticket in.
 - **Conversation.** An append-only feed of messages, each from an agent or the customer, public or internal.
@@ -223,10 +232,19 @@ skill and shift, and the same data set holds the customer's contracts, equipment
   A reopened ticket's resolution starts again from the reopening.
 - **States.** Running, paused, met, met late or breached for each of first response and resolution. A ticket's
   SLA status is On Track, At Risk (after 75% of the time, a setting), Breached or Fulfilled.
+- **Next reply and customer update.** Two more clocks an agreement may set per priority: the time to answer each
+  later message from the customer (from the oldest one nobody has answered; a second message does not move it), and
+  how long a customer may go without a public message while the ticket is Open or On Hold. Each shows beside the ticket,
+  breaches once, and counts in the SLA status and the compliance report; a ticket keeps the mark that a later reply or
+  an update was ever late. Limit: on a ticket kept On Hold, a second missed update in the same round moves the due moment
+  but is not counted again (the platform's clock records one breach per round).
 - **Breach recorded once** and raising the ticket's updated event, so automations and webhooks can act.
 - **Priority raised.** Moves the due moment from the save.
-- **Escalation rules.** At Risk or Breached, by level, once per ticket: assign, move to a team, raise priority to
-  High or Urgent, or notify an address.
+- **Escalation rules.** At Risk, Breached, or a condition on the ticket (`doc.reopen_count >= 2`,
+  `doc.next_reply_state == 'breached'`), by level, once per ticket: assign, move to a team, raise priority to High or
+  Urgent, or notify an address. With At Risk or Breached a condition narrows the rule. The ticket's updated event carries
+  what the escalation changed (`was`), so an automation on `doc.escalation_level > old.escalation_level` can tell a
+  role, message the customer or apply a macro.
 - **Entitlement.** Support Contract: a customer's period, an optional agreement and an optional number of tickets. A
   ticket is marked Covered, Expired, Exhausted or None. Settings choose to inform or to Hold for Approval: the ticket waits On Hold with no reply to
   the customer until a Support Manager approves or declines it, saying why.
@@ -239,6 +257,11 @@ skill and shift, and the same data set holds the customer's contracts, equipment
   or remove a tag, send a public reply, add a private note. All steps apply or none. A picker previews what each step changes
   and warns first when one sends the customer a reply. Applied once, with an idempotency key.
 - **Tags and tag rules.** See above.
+- **Triggers.** The customer's latest words are a field, `last_customer_message`, that tag rules, assignment rules,
+  escalation conditions and the platform's automations read. A trigger is an automation on Ticket, for example event
+  `updated`, condition `doc.last_customer_message_at != old.last_customer_message_at && doc.last_customer_message.contains('refund')`,
+  and action `invoke` of `helpdesk.ticket.apply_macro` with input `{"id": "doc.id", "params": "{'macro': '<the macro>'}"}`.
+  It runs once per event; a reply a macro sends this way counts as a reply (it is mailed and answers the clocks).
 - **Seeded.** Four ticket types (Question, Incident, Problem, Feature Request), a knowledge base category and three saved replies.
 
 ### ⭐ Satisfaction
@@ -256,6 +279,16 @@ skill and shift, and the same data set holds the customer's contracts, equipment
   page for each article, search and a sitemap. The workspace can change or take it down.
 - **In the portal.** Customers search the articles they may read, read them and say whether one helped (once a day).
   Articles that fit are offered under the subject while they write a request.
+- **While replying.** The composer's Articles button offers the published articles that fit the ticket (its subject
+  and the customer's latest words), Internal ones included, as far as the agent may read articles; other words can be
+  searched. Open one to read, or insert a link to one the customer may read (an Internal article cannot be linked).
+  The same search is the operation `helpdesk.ticket.suggest_articles`, a query an AI agent can call; it changes
+  nothing and counts no view.
+- **Translations.** An article can be the translation of another (one level, one per language). Customers in the
+  portal and agents answering a ticket are offered one article per family, in their language when there is one; an
+  article's page names its other languages. The public help centre lists every public translation at its own address.
+- **Published versions.** Each time an article is published, or changed while published, what customers can read is
+  kept as a version (the latest 50); an editor can restore one, which is an ordinary edit.
 - **Counts.** Views and helpful votes from the portal and the public page are added together on the article.
 - **Editor.** A list of what each article is, who it reaches and how it was received, and an editor with category,
   body, a preview, visibility, state, publish and archive.
@@ -282,8 +315,8 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 
 | Report | What it shows |
 |---|---|
-| **Ticket Summary** | Tickets counted by status, priority and more |
-| **SLA Compliance** | Targets met and missed |
+| **Ticket Summary** | Tickets counted by status, workspace status, priority and more |
+| **SLA Compliance** | Targets met and missed, with late next replies and missed customer updates |
 | **Response Times** | First response and resolution in working hours |
 | **Agent Workload** | Open tickets and work by agent |
 | **Customer Satisfaction** | Ratings by agent, team and month, counted from the rating's own date |
@@ -367,8 +400,9 @@ ticket by number to open a visit.
 
 | Entity | What it is | Key fields or states |
 |---|---|---|
-| **Ticket** | A customer's request and its conversation | Number, subject, status, priority, channel, customer, team, assignee, SLA states, entitlement, tags |
-| Ticket message (child) | One message | Author, body, internal, sent at, attachments, copies, verified sender |
+| **Ticket** | A customer's request and its conversation | Number, subject, status (the stage), workspace status, parent ticket, linked tickets, priority, channel, customer, team, assignee, SLA states, entitlement, tags |
+| Ticket message (child) | One message | Author, body, internal, sent at, attachments, copies, verified sender, split into |
+| Linked ticket (child) | A ticket related to this one, kept where the link was made and found from both | Ticket |
 | **Support Address** | An address customers write to | Address, brand, team, default priority and type, Mail account, enabled, registered |
 | **Support Brand** | What a customer knows an address by | Name, display name, signature, header, footer |
 | **Inbound Log** | What became of each mail | Outcome, reason, sender, ticket |
@@ -379,8 +413,9 @@ ticket by number to open a visit.
 | **Escalation Rule** | What happens at risk or breach | Level, trigger, actions |
 | **Support Contract** | A customer's entitlement | Period, agreement, included tickets |
 | **Ticket Type, Ticket Tag, Tag Rule** | Classifying tickets | Name, colour, condition |
+| **Ticket Status** | A workspace's own status inside one of four stages (Open, Replied, On Hold, Resolved); the stage is what queues, clocks and reports read | Name, stage, on |
 | **Saved Reply, Support Macro** | Written once, used often | Scope, body or steps, uses |
-| **Knowledge Base Article, Category** | Answers | Status, visibility, slug, views, votes |
+| **Knowledge Base Article, Category** | Answers | Status, visibility, slug, language, translation of, published versions, views, votes |
 | **Warranty Claim** | A warranty complaint | Item, serial, delivery, warranty status |
 | **Maintenance Schedule, Maintenance Visit** | Annual maintenance contract and its visits | Items, periodicity, planned and actual dates |
 | **Support Settings** | Workspace settings | See Settings above |
@@ -420,20 +455,20 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 | Phone and voicemail | ❌ | ✅ | ✅ | 🟡 | ✅ | 🟡 |
 | Social channels | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Merge duplicate tickets | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Parent, child and linked tickets | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Parent, child and linked tickets | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Tags and custom fields | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Custom statuses | ❌ | ✅ | 🟡 | ✅ | ✅ | 🟡 |
+| Custom statuses | ✅ | ✅ | 🟡 | ✅ | ✅ | 🟡 |
 | CC and followers | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Saved replies and macros with merge fields | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Triggers and automations on conversation content | 🟡² | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Triggers and automations on conversation content | ✅² | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Routing by skill, language and shift | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | SLA targets in working hours with holidays and pauses | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| More clocks: next reply, periodic update | ❌ | ✅ | ✅ | 🟡 | ✅ | ✅ |
-| Escalation rules | 🟡³ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| More clocks: next reply, periodic update | ✅ | ✅ | ✅ | 🟡 | ✅ | ✅ |
+| Escalation rules | ✅³ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Entitlement by support contract | ✅ | 🟡 | 🟡 | ❌ | ✅ | ❌ |
 | Knowledge base and public help centre | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Article suggestions for agents while replying | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Article translations and versions | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Article suggestions for agents while replying | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Article translations and versions | ✅⁸ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Customer satisfaction survey by mailed link | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | NPS and CES surveys | ❌ | 🟡 | 🟡 | ✅ | ✅ | ❌ |
 | AI: suggested replies, summaries, answer bot | ❌ | ✅ | ✅ | ✅ | ✅ | 🟡 |
@@ -450,12 +485,13 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 | No per-agent subscription | ✅ | ❌ | ❌ | ❌ | ❌ | 🟡⁷ |
 
 ¹ Signed-in customers raise tickets, reply, follow and rate them, and read articles. There is no sign-in-free web form yet.
-² Platform automations and tag rules read ticket fields; there are no string functions on message text yet.
-³ Escalation can assign, move a team, raise priority or notify an address.
+² A trigger is the platform's automation on the ticket: its condition reads `doc.last_customer_message` (the customer's latest words) and it can apply a macro through the gate.
+³ Escalation fires on At Risk, Breached or any condition on the ticket, and can assign, move a team, raise priority or notify an address; its updated event says what changed, so an automation can do the rest.
 ⁴ A second agent saving over the first is told and loses nothing, but nobody sees who is viewing.
 ⁵ Nine ready reports, downloadable as CSV; more in the platform's report builder.
 ⁶ A brand sets name, signature and wrapper per support address; there is no separate portal or help centre per brand.
 ⁷ Zammad is free to self-host; its hosted service is priced per agent.
+⁸ The portal and agents are offered each article in their language; the public help centre is one list for every language (each translation at its own address) until the public side knows a visitor's language.
 
 ### 🏆 Where Helpdesk stands out
 
@@ -482,6 +518,13 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 
 ### ✅ Recently shipped
 
+- [x] **0.21.0.** Article translations and published versions, with restore.
+- [x] **0.20.0.** Article suggestions while an agent replies, as an operation and in the composer.
+- [x] **0.19.0.** The screens for parent, child and linked tickets, and splitting a message.
+- [x] **0.18.0.** Parent, child and linked tickets, and splitting a customer's message into a ticket of its own, on the server.
+- [x] **0.17.0.** Escalation by any condition on the ticket, the customer's latest words as a field for conditions, and triggers proven on the platform's automations.
+- [x] **0.16.0.** Two more clocks: the next reply and the customer update, on the platform's service targets.
+- [x] **0.15.0.** A workspace's own statuses, each inside one of four stages that the clocks, queues and reports read.
 - [x] **0.14.1.** Every action states what done means and what it returns, for processes and agents; the planned visit of a maintenance schedule is a declared parameter.
 - [x] **0.14.0.** Upkeep runs one workspace at a time, on whichever replica is free; needs Ferrum 0.4.0.
 - [x] **0.13.4.** Built against Mail 0.26: Helpdesk hands the kernel to Mail's address registration, which now counts the workspace's Mail Domain only while the workspace has proven it.
@@ -502,10 +545,8 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 - [ ] **Public web form** that opens a ticket without sign-in, with a rate limit.
 - [ ] **Live chat** on the customer's site, because customers expect it.
 - [ ] **WhatsApp and SMS** conversations in the inbox.
-- [ ] **Article suggestions** while an agent replies, with article translations.
 - [ ] **AI help**: a suggested reply, a ticket summary and triage.
-- [ ] **Custom statuses** that drive the clock and the queues.
-- [ ] **Parent, child and linked tickets**, and a problem-and-incident link.
+- [ ] A problem-and-incident link between tickets.
 
 ### 🔭 Later
 
@@ -522,9 +563,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 - [ ] A Merged mark on the inbox rows.
 
 **Service levels**
-- [ ] More clocks: next reply and periodic update.
 - [ ] Agreements chosen by channel, tag or brand.
-- [ ] Escalations that can do anything an automation can.
 
 **Customers**
 - [ ] A richer portal: company-wide view, reopen, status words of your own.

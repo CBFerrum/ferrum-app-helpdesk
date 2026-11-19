@@ -55,7 +55,7 @@ import { Row } from "./Row";
 import { Shortcuts } from "./Shortcuts";
 
 const FIELDS =
-  "number,subject,status,priority,channel,team,customer_name,contact_name,contact_email,assigned_to,sla_status,response_by,resolution_by,first_responded_at,opened_at,last_customer_message_at,last_agent_message_at,last_message_preview,routed_by,routed_at,response_state,resolution_state,version";
+  "number,subject,status,custom_status,priority,channel,team,customer_name,contact_name,contact_email,assigned_to,sla_status,response_by,resolution_by,next_reply_by,first_responded_at,opened_at,last_customer_message_at,last_agent_message_at,last_message_preview,routed_by,routed_at,response_state,resolution_state,version";
 /** How many tickets one request brings. */
 const PAGE = 100;
 /** Where a person's saved filters are kept (their preferences, which only they can read). */

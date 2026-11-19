@@ -11,8 +11,10 @@
 //! article's `views`, `helpful_count` and `not_helpful_count` are the sum of both ways in.
 
 use ferrum_domain::util::{b, id, s, set, sys};
-use ferrum_kernel::{Ctx, Doc, Error, Kernel, Result, Tx};
+use ferrum_kernel::ctx::RowScope;
+use ferrum_kernel::{Action, Ctx, Doc, Error, HookCtx, Kernel, Result, Tx, row_scope};
 use serde_json::{Value, json};
+use sqlx::{Postgres, QueryBuilder};
 use uuid::Uuid;
 
 /// The address an article gets: its title in lowercase ASCII words joined by dashes, at most 80 characters.
@@ -96,37 +98,113 @@ fn words(text: &str) -> Vec<String> {
 
 /// Published articles customers may read, best fit first: those holding the words of `text` (a title counts most). With no
 /// words, the newest. Read as the workspace: only Published articles that are Public or Customers Only are ever here.
-pub async fn find(tx: &mut Tx, tenant: Uuid, text: Option<&str>, limit: i64) -> Result<Vec<Value>> {
+pub async fn find(tx: &mut Tx, tenant: Uuid, text: Option<&str>, limit: i64, language: Option<&str>) -> Result<Vec<Value>> {
+    search(tx, tenant, text, limit, &["Public", "Customers Only"], None, language).await
+}
+
+/// The one search over articles: Published ones of the given visibilities (and, for staff, within their record scope on
+/// articles), those holding the words of `text` first (title 3, summary 2, text 1), else the newest. One article per family
+/// (an original and its translations): the one in `language` (or its base or a variant of it), else one in no language,
+/// else the original; with no language asked, the original.
+pub async fn search(
+    tx: &mut Tx,
+    tenant: Uuid,
+    text: Option<&str>,
+    limit: i64,
+    visibilities: &[&str],
+    scope: Option<&RowScope>,
+    language: Option<&str>,
+) -> Result<Vec<Value>> {
+    let language = language.map(|l| l.trim().to_lowercase()).filter(|l| !l.is_empty());
     let w = words(text.unwrap_or_default());
+    let visibilities: Vec<String> = visibilities.iter().map(|v| v.to_string()).collect();
     type Row = (Uuid, String, Option<String>, Option<String>, Option<String>, Option<String>);
-    let found: Vec<Row> = sqlx::query_as(
-        "select a.id, a.title, a.summary, a.slug, a.visibility, c.category_name from e_kb_article a left join e_kb_category c on c.tenant_id = a.tenant_id and c.id = a.category \
-         where a.tenant_id = $1 and a.status = 'Published' and a.visibility in ('Public', 'Customers Only') \
-           and (cardinality($2::text[]) = 0 or exists (select 1 from unnest($2::text[]) w where a.title ilike '%' || w || '%' or coalesce(a.summary, '') ilike '%' || w || '%' or a.content ilike '%' || w || '%')) \
-         order by (select coalesce(sum((case when a.title ilike '%' || w || '%' then 3 else 0 end) + (case when coalesce(a.summary, '') ilike '%' || w || '%' then 2 else 0 end) \
-                                    + (case when a.content ilike '%' || w || '%' then 1 else 0 end)), 0) from unnest($2::text[]) w) desc, a.published_at desc nulls last, a.id limit $3",
-    )
-    .bind(tenant)
-    .bind(&w)
-    .bind(limit)
-    .fetch_all(&mut **tx)
-    .await?;
+    let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
+        "select id, title, summary, slug, visibility, category_name from (select distinct on (coalesce(a.translation_of, a.id)) \
+         a.id, a.title, a.summary, a.slug, a.visibility, c.category_name, a.published_at, ",
+    );
+    push_score(&mut qb, &w);
+    qb.push(
+        " as score from e_kb_article a \
+         left join e_kb_category c on c.tenant_id = a.tenant_id and c.id = a.category where a.tenant_id = ",
+    );
+    qb.push_bind(tenant).push(" and a.status = 'Published' and a.visibility = any(").push_bind(visibilities).push(")");
+    qb.push(" and (cardinality(").push_bind(w.clone()).push("::text[]) = 0 or exists (select 1 from unnest(").push_bind(w.clone());
+    qb.push("::text[]) w where a.title ilike '%' || w || '%' or coalesce(a.summary, '') ilike '%' || w || '%' or a.content ilike '%' || w || '%'))");
+    if let Some(scope) = scope {
+        scope.push_sql(&mut qb, "a");
+    }
+    qb.push(" order by coalesce(a.translation_of, a.id), case when ")
+        .push_bind(language.clone())
+        .push("::text is null or a.language = ")
+        .push_bind(language.clone());
+    qb.push(" or ")
+        .push_bind(language.clone())
+        .push(" like a.language || '-%' or a.language like ")
+        .push_bind(language)
+        .push(" || '-%' then 0 when a.language is null then 1 else 2 end, ");
+    qb.push("(a.translation_of is not null), score desc) x order by score desc, published_at desc nulls last, id limit ").push_bind(limit);
+    let found: Vec<Row> = qb.build_query_as().fetch_all(&mut **tx).await?;
     Ok(found.into_iter().map(|(i, title, summary, slug, visibility, category)| json!({"id": i, "title": title, "summary": summary, "slug": slug, "visibility": visibility, "category": category})).collect())
+}
+
+/// How well article `a` holds the words `w` (title 3, summary 2, text 1 each).
+fn push_score(qb: &mut QueryBuilder<Postgres>, w: &[String]) {
+    qb.push(
+        "(select coalesce(sum((case when a.title ilike '%' || w || '%' then 3 else 0 end) + (case when coalesce(a.summary, '') ilike '%' || w || '%' then 2 else 0 end) \
+          + (case when a.content ilike '%' || w || '%' then 1 else 0 end)), 0) from unnest(",
+    );
+    qb.push_bind(w.to_vec()).push("::text[]) w)");
+}
+
+/// `suggest_articles` on a ticket: up to eight published articles for the words given, else the ticket's subject and the
+/// customer's latest words, Internal ones included, as far as the caller may read articles. Changes nothing.
+pub async fn suggest(hc: &mut HookCtx<'_>, ticket: &Doc, params: &Value) -> Result<Value> {
+    let q = params.get("q").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+    if q.chars().count() > 200 {
+        return Err(Error::field("q", "at most 200 characters"));
+    }
+    let text = if q.is_empty() {
+        format!("{} {}", s(ticket, "subject").unwrap_or_default(), s(ticket, "last_customer_message").unwrap_or_default())
+    } else {
+        q.to_string()
+    };
+    let Some(ent) = hc.ctx.schema.entity("KbArticle") else { return Ok(json!({"articles": []})) };
+    let scope = match row_scope(hc.ctx, ent, Action::Read) {
+        Ok(scope) => scope,
+        Err(Error::Forbidden(_)) => return Ok(json!({"articles": []})),
+        Err(e) => return Err(e),
+    };
+    let found = search(hc.tx, hc.ctx.tenant, Some(&text), 8, &["Internal", "Customers Only", "Public"], Some(&scope), s(ticket, "language")).await?;
+    Ok(json!({"articles": found}))
 }
 
 /// One article for a customer, counting the view (a signed-in customer's: the public page counts its visitors itself).
 pub async fn read(tx: &mut Tx, tenant: Uuid, article: Uuid) -> Result<Value> {
-    type Row = (Uuid, String, Option<String>, String, Option<String>, i64);
+    type Row = (Uuid, String, Option<String>, String, Option<String>, i64, Option<String>);
     let row: Option<Row> = sqlx::query_as(
         "update e_kb_article a set views = coalesce(views, 0) + 1 where a.tenant_id = $1 and a.id = $2 and a.status = 'Published' and a.visibility in ('Public', 'Customers Only') \
-         returning a.id, a.title, a.summary, a.content, (select category_name from e_kb_category c where c.tenant_id = a.tenant_id and c.id = a.category), coalesce(a.views, 0)::bigint",
+         returning a.id, a.title, a.summary, a.content, (select category_name from e_kb_category c where c.tenant_id = a.tenant_id and c.id = a.category), coalesce(a.views, 0)::bigint, a.language",
     )
     .bind(tenant)
     .bind(article)
     .fetch_optional(&mut **tx)
     .await?;
-    let (i, title, summary, content, category, views) = row.ok_or_else(|| Error::NotFound("article".into()))?;
-    Ok(json!({"id": i, "title": title, "summary": summary, "content": content, "category": category, "views": views}))
+    let (i, title, summary, content, category, views, language) = row.ok_or_else(|| Error::NotFound("article".into()))?;
+    // The other members of its family a customer may read, by language.
+    let others: Vec<(Uuid, Option<String>, String)> = sqlx::query_as(
+        "select b.id, b.language, b.title from e_kb_article a join e_kb_article b on b.tenant_id = a.tenant_id \
+           and coalesce(b.translation_of, b.id) = coalesce(a.translation_of, a.id) and b.id <> a.id \
+         where a.tenant_id = $1 and a.id = $2 and b.status = 'Published' and b.visibility in ('Public', 'Customers Only') order by b.language nulls first, b.id",
+    )
+    .bind(tenant)
+    .bind(article)
+    .fetch_all(&mut **tx)
+    .await?;
+    let translations: Vec<Value> = others.into_iter().map(|(id, language, title)| json!({"id": id, "language": language, "title": title})).collect();
+    Ok(
+        json!({"id": i, "title": title, "summary": summary, "content": content, "category": category, "views": views, "language": language, "translations": translations}),
+    )
 }
 
 /// "Was this helpful": counted on the article, atomically.
