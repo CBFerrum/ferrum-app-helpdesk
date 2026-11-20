@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.22.2
+
+Needs the same platform as 0.22.1 (with Ferrum's `reports::readable_choice` and `readable_columns`). No package or database change.
+
+- **Fix: reports group, filter and show only what the reader may read.** A grouping or filter on a ticket field the reader cannot read (or the team, type, agreement or status name it shows) is refused; with no grouping chosen, the report's default gives way to the first grouping they may read; a column made of a field they cannot read (Urgent and High from the priority, the first-response figures, the helpful votes, and so on) is left out of the columns, the rows and the totals. A report that rests on such a field (Customer Satisfaction on the rating, Time Spent on the time entries, the period's dates) is refused. Help Centre by Article lists by title when the reader may not read the views.
+
+## 0.22.1
+
+Needs the same platform as 0.22.0. No package or database change.
+
+- **Fix: only the person who raised a ticket rates it.** Rate the Help is pressed with the right to read the ticket, so an agent or an administrator could rate a customer's ticket for them. It now rates only for the person whose address is the ticket's contact address (any case), or the guest of the survey link mailed to them; anyone else is refused and nothing changes. The portal's rating is unchanged.
+
 ## 0.22.0
 
 Needs the same platform as 0.21.0. The package is 0.13.0: Ticket gains a table of time entries (`TicketTime`) and `minutes_spent`, the platform's rollup of their minutes; a report Time Spent. Existing tickets have no entries. Rebuilt interface.

@@ -122,4 +122,29 @@ async fn scenario() {
     assert!(sent_to("quiet@cust.test").is_empty(), "opted out");
     assert_eq!(sent_to("chatty@cust.test").len(), 1);
     assert!(e.get("Ticket", quiet).await["survey_sent_at"].is_string() && e.get("Ticket", chatty).await["survey_sent_at"].is_string());
+
+    only_the_raiser_rates_a_ticket(&e).await;
+}
+
+/// `rate` is pressed with the right to read the ticket, so it rates only for the person who raised it (or the survey
+/// link's guest, above): an agent or an administrator of the desk who reads the ticket does not rate it for its customer.
+async fn only_the_raiser_rates_a_ticket(e: &Env) {
+    let rae = e.user("rae@acme.test", &["Support Agent"]).await;
+    let theirs = solve_for(e, "Someone else's", "pat@cust.test").await;
+    for who in [&rae, &e.admin] {
+        let r = e.action(who, "Ticket", theirs, "rate", json!({"rating": 5, "feedback": "Great"})).await;
+        assert!(matches!(r, Err(ferrum_kernel::Error::Forbidden(_))), "{} rated a ticket raised by someone else: {r:?}", who.email);
+    }
+    let t = e.get("Ticket", theirs).await;
+    assert_eq!((t["satisfaction_rating"].clone(), t["feedback"].clone(), t["rated_at"].clone()), (Value::Null, Value::Null, Value::Null), "nothing changed");
+
+    let own = solve_for(e, "My own", "Rae@acme.test").await;
+    assert_eq!(e.action(&rae, "Ticket", own, "rate", json!({"rating": 4})).await.unwrap(), json!({"rated": 4}));
+    assert_eq!(e.get("Ticket", own).await["satisfaction_rating"], json!(4), "the raiser rates it, whatever the address's case");
+}
+
+async fn solve_for(e: &Env, subject: &str, who: &str) -> uuid::Uuid {
+    let t = uid(&e.insert("Ticket", json!({"subject": subject, "contact_email": who, "contact_name": "Cust"})).await);
+    e.update("Ticket", t, json!({"status": "Resolved", "resolution_details": "Done"})).await;
+    t
 }
