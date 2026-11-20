@@ -5,8 +5,10 @@
 mod common;
 use chrono::{Duration, Utc};
 use common::*;
+use ferrum_kernel::{Ctx, Kernel};
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[test]
 fn reports() {
@@ -17,8 +19,14 @@ fn row<'a>(r: &'a Value, group: &str) -> &'a Value {
     r["rows"].as_array().unwrap().iter().find(|x| x["group"] == json!(group)).unwrap_or_else(|| panic!("{group} in {r}"))
 }
 
+/// A role of the test's own that reads tickets without their priority, team, customer name or first-response hours.
+const AUDIT: &str = "package: helpdesk_audit\nversion: 0.1.0\ndepends: [helpdesk]\nroles:\n  - name: Desk Auditor\n    permissions:\n      \
+- {entity: Ticket, read: true, hide: [priority, team, customer_name, first_response_hours]}\n      - {entity: SupportTeam, read: true}\n      \
+- {entity: TicketType, read: true}\n      - {entity: TicketStatus, read: true}\n      - {entity: ServiceLevelAgreement, read: true}\n";
+
 async fn scenario() {
-    let e = boot("reports", false, vec![]).await;
+    let audit = ferrum_meta::catalog::load_package_files(&[("package.yaml".to_string(), AUDIT.to_string())].into()).expect("the test's role");
+    let e = boot("reports", false, vec![audit]).await;
     let k = e.k.clone();
     let today = Utc::now().date_naive();
     let params = |g: &str| -> HashMap<String, String> {
@@ -128,4 +136,85 @@ async fn scenario() {
     assert!(mine["rows"].as_array().unwrap().iter().all(|r| r["group"] == json!("Support")), "{mine}");
     let none = ferrum_domain::reports::run(&k, &ann, "support_backlog", &params("Agent")).await.unwrap();
     assert!(none["rows"].as_array().unwrap().iter().all(|r| r["group"] == json!("ann@acme.test")), "{none}");
+
+    // ── what a caller cannot read, a report neither groups by, filters by nor shows (S9 K0-7) ──
+    k.install_packages(e.tenant, &["helpdesk_audit".to_string()]).await.unwrap();
+    let auditor = e.user("audit@acme.test", &["Desk Auditor"]).await;
+    let agent = e.user("kim@acme.test", &["Support Agent"]).await;
+    // Each section on its own, so that each one's failure shows.
+    let mut failed = Vec::new();
+    for (name, section) in [
+        (
+            "a_report_refuses_grouping_by_a_field_the_caller_cannot_read",
+            tokio::spawn(a_report_refuses_grouping_by_a_field_the_caller_cannot_read(k.clone(), auditor.clone(), agent.clone(), sup.to_string())),
+        ),
+        (
+            "a_report_s_default_falls_back_to_a_readable_grouping",
+            tokio::spawn(a_report_s_default_falls_back_to_a_readable_grouping(k.clone(), auditor.clone(), agent.clone())),
+        ),
+        (
+            "a_report_leaves_out_columns_the_caller_cannot_read",
+            tokio::spawn(a_report_leaves_out_columns_the_caller_cannot_read(k.clone(), auditor.clone(), agent.clone())),
+        ),
+    ] {
+        if let Err(err) = section.await {
+            failed.push(name);
+            eprintln!("{name} failed: {err:?}");
+        }
+    }
+    assert!(failed.is_empty(), "{failed:?}");
+}
+
+fn given(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+    let today = Utc::now().date_naive();
+    let mut p: HashMap<String, String> =
+        [("from_date", (today - Duration::days(60)).to_string()), ("to_date", today.to_string())].into_iter().map(|(a, b)| (a.to_string(), b)).collect();
+    p.extend(pairs.iter().map(|(a, b)| (a.to_string(), b.to_string())));
+    p
+}
+
+async fn report(k: &Kernel, who: &Ctx, name: &str, pairs: &[(&str, &str)]) -> ferrum_kernel::Result<Value> {
+    ferrum_domain::reports::run(k, who, name, &given(pairs)).await
+}
+
+fn names(r: &Value) -> Vec<&str> {
+    r["columns"].as_array().unwrap().iter().filter_map(|c| c["name"].as_str()).collect()
+}
+
+async fn a_report_refuses_grouping_by_a_field_the_caller_cannot_read(k: Arc<Kernel>, auditor: Ctx, agent: Ctx, team: String) {
+    for (name, pairs) in [
+        ("support_ticket_summary", vec![("group_by", "Priority")]),
+        ("support_volume", vec![("group_by", "Customer")]),
+        ("support_backlog", vec![("group_by", "Team")]),
+        ("support_time_spent", vec![("group_by", "Customer")]),
+        ("support_agent_workload", vec![("team", team.as_str())]),
+    ] {
+        let r = report(&k, &auditor, name, &pairs).await;
+        assert!(matches!(r, Err(ferrum_kernel::Error::Forbidden(_))), "{name} {pairs:?} for a caller who cannot read it: {r:?}");
+        report(&k, &agent, name, &pairs).await.unwrap_or_else(|err| panic!("{name} {pairs:?} for the desk: {err:?}"));
+    }
+    report(&k, &auditor, "support_ticket_summary", &[("group_by", "Status")]).await.expect("a readable grouping");
+}
+
+async fn a_report_s_default_falls_back_to_a_readable_grouping(k: Arc<Kernel>, auditor: Ctx, agent: Ctx) {
+    let theirs = report(&k, &auditor, "support_response_times", &[]).await.expect("the times without a grouping chosen");
+    assert_eq!(theirs["meta"]["group_by"], json!("Status"), "Priority, the default, is hidden from them: the first readable grouping");
+    let desk = report(&k, &agent, "support_response_times", &[]).await.unwrap();
+    assert_eq!(desk["meta"]["group_by"], json!("Priority"));
+}
+
+async fn a_report_leaves_out_columns_the_caller_cannot_read(k: Arc<Kernel>, auditor: Ctx, agent: Ctx) {
+    let response = ["responded", "response_avg", "response_median", "response_p90"];
+    let theirs = report(&k, &auditor, "support_response_times", &[("group_by", "Status")]).await.unwrap();
+    assert!(names(&theirs).iter().all(|c| !response.contains(c)) && names(&theirs).contains(&"resolution_avg"), "{theirs}");
+    for r in theirs["rows"].as_array().unwrap().iter().chain([&theirs["totals"]]) {
+        assert!(response.iter().all(|c| r.get(*c).is_none()), "no value of a column left out: {r}");
+    }
+    let desk = report(&k, &agent, "support_response_times", &[("group_by", "Status")]).await.unwrap();
+    assert!(response.iter().all(|c| names(&desk).contains(c)), "{desk}");
+
+    let work = report(&k, &auditor, "support_agent_workload", &[]).await.unwrap();
+    assert!(!names(&work).contains(&"urgent") && !names(&work).contains(&"high") && names(&work).contains(&"open"), "{work}");
+    assert!(work["rows"].as_array().unwrap().iter().chain([&work["totals"]]).all(|r| r.get("urgent").is_none() && r.get("high").is_none()), "{work}");
+    assert!(names(&report(&k, &agent, "support_agent_workload", &[]).await.unwrap()).contains(&"urgent"));
 }

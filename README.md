@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.22.1-7c3aed?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.22.2-7c3aed?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -44,7 +44,7 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 
 | | |
 |---|---|
-| **Version** | 0.22.1 (platform `>=0.4.0, <0.5`) |
+| **Version** | 0.22.2 (platform `>=0.4.0, <0.5`) |
 | **Kind** | Own interface at `/helpdesk/` (agent inbox, ticket workspace, administration, help centre editor, reports) and a page in the customer portal |
 | **What it adds** | 32 entities (22 main, 10 child tables) in 2 packages, 3 roles, 10 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
 | **Depends on** | Ferrum core, shared customers and items |
@@ -329,6 +329,8 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 | **Help Centre by Article** | Views, helpful, not helpful and helpful % |
 | **Time Spent** | Entries, minutes, hours and billable minutes by agent, customer, team, ticket or month |
 
+Every report counts only the tickets the reader may reach, and groups, filters and shows only the fields they may read: a grouping on another is refused, and a column of one is left out.
+
 The Reports page asks the six questions a desk asks and opens the platform's report with the grouping and period
 that answer each. Reports can be downloaded as CSV there.
 
@@ -523,6 +525,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 
 ### ✅ Recently shipped
 
+- [x] **0.22.2.** Reports group, filter and show only the fields the reader may read.
 - [x] **0.22.1.** Only the person who raised a ticket rates it.
 - [x] **0.22.0.** Time on tickets: entries, the total, a timer and a report.
 - [x] **0.21.0.** Article translations and published versions, with restore.
