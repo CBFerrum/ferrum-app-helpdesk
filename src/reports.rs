@@ -412,6 +412,52 @@ async fn reopens(ctx: &Ctx, p: &Params<'_>, tx: &mut Tx) -> Result<Value> {
     }))
 }
 
+/// Groupings of time entries `tw` on tickets `a`.
+const TIME_GROUPS: [(&str, &str); 5] = [
+    ("Agent", "tw.agent"),
+    ("Customer", "coalesce(a.customer_name, a.contact_email, 'Unknown')"),
+    ("Team", "coalesce(tm.team_name, 'No Team')"),
+    ("Ticket", "coalesce(a.number, '')"),
+    ("Month", "to_char(tw.spent_on, 'YYYY-MM')"),
+];
+
+/// Time logged on tickets in the period (by the day it was spent), within the caller's record scopes on tickets.
+async fn time_spent(ctx: &Ctx, p: &Params<'_>, tx: &mut Tx) -> Result<Value> {
+    let span = period_of(ctx, p)?;
+    let want = p.str("group_by").unwrap_or("Agent");
+    let (label, expr) = TIME_GROUPS
+        .iter()
+        .copied()
+        .find(|(l, _)| l.eq_ignore_ascii_case(want))
+        .ok_or_else(|| Error::field("group_by", format!("use one of: {}", TIME_GROUPS.map(|(l, _)| l).join(", "))))?;
+    let table = child_table(ctx, "Ticket", "time")?;
+    let mut qb = tickets_with(
+        ctx,
+        &format!(
+            "{expr}, count(*), coalesce(sum(tw.minutes), 0)::bigint, round(coalesce(sum(tw.minutes), 0) / 60.0, 2), coalesce(sum(tw.minutes) filter (where tw.billable), 0)::bigint"
+        ),
+        &format!("join {table} tw on tw.tenant_id = a.tenant_id and tw.parent_id = a.id"),
+    )?;
+    within(&mut qb, "tw.spent_on", span);
+    qb.push(" group by 1 order by 3 desc, 1");
+    let data: Vec<(String, i64, i64, Decimal, i64)> = qb.build_query_as().fetch_all(&mut **tx).await?;
+    let mut totals = (0i64, 0i64, 0i64);
+    let rows: Vec<Value> = data
+        .into_iter()
+        .map(|(group, entries, minutes, hours, billable)| {
+            totals = (totals.0 + entries, totals.1 + minutes, totals.2 + billable);
+            json!({"group": group, "entries": entries, "minutes": minutes, "hours": money(hours), "billable_minutes": billable})
+        })
+        .collect();
+    Ok(json!({
+        "columns": [col("group", label, "data"), col("entries", "Entries", "int"), col("minutes", "Minutes", "int"), col("hours", "Hours", "decimal"),
+            col("billable_minutes", "Billable Minutes", "int")],
+        "rows": rows,
+        "totals": {"entries": totals.0, "minutes": totals.1, "hours": money((Decimal::from(totals.1) / Decimal::from(60)).round_dp(2)), "billable_minutes": totals.2},
+        "meta": meta(span, label),
+    }))
+}
+
 type ArticleRow = (String, String, Option<String>, Option<String>, i64, i64, i64);
 
 /// The help centre by article: how often each was read and what readers said of it, from the signed-in portal and the
@@ -471,6 +517,12 @@ impl ReportSource for SupportReports {
                 [span(), vec![json!({"name": "group_by", "label": "Group By", "type": "select", "options": volume_groups(), "default": "Channel"})]].concat(),
             ),
             entry("support_reopens", "Reopen Rate", [span(), vec![group_param("Agent")]].concat()),
+            entry(
+                "support_time_spent",
+                "Time Spent",
+                [span(), vec![json!({"name": "group_by", "label": "Group By", "type": "select", "options": TIME_GROUPS.map(|(l, _)| l), "default": "Agent"})]]
+                    .concat(),
+            ),
             json!({"name": "support_articles", "label": "Help Centre by Article", "module": "support", "entity": "KbArticle", "params": [
                 {"name": "status", "label": "Status", "type": "select", "options": ["All", "Draft", "Published", "Archived"], "default": "All"},
                 {"name": "visibility", "label": "Visibility", "type": "select", "options": ["All", "Internal", "Customers Only", "Public"], "default": "All"}]}),
@@ -490,6 +542,7 @@ impl ReportSource for SupportReports {
             "support_volume" => volume(ctx, &p, &mut tx).await,
             "support_reopens" => reopens(ctx, &p, &mut tx).await,
             "support_articles" => articles(ctx, &p, &mut tx).await,
+            "support_time_spent" => time_spent(ctx, &p, &mut tx).await,
             _ => Err(Error::NotFound(format!("report {name}"))),
         };
         tx.rollback().await?;

@@ -97,6 +97,16 @@ export const VIEWS: ReportView[] = [
     get note() { return t("Counted from the date the rating was given, and only for tickets that were rated."); },
   },
   {
+    id: "time",
+    get title() { return t("Time spent"); },
+    get question() { return t("Where does the team's time go?"); },
+    report: "support_time_spent",
+    group: "Agent",
+    also: ["Customer", "Team", "Ticket", "Month"],
+    period: true,
+    get note() { return t("Counted by the day the time was spent, from the entries agents log on tickets."); },
+  },
+  {
     id: "articles",
     get title() { return t("Help centre by article"); },
     get question() { return t("Which articles are read, and do they help?"); },

@@ -545,6 +545,11 @@ async fn related(hc: &mut HookCtx<'_>, doc: &Doc, old: Option<&Doc>, errors: &mu
     Ok(())
 }
 
+/// Whether the saver may log or change time for others: the system, or someone who may delete tickets.
+fn may_log_for_others(hc: &HookCtx<'_>) -> bool {
+    hc.ctx.is_system || hc.ctx.require("Ticket", ferrum_kernel::Action::Delete).is_ok()
+}
+
 /// The stored version of the document being saved (`None` while it is being created).
 async fn stored(hc: &mut HookCtx<'_>, doc: &Doc) -> Result<Option<Doc>> {
     match id(doc, "id") {
@@ -573,6 +578,22 @@ impl DocHook for TicketHook {
             } else {
                 Ok(())
             };
+        }
+
+        // Time entries: a new one is the saver's unless they may log for others (the system, or whoever may delete tickets).
+        let mine = hc.ctx.email.to_lowercase();
+        let may_all = may_log_for_others(hc);
+        let logged: HashSet<String> = old.as_ref().map(|o| rows(o, "time").iter().filter_map(|r| s(r, "id").map(str::to_string)).collect()).unwrap_or_default();
+        let mut entries = rows(doc, "time");
+        for (i, entry) in entries.iter_mut().enumerate().filter(|(_, r)| !s(r, "id").is_some_and(|i| logged.contains(i))) {
+            match s(entry, "agent").map(str::to_lowercase) {
+                None => set(entry, "agent", mine.clone()),
+                Some(a) if a != mine && !may_all => return Err(Error::Validation(vec![FieldError::new("agent", "you log your own time").in_row("time", i)])),
+                Some(a) => set(entry, "agent", a),
+            }
+        }
+        if doc.contains_key("time") {
+            set(doc, "time", Value::Array(entries.into_iter().map(Value::Object).collect()));
         }
 
         // A workspace's own status chosen in this save moves the ticket to its stage (it wins over a status sent with it).
@@ -835,6 +856,25 @@ impl DocHook for TicketHook {
             errors.push(FieldError::new("satisfaction_rating", "can be given once the ticket is resolved"));
         }
         related(hc, doc, old.as_ref(), &mut errors).await?;
+        // Someone else's time entry changes only by its author or someone who may delete tickets.
+        let entries = rows(doc, "time");
+        if entries.len() > 500 {
+            errors.push(FieldError::new("time", "at most 500 time entries on a ticket"));
+        }
+        if let Some(o) = &old
+            && !may_log_for_others(hc)
+        {
+            let mine = hc.ctx.email.to_lowercase();
+            let fields: Vec<String> = hc.ctx.schema.entity("TicketTime").map(|e| e.value_fields().map(|f| f.name.clone()).collect()).unwrap_or_default();
+            let touched = rows(o, "time").into_iter().any(|before| {
+                let theirs = s(&before, "agent").is_some_and(|a| !a.eq_ignore_ascii_case(&mine));
+                let now = entries.iter().find(|r| s(r, "id") == s(&before, "id"));
+                theirs && now.is_none_or(|n| fields.iter().any(|f| n.get(f) != before.get(f)))
+            });
+            if touched {
+                errors.push(FieldError::new("time", "only the person who logged an entry, or someone who may delete tickets, changes it"));
+            }
+        }
         if errors.is_empty() { Ok(()) } else { Err(Error::Validation(errors)) }
     }
 

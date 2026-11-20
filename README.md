@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.21.0-7c3aed?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.22.0-7c3aed?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -44,9 +44,9 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 
 | | |
 |---|---|
-| **Version** | 0.21.0 (platform `>=0.4.0, <0.5`) |
+| **Version** | 0.22.0 (platform `>=0.4.0, <0.5`) |
 | **Kind** | Own interface at `/helpdesk/` (agent inbox, ticket workspace, administration, help centre editor, reports) and a page in the customer portal |
-| **What it adds** | 31 entities (22 main, 9 child tables) in 2 packages, 3 roles, 9 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
+| **What it adds** | 32 entities (22 main, 10 child tables) in 2 packages, 3 roles, 10 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
 | **Depends on** | Ferrum core, shared customers and items |
 | **Works with** | Mail (inbound and outbound email, version 0.20 or later), ERP (invoices and orders through a connector), Field Service (visits from tickets), the platform's calendars and service targets |
 | **Languages** | English, Arabic (right to left), Hindi; a workspace can change any interface word |
@@ -170,6 +170,9 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 - **Parent, child and linked tickets.** Beside a ticket, the card Related tickets shows its parent, its children and
   the tickets linked to it either way, and makes a child ticket, links or unlinks a ticket by its number, or moves the
   ticket under a parent or out. One level: a child has no children. A parent cannot be resolved while a child is open.
+- **Time.** Agents log the minutes they spent on a ticket (a day, a note, billable or not), typed or from a timer kept in
+  the browser; the ticket shows its total. An agent logs and changes only their own entries; someone who may delete
+  tickets (a Support Manager) may log for and change anyone's. Customers never see time. Report: Time Spent.
 - **Split a message.** A customer's public message can be split off into a ticket of its own for the same customer,
   linked to the original; the message stays and is marked with the new number, once.
 - **Workspace statuses.** A Support Manager adds the desk's own statuses (Administration, Statuses), each inside one of
@@ -324,6 +327,7 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 | **Ticket Volume** | By channel, tag, customer, team or month |
 | **Reopens** | The reopen rate |
 | **Help Centre by Article** | Views, helpful, not helpful and helpful % |
+| **Time Spent** | Entries, minutes, hours and billable minutes by agent, customer, team, ticket or month |
 
 The Reports page asks the six questions a desk asks and opens the platform's report with the grouping and period
 that answer each. Reports can be downloaded as CSV there.
@@ -402,6 +406,7 @@ ticket by number to open a visit.
 |---|---|---|
 | **Ticket** | A customer's request and its conversation | Number, subject, status (the stage), workspace status, parent ticket, linked tickets, priority, channel, customer, team, assignee, SLA states, entitlement, tags |
 | Ticket message (child) | One message | Author, body, internal, sent at, attachments, copies, verified sender, split into |
+| Time entry (child) | Minutes an agent spent on a ticket | Agent, day, minutes, billable, note; the ticket's total is the platform's rollup |
 | Linked ticket (child) | A ticket related to this one, kept where the link was made and found from both | Ticket |
 | **Support Address** | An address customers write to | Address, brand, team, default priority and type, Mail account, enabled, registered |
 | **Support Brand** | What a customer knows an address by | Name, display name, signature, header, footer |
@@ -473,7 +478,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 | NPS and CES surveys | ❌ | 🟡 | 🟡 | ✅ | ✅ | ❌ |
 | AI: suggested replies, summaries, answer bot | ❌ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | See who else is viewing a ticket | ❌⁴ | ✅ | ✅ | ✅ | 🟡 | ✅ |
-| Time tracking on tickets | ❌ | 🟡 | ✅ | ❌ | 🟡 | ✅ |
+| Time tracking on tickets | ✅ | 🟡 | ✅ | ❌ | 🟡 | ✅ |
 | Reports | 🟡⁵ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Several brands | 🟡⁶ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | Customer's orders, invoices, equipment and warranty beside the ticket | ✅ | 🟡 | 🟡 | 🟡 | ✅ | 🟡 |
@@ -518,6 +523,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 
 ### ✅ Recently shipped
 
+- [x] **0.22.0.** Time on tickets: entries, the total, a timer and a report.
 - [x] **0.21.0.** Article translations and published versions, with restore.
 - [x] **0.20.0.** Article suggestions while an agent replies, as an operation and in the composer.
 - [x] **0.19.0.** The screens for parent, child and linked tickets, and splitting a message.
@@ -559,7 +565,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 - [ ] Split a message into a new ticket.
 - [ ] Who is viewing or replying now.
 - [ ] Mentions on internal notes and side conversations with an outside party.
-- [ ] Time tracking and billable hours against a contract.
+- [ ] Billable hours charged against a contract.
 - [ ] A Merged mark on the inbox rows.
 
 **Service levels**

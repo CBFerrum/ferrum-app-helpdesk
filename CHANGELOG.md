@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.22.0
+
+Needs the same platform as 0.21.0. The package is 0.13.0: Ticket gains a table of time entries (`TicketTime`) and `minutes_spent`, the platform's rollup of their minutes; a report Time Spent. Existing tickets have no entries. Rebuilt interface.
+
+- **Time on tickets.** An entry is the minutes someone spent on a ticket, on a day, billable or not, with a note, written through the ticket's ordinary update (a person or an AI agent alike). An agent's entries are their own: logging for someone else, or changing or removing another person's entry, needs the right to delete tickets (a Support Manager). The total is the platform's rollup. A closed ticket takes no more time. Customers never see it.
+- **Screens.** A Time card beside the ticket: the total, the entries, a form to log minutes and a start-and-stop timer kept in the browser (nothing is sent until Log time).
+- **Report.** Time Spent: entries, minutes, hours and billable minutes by agent, customer, team, ticket or month, within the reader's teams.
+
 ## 0.21.0
 
 Needs the same platform as 0.20.0. The package is 0.12.0: KbArticle gains `language`, `translation_of`, a read-only table of published versions (`KbArticleVersion`) and the action `restore_version`, with a unique key on `(translation_of, language)`. Existing articles have no language, no original and no versions until their next publication. Rebuilt interface.
