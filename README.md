@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.22.0-7c3aed?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.22.1-7c3aed?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -44,7 +44,7 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 
 | | |
 |---|---|
-| **Version** | 0.22.0 (platform `>=0.4.0, <0.5`) |
+| **Version** | 0.22.1 (platform `>=0.4.0, <0.5`) |
 | **Kind** | Own interface at `/helpdesk/` (agent inbox, ticket workspace, administration, help centre editor, reports) and a page in the customer portal |
 | **What it adds** | 32 entities (22 main, 10 child tables) in 2 packages, 3 roles, 10 reports, 3 customer message templates, 1 menu module, 3 notification kinds, 4 seeded ticket types |
 | **Depends on** | Ferrum core, shared customers and items |
@@ -270,7 +270,7 @@ skill and shift, and the same data set holds the customer's contracts, equipment
 ### ⭐ Satisfaction
 
 - **Survey on solve.** When on, a solved ticket's customer is mailed a signed, one-use link (30 days by default) after a delay (1 hour by default) to rate the help 1 to 5 with a comment.
-- **Once only.** The rating and comment are kept once. The portal's rating does the same.
+- **Once only, by the customer.** The rating and comment are kept once, and only the person who raised the ticket (or the survey link's guest) gives them: an agent cannot rate for the customer. The portal's rating does the same.
 - **A low rating can act.** At or below a number it reopens a resolved ticket, and at or below another it tells the agent and a lead.
 - **Opt-outs respected.** The survey is not sent to an address that opted out of marketing mail or whose processing is restricted.
 
@@ -523,6 +523,7 @@ Compared with Zendesk, Freshdesk, Intercom, Salesforce Service Cloud and Zammad 
 
 ### ✅ Recently shipped
 
+- [x] **0.22.1.** Only the person who raised a ticket rates it.
 - [x] **0.22.0.** Time on tickets: entries, the total, a timer and a report.
 - [x] **0.21.0.** Article translations and published versions, with restore.
 - [x] **0.20.0.** Article suggestions while an agent replies, as an operation and in the composer.

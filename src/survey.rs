@@ -95,8 +95,16 @@ pub async fn record(k: &Kernel, ctx: &Ctx, tx: &mut Tx, ticket: &Doc, rating: i6
     Ok(())
 }
 
-/// `rate` as an action (the signed link's, or a button): `rating` and `feedback`.
+/// `rate` as an action (the signed link's, or a button): `rating` and `feedback`. It is pressed with the right to read
+/// the ticket, so only the person who raised it rates it (their address is the ticket's `contact_email`), or the guest
+/// of the survey link mailed to them (the platform's link context: outside, no address, this ticket only). An agent
+/// or an administrator of the desk does not rate for the customer.
 pub async fn rate(hc: &mut HookCtx<'_>, ticket: &Doc, params: &Value) -> Result<Value> {
+    let raiser = !hc.ctx.email.is_empty() && s(ticket, "contact_email").is_some_and(|e| e.trim().eq_ignore_ascii_case(&hc.ctx.email));
+    let link_guest = hc.ctx.outside && hc.ctx.email.is_empty();
+    if !raiser && !link_guest {
+        return Err(Error::Forbidden("only the person who raised the ticket rates it".into()));
+    }
     let rating = params.get("rating").and_then(Value::as_i64).ok_or_else(|| Error::field("rating", "from 1 to 5"))?;
     let feedback = params.get("feedback").and_then(Value::as_str).map(str::trim).filter(|f| !f.is_empty()).map(str::to_string);
     record(hc.kernel, hc.ctx, hc.tx, ticket, rating, feedback).await?;

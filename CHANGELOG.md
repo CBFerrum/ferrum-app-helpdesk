@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.22.1
+
+Needs the same platform as 0.22.0. No package or database change.
+
+- **Fix: only the person who raised a ticket rates it.** Rate the Help is pressed with the right to read the ticket, so an agent or an administrator could rate a customer's ticket for them. It now rates only for the person whose address is the ticket's contact address (any case), or the guest of the survey link mailed to them; anyone else is refused and nothing changes. The portal's rating is unchanged.
+
 ## 0.22.0
 
 Needs the same platform as 0.21.0. The package is 0.13.0: Ticket gains a table of time entries (`TicketTime`) and `minutes_spent`, the platform's rollup of their minutes; a report Time Spent. Existing tickets have no entries. Rebuilt interface.
